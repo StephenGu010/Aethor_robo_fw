@@ -1,0 +1,16 @@
+# Keil MDK build products and per-user state
+*.o
+*.d
+*.crf
+*.axf
+*.lnp
+*.map
+*.sct
+*.dep
+*.htm
+*.lst
+*.uvguix.*
+*.uvoptx
+*.bak
+*.tmp
+

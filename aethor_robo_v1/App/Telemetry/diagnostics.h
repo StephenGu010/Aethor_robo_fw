@@ -59,7 +59,55 @@ typedef struct
     uint32_t queue_high_watermark;
     uint32_t minimum_stack_words;
     uint32_t minimum_heap_bytes;
+    uint32_t control_period_last_us;
+    uint32_t control_period_min_us;
+    uint32_t control_period_max_us;
+    uint32_t control_deadline_miss_count;
+    uint32_t control_consecutive_miss_count;
+    uint32_t control_consecutive_miss_max;
+    uint32_t control_group_skew_max_us;
+    uint32_t can_rx_overflow_count;
+    uint32_t can_tx_error_count;
+    uint32_t can_bus_off_count;
+    uint32_t can_tx_queue_high_watermark;
+    uint32_t control_group_reject_count;
+    uint32_t usb_rx_bytes;
+    uint32_t usb_rx_overflow_count;
+    uint32_t usb_overlong_line_count;
+    uint32_t usb_high_queue_high_watermark;
+    uint32_t usb_query_queue_high_watermark;
+    uint32_t usb_telemetry_queue_high_watermark;
+    uint32_t usb_telemetry_drop_count;
+    uint32_t usb_high_queue_full_count;
+    uint32_t usb_transmit_busy_count;
+    uint32_t usb_transmit_error_count;
+    uint32_t event_overwrite_count;
 } DiagnosticCounters;
+
+/** @brief Carries one platform-neutral runtime transport/resource sample. */
+typedef struct
+{
+    uint32_t can_rx_frames;
+    uint32_t can_tx_frames;
+    uint32_t can_rx_overflow_count;
+    uint32_t can_tx_error_count;
+    uint32_t can_bus_off_count;
+    uint32_t can_tx_queue_high_watermark;
+    uint32_t control_group_reject_count;
+    uint32_t usb_rx_bytes;
+    uint32_t usb_rx_overflow_count;
+    uint32_t usb_overlong_line_count;
+    uint32_t usb_high_queue_high_watermark;
+    uint32_t usb_query_queue_high_watermark;
+    uint32_t usb_telemetry_queue_high_watermark;
+    uint32_t usb_telemetry_drop_count;
+    uint32_t usb_high_queue_full_count;
+    uint32_t usb_transmit_busy_count;
+    uint32_t usb_transmit_error_count;
+    uint32_t control_group_skew_max_us;
+    uint32_t minimum_stack_words;
+    uint32_t minimum_heap_bytes;
+} RuntimeDiagnosticSample;
 
 /**
  * @brief Owns a fixed event ring and counters without dynamic allocation.
@@ -126,5 +174,22 @@ void diagnostics_record_service_cycle(Diagnostics *diagnostics);
  * @param diagnostics Store to update; null is ignored.
  */
 void diagnostics_record_config_validation_failure(Diagnostics *diagnostics);
+
+/**
+ * @brief Records one observed ArmControlTask start-to-start period.
+ * @param diagnostics Store to update.
+ * @param period_us Measured period in microseconds.
+ */
+void diagnostics_record_control_period(Diagnostics *diagnostics,
+                                       uint32_t period_us);
+
+/**
+ * @brief Replaces sampled transport/resource values with a coherent snapshot.
+ * @param diagnostics Store to update.
+ * @param sample Platform-neutral sample assembled by DiagnosticsTask.
+ */
+void diagnostics_update_runtime_sample(
+    Diagnostics *diagnostics,
+    const RuntimeDiagnosticSample *sample);
 
 #endif

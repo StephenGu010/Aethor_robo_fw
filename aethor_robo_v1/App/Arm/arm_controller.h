@@ -37,7 +37,11 @@ typedef enum
     ARM_FAULT_CONFIG_INVALID,
     ARM_FAULT_CONFIG_INCOMPLETE,
     ARM_FAULT_LINK_TIMEOUT,
-    ARM_FAULT_MOTION_CONTROL
+    ARM_FAULT_MOTION_CONTROL,
+    ARM_FAULT_TRANSPORT,
+    ARM_FAULT_CONTROL_DEADLINE,
+    ARM_FAULT_DRIVER,
+    ARM_FAULT_FEEDBACK_STALE
 } ArmFault;
 
 /** @brief Identifies the currently confirmed seven-motor control mode. */

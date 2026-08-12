@@ -352,6 +352,34 @@ Stm32PlatformStatus stm32_platform_can_service_tx(uint8_t maximum_frame_count)
 /** @brief Returns read-only platform transport diagnostics. */
 const Stm32PlatformDiagnostics *stm32_platform_get_diagnostics(void)
 {
+    platform_diagnostics.can_rx_frame_count =
+        platform_can_rx_inbox.received_frame_count;
+    platform_diagnostics.can_rx_overflow_count =
+        platform_can_rx_inbox.dropped_frame_count;
+    platform_diagnostics.can_tx_queue_high_watermark =
+        platform_can_tx_scheduler.high_watermark;
+    platform_diagnostics.control_group_reject_count =
+        platform_can_tx_scheduler.atomic_group_reject_count;
+    platform_diagnostics.usb_rx_byte_count =
+        platform_usb_stream.received_byte_count;
+    platform_diagnostics.usb_rx_overflow_count =
+        platform_usb_stream.dropped_byte_count;
+    platform_diagnostics.usb_overlong_line_count =
+        platform_usb_stream.overlong_line_count;
+    platform_diagnostics.usb_high_queue_high_watermark =
+        platform_usb_stream.high_priority_high_watermark;
+    platform_diagnostics.usb_query_queue_high_watermark =
+        platform_usb_stream.query_high_watermark;
+    platform_diagnostics.usb_telemetry_queue_high_watermark =
+        platform_usb_stream.telemetry_high_watermark;
+    platform_diagnostics.usb_telemetry_drop_count =
+        platform_usb_stream.telemetry_replaced_count;
+    platform_diagnostics.usb_high_queue_full_count =
+        platform_usb_stream.high_priority_queue_full_count;
+    platform_diagnostics.usb_transmit_busy_count =
+        platform_usb_stream.transmit_busy_count;
+    platform_diagnostics.usb_transmit_error_count =
+        platform_usb_stream.transmit_error_count;
     return &platform_diagnostics;
 }
 

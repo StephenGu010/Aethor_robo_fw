@@ -145,4 +145,20 @@ bool aethor_app_get_diagnostic(uint16_t logical_index,
  */
 bool aethor_app_get_diagnostic_counters(DiagnosticCounters *counters);
 
+/**
+ * @brief Applies one platform-neutral transport/resource diagnostic sample.
+ * @param sample Coherent sample assembled by DiagnosticsTask.
+ */
+void aethor_app_update_runtime_diagnostics(
+    const RuntimeDiagnosticSample *sample);
+
+/**
+ * @brief Latches a severe platform transport fault and schedules all-axis disable.
+ * @param detail Stable platform-specific fault detail bits.
+ * @param timestamp_us Fault timestamp.
+ * @return One when an active command result was queued, otherwise zero.
+ */
+uint8_t aethor_app_report_transport_fault(uint32_t detail,
+                                          uint64_t timestamp_us);
+
 #endif

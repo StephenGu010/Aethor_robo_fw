@@ -343,6 +343,16 @@ static void test_protocol_engine_query_dispatch(void)
                                         2300U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output_batch.messages[0].data, "service_cycles=5") != NULL);
 
+    memset(&query_context.diagnostics, 0xFF, sizeof(query_context.diagnostics));
+    protocol_engine_update_query_context(&engine, &query_context);
+    request_length = build_request_frame("REQ 140 GET_DIAG",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2350U, &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_OK);
+    assert(output_batch.messages[0].length < PROTOCOL_ENGINE_MESSAGE_CAPACITY);
+
     request_length = build_request_frame("REQ 15 GET_CONFIG",
                                          request_frame,
                                          sizeof(request_frame));

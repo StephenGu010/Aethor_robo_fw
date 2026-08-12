@@ -206,6 +206,60 @@ static void test_diagnostics_initialize_deterministically(void)
     assert(counters.uart_tx_bytes == 0U);
     assert(counters.minimum_stack_words == DIAGNOSTIC_WATERMARK_NOT_SAMPLED);
     assert(counters.minimum_heap_bytes == DIAGNOSTIC_WATERMARK_NOT_SAMPLED);
+    assert(counters.control_period_min_us == DIAGNOSTIC_WATERMARK_NOT_SAMPLED);
+    assert(counters.control_group_skew_max_us ==
+           DIAGNOSTIC_WATERMARK_NOT_SAMPLED);
+}
+
+/**
+ * @brief Verifies runtime transport, timing, and resource samples remain monotonic.
+ */
+static void test_diagnostics_runtime_aggregation(void)
+{
+    Diagnostics diagnostics;
+    RuntimeDiagnosticSample sample = {0};
+    DiagnosticCounters counters;
+
+    diagnostics_init(&diagnostics);
+    diagnostics_record_control_period(&diagnostics, 4000U);
+    diagnostics_record_control_period(&diagnostics, 4300U);
+    sample.can_rx_frames = 10U;
+    sample.can_tx_frames = 20U;
+    sample.can_rx_overflow_count = 2U;
+    sample.can_tx_error_count = 3U;
+    sample.can_bus_off_count = 1U;
+    sample.can_tx_queue_high_watermark = 7U;
+    sample.control_group_reject_count = 4U;
+    sample.usb_rx_bytes = 100U;
+    sample.usb_rx_overflow_count = 5U;
+    sample.usb_overlong_line_count = 6U;
+    sample.usb_high_queue_high_watermark = 8U;
+    sample.usb_query_queue_high_watermark = 9U;
+    sample.usb_telemetry_queue_high_watermark = 3U;
+    sample.usb_telemetry_drop_count = 11U;
+    sample.usb_transmit_busy_count = 12U;
+    sample.usb_transmit_error_count = 13U;
+    sample.minimum_stack_words = 256U;
+    sample.minimum_heap_bytes = 4096U;
+    diagnostics_update_runtime_sample(&diagnostics, &sample);
+    assert(diagnostics_get_counters(&diagnostics, &counters));
+    assert(counters.control_period_last_us == 4300U);
+    assert(counters.control_period_min_us == 4000U);
+    assert(counters.control_period_max_us == 4300U);
+    assert(counters.control_deadline_miss_count == 1U);
+    assert(counters.control_consecutive_miss_count == 1U);
+    assert(counters.can_rx_frames == 10U);
+    assert(counters.can_tx_frames == 20U);
+    assert(counters.can_bus_off_count == 1U);
+    assert(counters.usb_rx_bytes == 100U);
+    assert(counters.usb_telemetry_drop_count == 11U);
+    assert(counters.minimum_stack_words == 256U);
+    assert(counters.minimum_heap_bytes == 4096U);
+
+    diagnostics_record_control_period(&diagnostics, 3999U);
+    assert(diagnostics_get_counters(&diagnostics, &counters));
+    assert(counters.control_consecutive_miss_count == 0U);
+    assert(counters.control_period_min_us == 3999U);
 }
 
 /**
@@ -679,6 +733,7 @@ int main(void)
     test_build_and_board_identity_are_frozen();
     test_default_application_profile_is_safe_bench_control();
     test_diagnostics_initialize_deterministically();
+    test_diagnostics_runtime_aggregation();
     test_diagnostics_ring_overwrites_oldest_event();
     test_arm_controller_bench_profile_keeps_enable_locked_without_fault();
     test_arm_controller_latches_invalid_config_fault();

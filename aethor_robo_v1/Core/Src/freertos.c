@@ -27,6 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "aethor_app.h"
 #include "stm32_platform.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -363,10 +364,105 @@ void StartTelemetryTask(void const * argument)
 void StartDiagnosticsTask(void const * argument)
 {
   TickType_t lastWakeTime = xTaskGetTickCount();
+  uint32_t previousCanRxOverflowCount = 0U;
+  uint32_t previousCanBusOffCount = 0U;
+  uint32_t previousUsbHighQueueFullCount = 0U;
 
   (void)argument;
   for(;;)
   {
+    const Stm32PlatformDiagnostics *platformDiagnostics =
+        stm32_platform_get_diagnostics();
+    RuntimeDiagnosticSample runtimeSample;
+    TaskHandle_t applicationTaskHandles[6];
+    uint32_t minimumStackWords = UINT32_MAX;
+    uint8_t taskIndex;
+
+    memset(&runtimeSample, 0, sizeof(runtimeSample));
+    applicationTaskHandles[0] = (TaskHandle_t)ArmControlTaskHandle;
+    applicationTaskHandles[1] = (TaskHandle_t)CanRxTaskHandle;
+    applicationTaskHandles[2] = (TaskHandle_t)ProtocolTaskHandle;
+    applicationTaskHandles[3] = (TaskHandle_t)UsbTxTaskHandle;
+    applicationTaskHandles[4] = (TaskHandle_t)TelemetryTaskHandle;
+    applicationTaskHandles[5] = (TaskHandle_t)DiagnosticsTaskHandle;
+    for (taskIndex = 0U; taskIndex < 6U; ++taskIndex)
+    {
+      if (applicationTaskHandles[taskIndex] != NULL)
+      {
+        UBaseType_t stackWords = uxTaskGetStackHighWaterMark(
+            applicationTaskHandles[taskIndex]);
+
+        if ((uint32_t)stackWords < minimumStackWords)
+        {
+          minimumStackWords = (uint32_t)stackWords;
+        }
+      }
+    }
+    runtimeSample.can_rx_frames = platformDiagnostics->can_rx_frame_count;
+    runtimeSample.can_tx_frames = platformDiagnostics->can_tx_success_count;
+    runtimeSample.can_rx_overflow_count =
+        platformDiagnostics->can_rx_overflow_count;
+    runtimeSample.can_tx_error_count = platformDiagnostics->can_tx_error_count;
+    runtimeSample.can_bus_off_count = platformDiagnostics->can_bus_off_count;
+    runtimeSample.can_tx_queue_high_watermark =
+        platformDiagnostics->can_tx_queue_high_watermark;
+    runtimeSample.control_group_reject_count =
+        platformDiagnostics->control_group_reject_count;
+    runtimeSample.usb_rx_bytes = platformDiagnostics->usb_rx_byte_count;
+    runtimeSample.usb_rx_overflow_count =
+        platformDiagnostics->usb_rx_overflow_count;
+    runtimeSample.usb_overlong_line_count =
+        platformDiagnostics->usb_overlong_line_count;
+    runtimeSample.usb_high_queue_high_watermark =
+        platformDiagnostics->usb_high_queue_high_watermark;
+    runtimeSample.usb_query_queue_high_watermark =
+        platformDiagnostics->usb_query_queue_high_watermark;
+    runtimeSample.usb_telemetry_queue_high_watermark =
+        platformDiagnostics->usb_telemetry_queue_high_watermark;
+    runtimeSample.usb_telemetry_drop_count =
+        platformDiagnostics->usb_telemetry_drop_count;
+    runtimeSample.usb_high_queue_full_count =
+        platformDiagnostics->usb_high_queue_full_count;
+    runtimeSample.usb_transmit_busy_count =
+        platformDiagnostics->usb_transmit_busy_count;
+    runtimeSample.usb_transmit_error_count =
+        platformDiagnostics->usb_transmit_error_count;
+    runtimeSample.control_group_skew_max_us =
+        DIAGNOSTIC_WATERMARK_NOT_SAMPLED;
+    runtimeSample.minimum_stack_words = minimumStackWords;
+    runtimeSample.minimum_heap_bytes = (uint32_t)xPortGetFreeHeapSize();
+    aethor_app_update_runtime_diagnostics(&runtimeSample);
+    {
+      uint32_t transportFaultDetail = 0U;
+
+      if (platformDiagnostics->can_rx_overflow_count >
+          previousCanRxOverflowCount)
+      {
+        transportFaultDetail |= 1U;
+      }
+      if (platformDiagnostics->can_bus_off_count > previousCanBusOffCount)
+      {
+        transportFaultDetail |= 2U;
+      }
+      if (platformDiagnostics->usb_high_queue_full_count >
+          previousUsbHighQueueFullCount)
+      {
+        transportFaultDetail |= 4U;
+      }
+      previousCanRxOverflowCount =
+          platformDiagnostics->can_rx_overflow_count;
+      previousCanBusOffCount = platformDiagnostics->can_bus_off_count;
+      previousUsbHighQueueFullCount =
+          platformDiagnostics->usb_high_queue_full_count;
+      if ((transportFaultDetail != 0U) &&
+          (aethor_app_report_transport_fault(
+               transportFaultDetail,
+               (uint64_t)HAL_GetTick() * 1000ULL) != 0U) &&
+          (ProtocolTaskHandle != NULL))
+      {
+        (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
+      }
+    }
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(100U));
   }
 }

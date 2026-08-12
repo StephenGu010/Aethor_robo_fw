@@ -57,6 +57,7 @@ static ProtocolEngine application_protocol_engine;
 static MotorEmergencyFrameBatch application_emergency_disable_batch;
 static uint8_t application_emergency_disable_read_index;
 static AethorAppAction application_action;
+static uint64_t application_last_service_timestamp_us;
 static uint8_t application_initialized;
 
 /** @brief Maps the public arm mode to the vendor identifier offset. */
@@ -82,6 +83,7 @@ static uint8_t aethor_app_complete_action(ProtocolCommandResultCode code,
     result.detail = detail;
     result.completed_at_us = timestamp_us;
     memset(&application_action, 0, sizeof(application_action));
+    application_last_service_timestamp_us = 0U;
     return protocol_engine_submit_command_result(&application_protocol_engine,
                                                  &result);
 }
@@ -194,6 +196,27 @@ static void aethor_app_latch_motion_failure(uint16_t detail,
     (void)motor_runtime_build_emergency_disable(
         &application_motor_runtime,
         &application_emergency_disable_batch);
+}
+
+/** @brief Returns the first formal-arm driver fault detail, or zero. */
+static uint32_t aethor_app_first_driver_fault_detail(
+    const MotorFeedbackSnapshot *snapshot)
+{
+    uint8_t joint_index;
+
+    if (snapshot == NULL)
+    {
+        return 0U;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (snapshot->joints[joint_index].fault_flags != 0U)
+        {
+            return ((uint32_t)(joint_index + 1U) << 24) |
+                   (snapshot->joints[joint_index].fault_flags & 0x00FFFFFFUL);
+        }
+    }
+    return 0U;
 }
 
 /** @brief Checks one selected feedback field against an exact driver state. */
@@ -1249,6 +1272,19 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         MotorFeedbackSnapshot motor_snapshot;
         ProtocolCommand command;
         MotorRuntimeStatus snapshot_status;
+        ArmSnapshot arm_snapshot;
+
+        if ((application_last_service_timestamp_us != 0U) &&
+            (timestamp_us >= application_last_service_timestamp_us))
+        {
+            uint64_t period_us = timestamp_us -
+                                 application_last_service_timestamp_us;
+
+            diagnostics_record_control_period(
+                &application_diagnostics,
+                (period_us > UINT32_MAX) ? UINT32_MAX : (uint32_t)period_us);
+        }
+        application_last_service_timestamp_us = timestamp_us;
 
         memset(&motor_snapshot, 0, sizeof(motor_snapshot));
         snapshot_status = motor_runtime_get_snapshot(
@@ -1263,6 +1299,59 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                                           timestamp_us);
         }
         arm_controller_step(&application_controller, timestamp_us);
+
+        memset(&arm_snapshot, 0, sizeof(arm_snapshot));
+        (void)arm_controller_get_snapshot(&application_controller,
+                                          &arm_snapshot);
+        if ((arm_snapshot.enabled != 0U) || (arm_snapshot.moving != 0U))
+        {
+            uint32_t driver_fault_detail =
+                aethor_app_first_driver_fault_detail(&motor_snapshot);
+            ArmFault runtime_fault = ARM_FAULT_NONE;
+            uint32_t runtime_fault_detail = 0U;
+
+            if (driver_fault_detail != 0U)
+            {
+                runtime_fault = ARM_FAULT_DRIVER;
+                runtime_fault_detail = driver_fault_detail;
+            }
+            else if ((snapshot_status != MOTOR_RUNTIME_STATUS_OK) ||
+                     (motor_snapshot.valid_joint_mask !=
+                      AETHOR_APP_ALL_JOINTS_MASK))
+            {
+                runtime_fault = ARM_FAULT_FEEDBACK_STALE;
+                runtime_fault_detail = motor_snapshot.valid_joint_mask;
+            }
+            else if (application_diagnostics.counters
+                         .control_consecutive_miss_count >= 3U)
+            {
+                runtime_fault = ARM_FAULT_CONTROL_DEADLINE;
+                runtime_fault_detail = application_diagnostics.counters
+                                           .control_consecutive_miss_count;
+            }
+            if (runtime_fault != ARM_FAULT_NONE)
+            {
+                if (application_action.state != AETHOR_APP_ACTION_IDLE)
+                {
+                    result_generated = aethor_app_complete_action(
+                        PROTOCOL_COMMAND_RESULT_FAILED,
+                        (uint16_t)runtime_fault,
+                        timestamp_us);
+                }
+                (void)arm_controller_latch_runtime_fault(
+                    &application_controller,
+                    runtime_fault,
+                    runtime_fault_detail,
+                    timestamp_us);
+                application_emergency_disable_read_index = 0U;
+                (void)motor_runtime_build_emergency_disable(
+                    &application_motor_runtime,
+                    &application_emergency_disable_batch);
+                protocol_engine_cancel_pending_commands(
+                    &application_protocol_engine);
+                return result_generated;
+            }
+        }
 
         if (protocol_engine_watchdog_expired(&application_protocol_engine,
                                              timestamp_us) != 0U)
@@ -1416,4 +1505,47 @@ bool aethor_app_get_diagnostic_counters(DiagnosticCounters *counters)
     }
 
     return diagnostics_get_counters(&application_diagnostics, counters);
+}
+
+/**
+ * @brief Applies one platform-neutral transport/resource diagnostic sample.
+ */
+void aethor_app_update_runtime_diagnostics(
+    const RuntimeDiagnosticSample *sample)
+{
+    if ((application_initialized != 0U) && (sample != NULL))
+    {
+        diagnostics_update_runtime_sample(&application_diagnostics, sample);
+    }
+}
+
+/**
+ * @brief Latches a severe platform transport fault and schedules all-axis disable.
+ */
+uint8_t aethor_app_report_transport_fault(uint32_t detail,
+                                          uint64_t timestamp_us)
+{
+    uint8_t result_generated = 0U;
+
+    if (application_initialized == 0U)
+    {
+        return 0U;
+    }
+    if (application_action.state != AETHOR_APP_ACTION_IDLE)
+    {
+        result_generated = aethor_app_complete_action(
+            PROTOCOL_COMMAND_RESULT_FAILED,
+            (uint16_t)ARM_FAULT_TRANSPORT,
+            timestamp_us);
+    }
+    (void)arm_controller_latch_runtime_fault(&application_controller,
+                                             ARM_FAULT_TRANSPORT,
+                                             detail,
+                                             timestamp_us);
+    protocol_engine_cancel_pending_commands(&application_protocol_engine);
+    application_emergency_disable_read_index = 0U;
+    (void)motor_runtime_build_emergency_disable(
+        &application_motor_runtime,
+        &application_emergency_disable_batch);
+    return result_generated;
 }

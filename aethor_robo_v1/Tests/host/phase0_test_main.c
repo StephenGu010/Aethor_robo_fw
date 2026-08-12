@@ -318,6 +318,16 @@ static void test_arm_controller_enters_unaligned_after_self_test(void)
     assert(snapshot.state == ARM_STATE_UNALIGNED);
     assert(snapshot.fault == ARM_FAULT_NONE);
     assert(snapshot.aligned == 0U);
+
+    assert(arm_controller_mark_reference_aligned(&controller, 4000U) ==
+           ARM_TRANSITION_STATUS_OK);
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_DISABLED);
+    assert(snapshot.aligned == 1U);
+    assert(snapshot.enabled == 0U);
+    assert(snapshot.moving == 0U);
+    assert(arm_controller_mark_reference_aligned(&controller, 5000U) ==
+           ARM_TRANSITION_STATUS_OK);
 }
 
 /**

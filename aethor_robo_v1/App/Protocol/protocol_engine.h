@@ -20,6 +20,7 @@
 #define PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY (32U)
 #define PROTOCOL_ENGINE_RECENT_RESULT_RETENTION_US (60000000ULL)
 #define PROTOCOL_ENGINE_COMMAND_CAPACITY (8U)
+#define PROTOCOL_ENGINE_RESULT_CAPACITY (8U)
 #define PROTOCOL_ENGINE_HEARTBEAT_PERIOD_US (250000ULL)
 #define PROTOCOL_ENGINE_WATCHDOG_TIMEOUT_US (1000000ULL)
 
@@ -80,10 +81,60 @@ typedef struct
     uint64_t timestamp_us;
 } ProtocolQueryContext;
 
+/** @brief Identifies one state-changing command accepted by the protocol task. */
+typedef enum
+{
+    PROTOCOL_COMMAND_ALIGN_REFERENCE = 0,
+    PROTOCOL_COMMAND_SET_MODE,
+    PROTOCOL_COMMAND_ENABLE,
+    PROTOCOL_COMMAND_STOP,
+    PROTOCOL_COMMAND_DISABLE,
+    PROTOCOL_COMMAND_CLEAR_FAULT,
+    PROTOCOL_COMMAND_MOVE_JOINTS,
+    PROTOCOL_COMMAND_INIT_MOTORS,
+    PROTOCOL_COMMAND_MOVE_RELATIVE
+} ProtocolCommandType;
+
+/** @brief Owns one validated fixed-size command transferred to ArmControlTask. */
+typedef struct
+{
+    float values[ARM_JOINT_COUNT];
+    float speeds[ARM_JOINT_COUNT];
+    uint64_t accepted_at_us;
+    uint32_t request_id;
+    uint32_t session_id;
+    ProtocolCommandType type;
+    uint8_t motor_mask;
+} ProtocolCommand;
+
+/** @brief Identifies one terminal action result produced by ArmControlTask. */
+typedef enum
+{
+    PROTOCOL_COMMAND_RESULT_COMPLETED = 0,
+    PROTOCOL_COMMAND_RESULT_STOPPED,
+    PROTOCOL_COMMAND_RESULT_FAILED,
+    PROTOCOL_COMMAND_RESULT_CANCELLED
+} ProtocolCommandResultCode;
+
+/** @brief Owns one bounded terminal command result transferred to ProtocolTask. */
+typedef struct
+{
+    float values[ARM_JOINT_COUNT];
+    float auxiliary_values[ARM_JOINT_COUNT];
+    uint64_t completed_at_us;
+    uint32_t request_id;
+    uint32_t session_id;
+    ProtocolCommandType type;
+    ProtocolCommandResultCode code;
+    uint16_t detail;
+} ProtocolCommandResult;
+
 /** @brief Owns the fixed current session and bounded recent-result cache. */
 typedef struct
 {
     ProtocolRecentResult recent_results[PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY];
+    ProtocolCommand commands[PROTOCOL_ENGINE_COMMAND_CAPACITY];
+    ProtocolCommandResult results[PROTOCOL_ENGINE_RESULT_CAPACITY];
     ProtocolQueryContext query_context;
     char stream_fields[64];
     uint64_t last_valid_request_at_us;
@@ -91,6 +142,10 @@ typedef struct
     uint32_t session_id;
     uint32_t next_session_nonce;
     uint8_t recent_write_index;
+    volatile uint8_t command_write_sequence;
+    volatile uint8_t command_read_sequence;
+    volatile uint8_t result_write_sequence;
+    volatile uint8_t result_read_sequence;
     uint8_t stream_rate_hz;
     uint8_t query_context_valid;
     uint8_t session_active;
@@ -112,6 +167,35 @@ void protocol_engine_init(ProtocolEngine *engine, uint32_t boot_id);
 void protocol_engine_update_query_context(
     ProtocolEngine *engine,
     const ProtocolQueryContext *query_context);
+
+/**
+ * @brief Pops the oldest accepted business command for ArmControlTask.
+ * @param engine Initialized engine.
+ * @param command Destination command.
+ * @return One when a command was copied, otherwise zero.
+ */
+uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
+                                    ProtocolCommand *command);
+
+/**
+ * @brief Submits one terminal result from ArmControlTask without formatting.
+ * @param engine Initialized engine.
+ * @param result Immutable terminal result.
+ * @return One when queued, otherwise zero.
+ */
+uint8_t protocol_engine_submit_command_result(
+    ProtocolEngine *engine,
+    const ProtocolCommandResult *result);
+
+/**
+ * @brief Formats the oldest terminal result and replaces its replay cache entry.
+ * @param engine Initialized engine.
+ * @param output_batch Destination DONE output.
+ * @return One when a result was formatted, otherwise zero.
+ */
+uint8_t protocol_engine_pop_result_output(
+    ProtocolEngine *engine,
+    ProtocolOutputBatch *output_batch);
 
 /**
  * @brief Processes one complete CRC-protected request line.

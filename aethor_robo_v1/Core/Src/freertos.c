@@ -185,7 +185,11 @@ void StartArmControlTask(void const * argument)
     CanFrame pendingFrame;
     CanTxPriority pendingPriority;
 
-    aethor_app_service(timestampUs);
+    if ((aethor_app_service(timestampUs) != 0U) &&
+        (ProtocolTaskHandle != NULL))
+    {
+      (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
+    }
     if (aethor_app_next_can_frame(timestampUs,
                                   &pendingFrame,
                                   &pendingPriority) ==
@@ -254,6 +258,10 @@ void StartProtocolTask(void const * argument)
     UsbCdcStreamStatus lineStatus;
 
     (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    while (aethor_app_pop_protocol_result_output(&outputBatch) != 0U)
+    {
+      QueueProtocolOutputBatch(&outputBatch);
+    }
     do
     {
       uint16_t lineLength = 0U;

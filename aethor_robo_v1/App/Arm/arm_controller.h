@@ -38,6 +38,14 @@ typedef enum
     ARM_FAULT_CONFIG_INCOMPLETE
 } ArmFault;
 
+/** @brief Reports whether a requested arm-domain transition was accepted. */
+typedef enum
+{
+    ARM_TRANSITION_STATUS_OK = 0,
+    ARM_TRANSITION_STATUS_INVALID_ARGUMENT,
+    ARM_TRANSITION_STATUS_INVALID_STATE
+} ArmTransitionStatus;
+
 /**
  * @brief Owns the Phase 0 arm state without hardware or motor dependencies.
  */
@@ -88,6 +96,16 @@ void arm_controller_init(ArmController *controller,
  * @param timestamp_us Current monotonic time in microseconds.
  */
 void arm_controller_step(ArmController *controller, uint64_t timestamp_us);
+
+/**
+ * @brief Commits successful RAM reference alignment into the arm state machine.
+ * @param controller Initialized controller.
+ * @param timestamp_us Transition timestamp.
+ * @return OK only from UNALIGNED or already aligned DISABLED.
+ */
+ArmTransitionStatus arm_controller_mark_reference_aligned(
+    ArmController *controller,
+    uint64_t timestamp_us);
 
 /**
  * @brief Copies the current controller state.

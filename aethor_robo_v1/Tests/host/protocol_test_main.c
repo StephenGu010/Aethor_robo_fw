@@ -340,6 +340,72 @@ static void test_protocol_engine_query_dispatch(void)
 }
 
 /**
+ * @brief Verifies ALIGN_REFERENCE has replay-safe ACK and terminal DONE phases.
+ */
+static void test_protocol_engine_align_reference_lifecycle(void)
+{
+    ProtocolEngine engine;
+    ProtocolQueryContext query_context;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    ProtocolCommandResult result;
+    char request_frame[256];
+    size_t request_length;
+
+    memset(&query_context, 0, sizeof(query_context));
+    query_context.arm.state = ARM_STATE_UNALIGNED;
+    query_context.motors.valid_joint_mask = 0x7FU;
+    protocol_engine_init(&engine, 9876U);
+    request_length = build_request_frame(
+        "REQ 1 HELLO client=test protocol=1",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        1000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    protocol_engine_update_query_context(&engine, &query_context);
+
+    request_length = build_request_frame(
+        "REQ 20 ALIGN_REFERENCE q_ref_deg=10,-20,0,0,0,0,0",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "ACK 20 accepted") != NULL);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_ALIGN_REFERENCE);
+    assert(command.request_id == 20U);
+    assert(command.values[0] == 10.0F);
+    assert(command.values[1] == -20.0F);
+    assert(protocol_engine_pop_command(&engine, &command) == 0U);
+
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2100U, &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_REPLAYED);
+    assert(strstr(output_batch.messages[0].data, "ACK 20 accepted") != NULL);
+    assert(protocol_engine_pop_command(&engine, &command) == 0U);
+
+    memset(&result, 0, sizeof(result));
+    result.request_id = 20U;
+    result.session_id = engine.session_id;
+    result.type = PROTOCOL_COMMAND_ALIGN_REFERENCE;
+    result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
+    result.completed_at_us = 3000U;
+    result.values[0] = 10.0F;
+    result.auxiliary_values[0] = 1.5F;
+    assert(protocol_engine_submit_command_result(&engine, &result) == 1U);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data, "DONE 20 COMPLETED") != NULL);
+    assert(strstr(output_batch.messages[0].data, "q_deg=10.000") != NULL);
+    assert(strstr(output_batch.messages[0].data, "bias_deg=1.500") != NULL);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) == 0U);
+
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        3100U, &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_REPLAYED);
+    assert(strstr(output_batch.messages[0].data, "DONE 20 COMPLETED") != NULL);
+}
+
+/**
  * @brief Runs all protocol contract tests.
  * @return Zero when every assertion passes.
  */
@@ -352,6 +418,7 @@ int main(void)
     test_field_lookup();
     test_protocol_engine_session_lifecycle();
     test_protocol_engine_query_dispatch();
+    test_protocol_engine_align_reference_lifecycle();
     puts("PROTOCOL_TESTS_PASSED");
     return 0;
 }

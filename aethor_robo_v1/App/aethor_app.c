@@ -153,23 +153,86 @@ bool aethor_app_get_motor_snapshot(uint64_t timestamp_us,
  * @brief Executes one non-blocking Phase 0 application service cycle.
  * @param timestamp_us Current monotonic time in microseconds.
  */
-void aethor_app_service(uint64_t timestamp_us)
+uint8_t aethor_app_service(uint64_t timestamp_us)
 {
+    uint8_t result_generated = 0U;
+
     if (application_initialized != 0U)
     {
         MotorFeedbackSnapshot motor_snapshot;
+        ProtocolCommand command;
+        MotorRuntimeStatus snapshot_status;
 
-        if (motor_runtime_get_snapshot(&application_motor_runtime,
-                                       timestamp_us,
-                                       MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
-                                       &motor_snapshot) == MOTOR_RUNTIME_STATUS_OK)
+        memset(&motor_snapshot, 0, sizeof(motor_snapshot));
+        snapshot_status = motor_runtime_get_snapshot(
+            &application_motor_runtime,
+            timestamp_us,
+            MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
+            &motor_snapshot);
+        if (snapshot_status == MOTOR_RUNTIME_STATUS_OK)
         {
             (void)joint_reference_publish(&application_joint_reference,
                                           &motor_snapshot,
                                           timestamp_us);
         }
         arm_controller_step(&application_controller, timestamp_us);
+
+        if (protocol_engine_pop_command(&application_protocol_engine,
+                                        &command) != 0U)
+        {
+            ProtocolCommandResult result;
+
+            memset(&result, 0, sizeof(result));
+            result.request_id = command.request_id;
+            result.session_id = command.session_id;
+            result.type = command.type;
+            result.completed_at_us = timestamp_us;
+            result.code = PROTOCOL_COMMAND_RESULT_FAILED;
+            if (command.type == PROTOCOL_COMMAND_ALIGN_REFERENCE)
+            {
+                JointReferenceStatus reference_status =
+                    (snapshot_status == MOTOR_RUNTIME_STATUS_OK)
+                        ? joint_reference_align(&application_joint_reference,
+                                                &motor_snapshot,
+                                                command.values,
+                                                timestamp_us)
+                        : JOINT_REFERENCE_STATUS_FEEDBACK_INCOMPLETE;
+                result.detail = (uint16_t)reference_status;
+                if ((reference_status == JOINT_REFERENCE_STATUS_OK) &&
+                    (arm_controller_mark_reference_aligned(
+                         &application_controller,
+                         timestamp_us) == ARM_TRANSITION_STATUS_OK))
+                {
+                    result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
+                    result.detail = 0U;
+                    memcpy(result.values,
+                           command.values,
+                           sizeof(result.values));
+                    (void)joint_reference_get_bias_degrees(
+                        &application_joint_reference,
+                        result.auxiliary_values);
+                }
+            }
+            result_generated = protocol_engine_submit_command_result(
+                &application_protocol_engine,
+                &result);
+        }
     }
+    return result_generated;
+}
+
+/**
+ * @brief Formats one pending terminal command result for ProtocolTask.
+ */
+uint8_t aethor_app_pop_protocol_result_output(
+    ProtocolOutputBatch *output_batch)
+{
+    if ((application_initialized == 0U) || (output_batch == NULL))
+    {
+        return 0U;
+    }
+    return protocol_engine_pop_result_output(&application_protocol_engine,
+                                             output_batch);
 }
 
 /**

@@ -26,7 +26,7 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id);
  * @brief Executes one non-blocking Phase 0 application service cycle.
  * @param timestamp_us Current monotonic time in microseconds.
  */
-void aethor_app_service(uint64_t timestamp_us);
+uint8_t aethor_app_service(uint64_t timestamp_us);
 
 /**
  * @brief Produces the next bounded CAN service frame for the platform scheduler.
@@ -77,6 +77,14 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
  * @return One exactly once per timeout, otherwise zero.
  */
 uint8_t aethor_app_protocol_watchdog_expired(uint64_t timestamp_us);
+
+/**
+ * @brief Formats one pending terminal command result for ProtocolTask.
+ * @param output_batch Destination output batch.
+ * @return One when a result was available, otherwise zero.
+ */
+uint8_t aethor_app_pop_protocol_result_output(
+    ProtocolOutputBatch *output_batch);
 
 /**
  * @brief Copies the current arm state snapshot.

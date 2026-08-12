@@ -240,3 +240,29 @@ JointReferenceStatus joint_reference_get_snapshot(
     }
     return JOINT_REFERENCE_STATUS_SNAPSHOT_BUSY;
 }
+
+/**
+ * @brief Copies the current boot-volatile joint bias in public degree units.
+ */
+JointReferenceStatus joint_reference_get_bias_degrees(
+    const JointReference *reference,
+    float bias_degrees[ARM_JOINT_COUNT])
+{
+    uint8_t joint_index;
+
+    if ((reference == NULL) || (bias_degrees == NULL) ||
+        (reference->initialized == 0U))
+    {
+        return JOINT_REFERENCE_STATUS_INVALID_ARGUMENT;
+    }
+    if (reference->aligned == 0U)
+    {
+        return JOINT_REFERENCE_STATUS_NOT_ALIGNED;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        bias_degrees[joint_index] =
+            reference->bias_rad[joint_index] * JOINT_REFERENCE_RAD_TO_DEG;
+    }
+    return JOINT_REFERENCE_STATUS_OK;
+}

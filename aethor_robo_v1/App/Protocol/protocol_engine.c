@@ -5,14 +5,18 @@
 
 #include "protocol_engine.h"
 
+#include <float.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "build_info.h"
 #include "arm_config.h"
 
 #define PROTOCOL_ENGINE_RAD_TO_DEG (57.29577951308232F)
+#define PROTOCOL_ENGINE_ALL_JOINTS_MASK ((uint8_t)0x7FU)
+#define PROTOCOL_ENGINE_FLOAT_TOKEN_CAPACITY (32U)
 
 /** @brief Selects one joint configuration vector for deterministic formatting. */
 typedef enum
@@ -72,6 +76,85 @@ static uint8_t protocol_engine_parse_u32(const AsciiProtocolSpan *span,
         parsed_value = (parsed_value * 10U) + digit;
     }
     *value = parsed_value;
+    return 1U;
+}
+
+/** @brief Prevents compiler reordering across SPSC queue ownership edges. */
+static void protocol_engine_compiler_barrier(void)
+{
+#if defined(__CC_ARM)
+    __schedule_barrier();
+#elif defined(__GNUC__) || defined(__clang__)
+    __asm__ volatile ("" ::: "memory");
+#else
+    volatile uint32_t barrier_value = 0U;
+    (void)barrier_value;
+#endif
+}
+
+/** @brief Parses exactly seven finite comma-separated float values. */
+static uint8_t protocol_engine_parse_joint_vector(
+    const AsciiProtocolSpan *span,
+    float values[ARM_JOINT_COUNT])
+{
+    uint16_t token_start = 0U;
+    uint16_t character_index;
+    uint8_t value_index = 0U;
+
+    if ((span == NULL) || (values == NULL) || (span->length == 0U))
+    {
+        return 0U;
+    }
+    for (character_index = 0U; character_index <= span->length; ++character_index)
+    {
+        if ((character_index == span->length) ||
+            (span->data[character_index] == ','))
+        {
+            char token[PROTOCOL_ENGINE_FLOAT_TOKEN_CAPACITY];
+            char *parse_end;
+            double parsed_value;
+            uint16_t token_length = (uint16_t)(character_index - token_start);
+
+            if ((value_index >= ARM_JOINT_COUNT) || (token_length == 0U) ||
+                (token_length >= sizeof(token)))
+            {
+                return 0U;
+            }
+            memcpy(token, &span->data[token_start], token_length);
+            token[token_length] = '\0';
+            parse_end = NULL;
+            parsed_value = strtod(token, &parse_end);
+            if ((parse_end == token) || (*parse_end != '\0') ||
+                (parsed_value != parsed_value) ||
+                (parsed_value > FLT_MAX) || (parsed_value < -FLT_MAX))
+            {
+                return 0U;
+            }
+            values[value_index] = (float)parsed_value;
+            ++value_index;
+            token_start = (uint16_t)(character_index + 1U);
+        }
+    }
+    return (uint8_t)(value_index == ARM_JOINT_COUNT);
+}
+
+/** @brief Enqueues one normal business command into the bounded SPSC ring. */
+static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
+                                               const ProtocolCommand *command)
+{
+    uint8_t used_count = (uint8_t)(engine->command_write_sequence -
+                                   engine->command_read_sequence);
+    uint8_t slot_index;
+
+    if (used_count >= PROTOCOL_ENGINE_COMMAND_CAPACITY)
+    {
+        return 0U;
+    }
+    slot_index = (uint8_t)(engine->command_write_sequence %
+                           PROTOCOL_ENGINE_COMMAND_CAPACITY);
+    engine->commands[slot_index] = *command;
+    protocol_engine_compiler_barrier();
+    ++engine->command_write_sequence;
     return 1U;
 }
 
@@ -217,6 +300,30 @@ static uint8_t protocol_engine_append_config_vector(
                                              "%s%.3f",
                                              separator,
                                              value) == 0U)
+        {
+            return 0U;
+        }
+    }
+    return 1U;
+}
+
+/** @brief Appends one public seven-axis value vector with three decimals. */
+static uint8_t protocol_engine_append_joint_vector(
+    char *body,
+    size_t body_capacity,
+    size_t *body_length,
+    const float values[ARM_JOINT_COUNT])
+{
+    uint8_t joint_index;
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (protocol_engine_append_text(body,
+                                        body_capacity,
+                                        body_length,
+                                        "%s%.3f",
+                                        (joint_index == 0U) ? "" : ",",
+                                        values[joint_index]) == 0U)
         {
             return 0U;
         }
@@ -429,6 +536,8 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
 
     memset(engine->recent_results, 0, sizeof(engine->recent_results));
     engine->recent_write_index = 0U;
+    engine->command_read_sequence = engine->command_write_sequence;
+    engine->result_read_sequence = engine->result_write_sequence;
     engine->session_id = protocol_engine_create_session(engine,
                                                         request->request_id,
                                                         timestamp_us);
@@ -931,6 +1040,84 @@ static ProtocolEngineStatus protocol_engine_handle_set_stream(
                                          engine->stream_fields);
 }
 
+/** @brief Validates and queues one boot-volatile reference alignment command. */
+static ProtocolEngineStatus protocol_engine_handle_align_reference(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    AsciiProtocolSpan reference_span;
+    ProtocolCommand command;
+    ArmState state;
+
+    if (ascii_protocol_find_field(request, "q_ref_deg", &reference_span) == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu MISSING_FIELD field=q_ref_deg",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    memset(&command, 0, sizeof(command));
+    if (protocol_engine_parse_joint_vector(&reference_span, command.values) == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BAD_VALUE field=q_ref_deg",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (engine->query_context_valid == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu INTERNAL_ERROR context=reference",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    state = engine->query_context.arm.state;
+    if (((state != ARM_STATE_UNALIGNED) && (state != ARM_STATE_DISABLED)) ||
+        (engine->query_context.arm.enabled != 0U) ||
+        (engine->query_context.arm.moving != 0U))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu INVALID_STATE state=%s",
+                                            (unsigned long)request->request_id,
+                                            protocol_engine_arm_state_text(state));
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (engine->query_context.motors.valid_joint_mask !=
+        PROTOCOL_ENGINE_ALL_JOINTS_MASK)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu FEEDBACK_STALE valid_mask=%u",
+                                            (unsigned long)request->request_id,
+                                            engine->query_context.motors.valid_joint_mask);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+
+    command.type = PROTOCOL_COMMAND_ALIGN_REFERENCE;
+    command.request_id = request->request_id;
+    command.session_id = engine->session_id;
+    command.accepted_at_us = timestamp_us;
+    command.motor_mask = PROTOCOL_ENGINE_ALL_JOINTS_MASK;
+    if (protocol_engine_enqueue_command(engine, &command) == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BUSY queue=command",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    return protocol_engine_append_format(output_batch,
+                                         PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                         "ACK %lu accepted",
+                                         (unsigned long)request->request_id);
+}
+
 /**
  * @brief Initializes one protocol engine for the current firmware boot.
  */
@@ -959,6 +1146,160 @@ void protocol_engine_update_query_context(
     }
     engine->query_context = *query_context;
     engine->query_context_valid = 1U;
+}
+
+/**
+ * @brief Pops the oldest accepted business command for ArmControlTask.
+ */
+uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
+                                    ProtocolCommand *command)
+{
+    uint8_t slot_index;
+
+    if ((engine == NULL) || (command == NULL) ||
+        (engine->command_read_sequence == engine->command_write_sequence))
+    {
+        return 0U;
+    }
+    protocol_engine_compiler_barrier();
+    slot_index = (uint8_t)(engine->command_read_sequence %
+                           PROTOCOL_ENGINE_COMMAND_CAPACITY);
+    *command = engine->commands[slot_index];
+    protocol_engine_compiler_barrier();
+    ++engine->command_read_sequence;
+    return 1U;
+}
+
+/**
+ * @brief Submits one terminal result from ArmControlTask without formatting.
+ */
+uint8_t protocol_engine_submit_command_result(
+    ProtocolEngine *engine,
+    const ProtocolCommandResult *result)
+{
+    uint8_t used_count;
+    uint8_t slot_index;
+
+    if ((engine == NULL) || (result == NULL))
+    {
+        return 0U;
+    }
+    used_count = (uint8_t)(engine->result_write_sequence -
+                           engine->result_read_sequence);
+    if (used_count >= PROTOCOL_ENGINE_RESULT_CAPACITY)
+    {
+        return 0U;
+    }
+    slot_index = (uint8_t)(engine->result_write_sequence %
+                           PROTOCOL_ENGINE_RESULT_CAPACITY);
+    engine->results[slot_index] = *result;
+    protocol_engine_compiler_barrier();
+    ++engine->result_write_sequence;
+    return 1U;
+}
+
+/** @brief Returns stable terminal text for one command result code. */
+static const char *protocol_engine_result_text(ProtocolCommandResultCode code)
+{
+    switch (code)
+    {
+        case PROTOCOL_COMMAND_RESULT_COMPLETED:
+            return "COMPLETED";
+        case PROTOCOL_COMMAND_RESULT_STOPPED:
+            return "STOPPED";
+        case PROTOCOL_COMMAND_RESULT_CANCELLED:
+            return "CANCELLED";
+        case PROTOCOL_COMMAND_RESULT_FAILED:
+        default:
+            return "FAILED";
+    }
+}
+
+/**
+ * @brief Formats the oldest terminal result and replaces its replay cache entry.
+ */
+uint8_t protocol_engine_pop_result_output(
+    ProtocolEngine *engine,
+    ProtocolOutputBatch *output_batch)
+{
+    char body[PROTOCOL_MAX_LINE_LENGTH + 1U];
+    size_t body_length = 0U;
+    ProtocolCommandResult result;
+    ProtocolRecentResult *recent_result;
+    uint8_t slot_index;
+
+    if ((engine == NULL) || (output_batch == NULL))
+    {
+        return 0U;
+    }
+    do
+    {
+        if (engine->result_read_sequence == engine->result_write_sequence)
+        {
+            return 0U;
+        }
+        protocol_engine_compiler_barrier();
+        slot_index = (uint8_t)(engine->result_read_sequence %
+                               PROTOCOL_ENGINE_RESULT_CAPACITY);
+        result = engine->results[slot_index];
+        protocol_engine_compiler_barrier();
+        ++engine->result_read_sequence;
+    } while (result.session_id != engine->session_id);
+
+    protocol_engine_clear_output(output_batch);
+    if (protocol_engine_append_text(body,
+                                    sizeof(body),
+                                    &body_length,
+                                    "DONE %lu %s detail=%u",
+                                    (unsigned long)result.request_id,
+                                    protocol_engine_result_text(result.code),
+                                    result.detail) == 0U)
+    {
+        return 0U;
+    }
+    if ((result.type == PROTOCOL_COMMAND_ALIGN_REFERENCE) &&
+        (result.code == PROTOCOL_COMMAND_RESULT_COMPLETED))
+    {
+        if ((protocol_engine_append_text(body,
+                                         sizeof(body),
+                                         &body_length,
+                                         " q_deg=") == 0U) ||
+            (protocol_engine_append_joint_vector(body,
+                                                 sizeof(body),
+                                                 &body_length,
+                                                 result.values) == 0U) ||
+            (protocol_engine_append_text(body,
+                                         sizeof(body),
+                                         &body_length,
+                                         " bias_deg=") == 0U) ||
+            (protocol_engine_append_joint_vector(body,
+                                                 sizeof(body),
+                                                 &body_length,
+                                                 result.auxiliary_values) == 0U))
+        {
+            return 0U;
+        }
+    }
+    if (protocol_engine_append_body(output_batch,
+                                    PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                    body) != PROTOCOL_ENGINE_STATUS_OK)
+    {
+        return 0U;
+    }
+
+    recent_result = protocol_engine_find_recent(engine,
+                                                result.request_id,
+                                                result.completed_at_us);
+    if (recent_result != NULL)
+    {
+        recent_result->completed_at_us = result.completed_at_us;
+        recent_result->response_length = output_batch->messages[0].length;
+        recent_result->priority = output_batch->messages[0].priority;
+        memcpy(recent_result->response,
+               output_batch->messages[0].data,
+               (size_t)recent_result->response_length + 1U);
+    }
+    return 1U;
 }
 
 /**
@@ -1099,6 +1440,15 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
         engine_status = protocol_engine_handle_set_stream(engine,
                                                           &request,
                                                           output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request,
+                                                      "ALIGN_REFERENCE") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_align_reference(engine,
+                                                               &request,
+                                                               timestamp_us,
+                                                               output_batch);
     }
     else
     {

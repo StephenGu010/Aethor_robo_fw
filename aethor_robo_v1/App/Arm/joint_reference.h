@@ -92,4 +92,14 @@ JointReferenceStatus joint_reference_get_snapshot(
     const JointReference *reference,
     JointStateSnapshot *snapshot);
 
+/**
+ * @brief Copies the current boot-volatile joint bias in public degree units.
+ * @param reference Initialized and aligned reference domain.
+ * @param bias_degrees Destination seven-axis bias vector.
+ * @return OK or NOT_ALIGNED/INVALID_ARGUMENT.
+ */
+JointReferenceStatus joint_reference_get_bias_degrees(
+    const JointReference *reference,
+    float bias_degrees[ARM_JOINT_COUNT]);
+
 #endif

@@ -149,6 +149,32 @@ void arm_controller_step(ArmController *controller, uint64_t timestamp_us)
 }
 
 /**
+ * @brief Commits successful RAM reference alignment into the arm state machine.
+ */
+ArmTransitionStatus arm_controller_mark_reference_aligned(
+    ArmController *controller,
+    uint64_t timestamp_us)
+{
+    if ((controller == NULL) || (controller->initialized == 0U))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_ARGUMENT;
+    }
+    if ((controller->state != ARM_STATE_UNALIGNED) &&
+        !((controller->state == ARM_STATE_DISABLED) &&
+          (controller->enabled == 0U) && (controller->moving == 0U)))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_STATE;
+    }
+
+    controller->state = ARM_STATE_DISABLED;
+    controller->state_entered_at_us = timestamp_us;
+    controller->aligned = 1U;
+    controller->enabled = 0U;
+    controller->moving = 0U;
+    return ARM_TRANSITION_STATUS_OK;
+}
+
+/**
  * @brief Copies the current controller state.
  * @param controller Initialized controller to inspect.
  * @param snapshot Output snapshot.

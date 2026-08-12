@@ -1588,7 +1588,7 @@ static void test_joint_controller_startup_faults(void)
 }
 
 /**
- * @brief Verifies startup configuration, key debounce, one-turn motion, and hold behavior.
+ * @brief Verifies startup, debounce, alternating one-turn presses, and hold behavior.
  */
 static void test_dual_motor_key_motion(void)
 {
@@ -1771,22 +1771,38 @@ static void test_dual_motor_key_motion(void)
     for (scan_index = 0U; scan_index < 5U; ++scan_index)
     {
         time_ms += 5U;
+        test_dual_motor_inject_feedback(1U, 1U, first_target_rad, 0.0f, time_ms);
+        test_dual_motor_inject_feedback(2U, 1U, second_target_rad, 0.0f, time_ms);
         dual_motor_current_time_ms = time_ms;
         dual_motor_controller_step(time_ms, 0U);
     }
     for (scan_index = 0U; scan_index < 5U; ++scan_index)
     {
         time_ms += 5U;
+        test_dual_motor_inject_feedback(1U, 1U, first_target_rad, 0.0f, time_ms);
+        test_dual_motor_inject_feedback(2U, 1U, second_target_rad, 0.0f, time_ms);
         dual_motor_current_time_ms = time_ms;
         dual_motor_controller_step(time_ms, 1U);
     }
-    expect_float(dual_motor_controller_get_state()->target_position_rad[0],
-                 first_target_rad,
-                 0.0001f,
-                 "later key presses cannot add another revolution");
-    expect_integer(dual_motor_controller_get_state()->move_accepted,
+    expect_integer(dual_motor_controller_get_state()->stage,
+                   DUAL_MOTOR_STAGE_ENABLING,
+                   "a released key can start another move after HOLDING");
+    expect_float(dual_motor_controller_get_state()->target_position_rad[0] -
+                     dual_motor_controller_get_state()->initial_position_rad[0],
+                 -two_pi,
+                 0.001f,
+                 "the second press commands one reverse revolution for motor one");
+    expect_float(dual_motor_controller_get_state()->target_position_rad[1] -
+                     dual_motor_controller_get_state()->initial_position_rad[1],
+                 -two_pi,
+                 0.001f,
+                 "the second press commands one reverse revolution for motor two");
+    expect_integer((int)dual_motor_controller_get_state()->accepted_move_count,
+                   2,
+                   "the diagnostic counter records both accepted presses");
+    expect_integer(dual_motor_controller_get_state()->next_direction,
                    1,
-                   "one-move-per-boot latch remains set");
+                   "the third accepted press will return to the forward direction");
 }
 
 /**

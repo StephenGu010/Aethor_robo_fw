@@ -56,12 +56,14 @@ typedef struct
     DualMotorControllerFault fault_reason;
     uint8_t stable_key_pressed;
     uint8_t move_accepted;
+    int8_t next_direction;
     uint8_t mode_ready_mask;
     uint8_t ranges_ready_mask;
     uint8_t fresh_feedback_mask;
     uint8_t enabled_mask;
     uint8_t arrived_mask;
     uint8_t motor_state[DUAL_MOTOR_COUNT];
+    uint32_t accepted_move_count;
     uint32_t last_feedback_time_ms[DUAL_MOTOR_COUNT];
     float position_max_rad[DUAL_MOTOR_COUNT];
     float velocity_max_rad_s[DUAL_MOTOR_COUNT];

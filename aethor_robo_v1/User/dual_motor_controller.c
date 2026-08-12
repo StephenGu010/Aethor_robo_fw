@@ -65,6 +65,7 @@ static uint8_t dual_motor_request_waiting;
 static uint8_t dual_motor_disable_request_mask;
 static uint8_t dual_motor_arrival_cycle_count[DUAL_MOTOR_COUNT];
 static uint8_t dual_motor_key_candidate_pressed;
+static uint8_t dual_motor_key_press_armed;
 static uint32_t dual_motor_key_candidate_since_ms;
 
 static uint8_t dual_motor_feedback_is_recent(uint32_t current_time_ms);
@@ -277,17 +278,19 @@ static uint8_t dual_motor_update_key(uint32_t current_time_ms, uint8_t raw_key_p
 }
 
 /**
- * @brief Accepts the single permitted press and sends both enable frames.
+ * @brief Accepts one armed press and sends both enable frames for one revolution.
  * @param current_time_ms Current monotonic time in milliseconds.
  */
 static void dual_motor_accept_move(uint32_t current_time_ms)
 {
+    float direction_multiplier = (dual_motor_state.next_direction >= 0) ? 1.0F : -1.0F;
     uint8_t motor_index;
 
     for (motor_index = 0U; motor_index < DUAL_MOTOR_COUNT; ++motor_index)
     {
         float current_position_rad = dual_motor_state.measured_position_rad[motor_index];
-        float target_position_rad = current_position_rad + DUAL_MOTOR_TWO_PI_RAD;
+        float target_position_rad =
+            current_position_rad + direction_multiplier * DUAL_MOTOR_TWO_PI_RAD;
 
         if (!isfinite(current_position_rad) || !isfinite(target_position_rad) ||
             !isfinite(dual_motor_state.position_max_rad[motor_index]) ||
@@ -313,6 +316,9 @@ static void dual_motor_accept_move(uint32_t current_time_ms)
             return;
         }
     }
+    dual_motor_state.accepted_move_count++;
+    dual_motor_state.next_direction =
+        (direction_multiplier > 0.0F) ? -1 : 1;
     dual_motor_state.stage = DUAL_MOTOR_STAGE_ENABLING;
 }
 
@@ -381,9 +387,11 @@ void dual_motor_controller_init(DualMotorSendFunction send_function,
     dual_motor_request_waiting = 0U;
     dual_motor_disable_request_mask = 0U;
     dual_motor_key_candidate_pressed = 0U;
+    dual_motor_key_press_armed = 0U;
     dual_motor_key_candidate_since_ms = current_time_ms;
     dual_motor_state.stage = DUAL_MOTOR_STAGE_BOOT_DELAY;
     dual_motor_state.fault_reason = DUAL_MOTOR_FAULT_NONE;
+    dual_motor_state.next_direction = 1;
 }
 
 /**
@@ -437,8 +445,13 @@ void dual_motor_controller_step(uint32_t current_time_ms,
         {
             return;
         }
-        if ((press_edge != 0U) && (dual_motor_state.move_accepted == 0U))
+        if (dual_motor_state.stable_key_pressed == 0U)
         {
+            dual_motor_key_press_armed = 1U;
+        }
+        if ((press_edge != 0U) && (dual_motor_key_press_armed != 0U))
+        {
+            dual_motor_key_press_armed = 0U;
             dual_motor_accept_move(current_time_ms);
         }
         else
@@ -468,6 +481,19 @@ void dual_motor_controller_step(uint32_t current_time_ms,
     {
         if (dual_motor_feedback_is_recent(current_time_ms) == 0U)
         {
+            return;
+        }
+        if ((dual_motor_state.stage == DUAL_MOTOR_STAGE_HOLDING) &&
+            (dual_motor_state.stable_key_pressed == 0U))
+        {
+            dual_motor_key_press_armed = 1U;
+        }
+        if ((dual_motor_state.stage == DUAL_MOTOR_STAGE_HOLDING) &&
+            (press_edge != 0U) &&
+            (dual_motor_key_press_armed != 0U))
+        {
+            dual_motor_key_press_armed = 0U;
+            dual_motor_accept_move(current_time_ms);
             return;
         }
         if ((dual_motor_state.stage == DUAL_MOTOR_STAGE_MOVING) &&

@@ -606,7 +606,45 @@ static void test_motor_runtime_routes_discovery_and_feedback(void)
     assert(snapshot.valid_joint_mask == 0x01U);
     assert(snapshot.joints[0].mos_temperature_c == 42.0F);
     assert(snapshot.joints[0].rotor_temperature_c == 40.0F);
-    assert(runtime.accepted_feedback_count == 1U);
+    assert(snapshot.joints[0].fault_flags == 0U);
+    assert(runtime.bank.motors[0].state == MOTOR_LIFECYCLE_DISABLED);
+
+    {
+        static const uint8_t enabled_payload[8] = {
+            0x11U, 0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 42U, 40U
+        };
+        CanFrame enabled_frame;
+
+        assert(can_frame_init(&enabled_frame,
+                              0x11U,
+                              enabled_payload,
+                              sizeof(enabled_payload)) == CAN_FRAME_STATUS_OK);
+        assert(motor_runtime_accept_frame(&runtime,
+                                          &enabled_frame,
+                                          timestamp_us + 1U) ==
+               MOTOR_RUNTIME_STATUS_OK);
+        assert(runtime.bank.motors[0].state == MOTOR_LIFECYCLE_ENABLED);
+        assert(runtime.bank.motors[0].feedback.fault_flags == 0U);
+    }
+
+    {
+        static const uint8_t fault_payload[8] = {
+            0x81U, 0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 42U, 40U
+        };
+        CanFrame fault_frame;
+
+        assert(can_frame_init(&fault_frame,
+                              0x11U,
+                              fault_payload,
+                              sizeof(fault_payload)) == CAN_FRAME_STATUS_OK);
+        assert(motor_runtime_accept_frame(&runtime,
+                                          &fault_frame,
+                                          timestamp_us + 2U) ==
+               MOTOR_RUNTIME_STATUS_OK);
+        assert(runtime.bank.motors[0].state == MOTOR_LIFECYCLE_FAULT);
+        assert(runtime.bank.motors[0].feedback.fault_flags == 8U);
+    }
+    assert(runtime.accepted_feedback_count == 3U);
     assert(runtime.accepted_parameter_response_count ==
            (uint32_t)(ARM_JOINT_COUNT * MOTOR_DISCOVERY_REGISTER_COUNT));
 }

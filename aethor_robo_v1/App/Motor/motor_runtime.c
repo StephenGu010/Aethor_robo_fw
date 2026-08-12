@@ -170,7 +170,10 @@ static MotorRuntimeStatus motor_runtime_accept_control_feedback(
     bank_feedback.torque_nm = decoded_feedback.torque_nm;
     bank_feedback.mos_temperature_c = decoded_feedback.mos_temperature_c;
     bank_feedback.rotor_temperature_c = decoded_feedback.rotor_temperature_c;
-    bank_feedback.fault_flags = decoded_feedback.state;
+    bank_feedback.fault_flags =
+        (decoded_feedback.state >= S3519_DRIVER_STATE_FAULT_MINIMUM)
+            ? decoded_feedback.state
+            : 0U;
     bank_feedback.timestamp_us = timestamp_us;
     bank_feedback.driver_state = decoded_feedback.state;
 
@@ -195,9 +198,17 @@ static MotorRuntimeStatus motor_runtime_accept_control_feedback(
         return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
     }
 
-    if (decoded_feedback.state != 0U)
+    if (decoded_feedback.state >= S3519_DRIVER_STATE_FAULT_MINIMUM)
     {
         runtime->bank.motors[joint_index].state = MOTOR_LIFECYCLE_FAULT;
+    }
+    else if (decoded_feedback.state == S3519_DRIVER_STATE_ENABLED)
+    {
+        runtime->bank.motors[joint_index].state = MOTOR_LIFECYCLE_ENABLED;
+    }
+    else
+    {
+        runtime->bank.motors[joint_index].state = MOTOR_LIFECYCLE_DISABLED;
     }
     ++runtime->accepted_feedback_count;
     return MOTOR_RUNTIME_STATUS_OK;

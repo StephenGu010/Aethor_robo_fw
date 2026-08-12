@@ -18,6 +18,9 @@
 #define S3519_KD_MIN (0.0F)
 #define S3519_KD_MAX (5.0F)
 #define S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED (0U)
+#define S3519_DRIVER_STATE_DISABLED (0U)
+#define S3519_DRIVER_STATE_ENABLED (1U)
+#define S3519_DRIVER_STATE_FAULT_MINIMUM (8U)
 
 /**
  * @brief Identifies S3519 CAN identifier offsets for supported control modes.

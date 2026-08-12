@@ -278,14 +278,15 @@ static uint8_t dual_motor_update_key(uint32_t current_time_ms, uint8_t raw_key_p
 }
 
 /**
- * @brief Accepts one armed press and sends both enable frames for one revolution.
- * @param current_time_ms Current monotonic time in milliseconds.
+ * @brief Checks whether both motors can complete one turn in the requested direction.
+ * @param direction_multiplier Positive one for forward or negative one for reverse.
+ * @return One only when both current positions and resulting targets are finite and in range.
  */
-static void dual_motor_accept_move(uint32_t current_time_ms)
+static uint8_t dual_motor_direction_fits(float direction_multiplier)
 {
-    float direction_multiplier = (dual_motor_state.next_direction >= 0) ? 1.0F : -1.0F;
     uint8_t motor_index;
 
+    assert((direction_multiplier == 1.0F) || (direction_multiplier == -1.0F));
     for (motor_index = 0U; motor_index < DUAL_MOTOR_COUNT; ++motor_index)
     {
         float current_position_rad = dual_motor_state.measured_position_rad[motor_index];
@@ -296,9 +297,37 @@ static void dual_motor_accept_move(uint32_t current_time_ms)
             !isfinite(dual_motor_state.position_max_rad[motor_index]) ||
             (fabsf(target_position_rad) > dual_motor_state.position_max_rad[motor_index]))
         {
+            return 0U;
+        }
+    }
+    return 1U;
+}
+
+/**
+ * @brief Accepts one armed press and sends both enable frames for one revolution.
+ * @param current_time_ms Current monotonic time in milliseconds.
+ */
+static void dual_motor_accept_move(uint32_t current_time_ms)
+{
+    float direction_multiplier = (dual_motor_state.next_direction >= 0) ? 1.0F : -1.0F;
+    uint8_t motor_index;
+
+    if (dual_motor_direction_fits(direction_multiplier) == 0U)
+    {
+        direction_multiplier = -direction_multiplier;
+        if (dual_motor_direction_fits(direction_multiplier) == 0U)
+        {
             dual_motor_latch_fault(DUAL_MOTOR_FAULT_TARGET_RANGE, 1U);
             return;
         }
+    }
+
+    for (motor_index = 0U; motor_index < DUAL_MOTOR_COUNT; ++motor_index)
+    {
+        float current_position_rad = dual_motor_state.measured_position_rad[motor_index];
+        float target_position_rad =
+            current_position_rad + direction_multiplier * DUAL_MOTOR_TWO_PI_RAD;
+
         dual_motor_state.initial_position_rad[motor_index] = current_position_rad;
         dual_motor_state.target_position_rad[motor_index] = target_position_rad;
         dual_motor_arrival_cycle_count[motor_index] = 0U;

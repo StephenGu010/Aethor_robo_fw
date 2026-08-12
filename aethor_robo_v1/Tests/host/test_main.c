@@ -1806,6 +1806,61 @@ static void test_dual_motor_key_motion(void)
 }
 
 /**
+ * @brief Verifies that the first press reverses when only the reverse turn fits PMAX.
+ */
+static void test_dual_motor_selects_safe_initial_direction(void)
+{
+    const float first_position_rad = 9.9292f;
+    const float second_position_rad = 12.3554f;
+    const float two_pi = 6.2831853071795864769f;
+    uint32_t time_ms;
+    uint32_t press_cycle;
+
+    test_dual_motor_reset_transport();
+    dual_motor_controller_init(test_dual_motor_send, 0U);
+    time_ms = test_dual_motor_complete_startup(first_position_rad,
+                                               second_position_rad);
+    expect_integer(time_ms != UINT32_MAX,
+                   1,
+                   "safe-direction fixture reaches READY");
+
+    for (press_cycle = 0U; press_cycle < 5U; ++press_cycle)
+    {
+        uint32_t first_frame_index = dual_motor_send_count;
+
+        time_ms += 5U;
+        dual_motor_current_time_ms = time_ms;
+        dual_motor_controller_step(time_ms, 1U);
+        test_dual_motor_respond_to_frames(first_frame_index,
+                                          first_position_rad,
+                                          second_position_rad);
+    }
+
+    expect_integer(dual_motor_controller_get_state()->stage,
+                   DUAL_MOTOR_STAGE_ENABLING,
+                   "first press selects the shared safe direction before enable");
+    expect_integer(dual_motor_controller_get_state()->fault_reason,
+                   DUAL_MOTOR_FAULT_NONE,
+                   "safe reverse fallback avoids a target-range fault");
+    expect_float(dual_motor_controller_get_state()->target_position_rad[0] -
+                     dual_motor_controller_get_state()->initial_position_rad[0],
+                 -two_pi,
+                 0.001f,
+                 "motor one receives one reverse revolution");
+    expect_float(dual_motor_controller_get_state()->target_position_rad[1] -
+                     dual_motor_controller_get_state()->initial_position_rad[1],
+                 -two_pi,
+                 0.001f,
+                 "motor two receives one reverse revolution");
+    expect_integer((int)dual_motor_controller_get_state()->accepted_move_count,
+                   1,
+                   "safe reverse fallback records the accepted press");
+    expect_integer(dual_motor_controller_get_state()->next_direction,
+                   1,
+                   "the next press alternates back toward the positive direction");
+}
+
+/**
  * @brief Verifies ignored early input, configuration retry failure, and Bus-Off latching.
  */
 static void test_dual_motor_startup_and_faults(void)
@@ -1943,7 +1998,7 @@ static void test_dual_motor_runtime_faults(void)
 
     test_dual_motor_reset_transport();
     dual_motor_controller_init(test_dual_motor_send, 0U);
-    time_ms = test_dual_motor_complete_startup(7.0f, 0.0f);
+    time_ms = test_dual_motor_complete_startup(7.0f, -7.0f);
     for (press_cycle = 0U; press_cycle < 5U; ++press_cycle)
     {
         uint32_t first_frame_index = dual_motor_send_count;
@@ -1951,11 +2006,11 @@ static void test_dual_motor_runtime_faults(void)
         time_ms += 5U;
         dual_motor_current_time_ms = time_ms;
         dual_motor_controller_step(time_ms, 1U);
-        test_dual_motor_respond_to_frames(first_frame_index, 7.0f, 0.0f);
+        test_dual_motor_respond_to_frames(first_frame_index, 7.0f, -7.0f);
     }
     expect_integer(dual_motor_controller_get_state()->fault_reason,
                    DUAL_MOTOR_FAULT_TARGET_RANGE,
-                   "a one-turn target beyond PMAX is rejected before enable");
+                   "no shared one-turn direction is rejected before enable");
 
     time_ms = test_dual_motor_start_motion(0.0f, 0.0f);
     expect_integer(time_ms != UINT32_MAX, 1, "runtime timeout fixture reaches MOVING");
@@ -2023,6 +2078,7 @@ int main(void)
     test_joint_controller_two_motor_bench_profile();
     test_joint_controller_startup_faults();
     test_dual_motor_key_motion();
+    test_dual_motor_selects_safe_initial_direction();
     test_dual_motor_startup_and_faults();
     test_dual_motor_runtime_faults();
 

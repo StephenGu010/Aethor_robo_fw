@@ -11,7 +11,7 @@
 #include "arm_config.h"
 #include "can_frame.h"
 
-#define CAN_TX_EMERGENCY_QUEUE_CAPACITY (8U)
+#define CAN_TX_SCHEDULER_CAPACITY (32U)
 
 /**
  * @brief Identifies the source priority of a scheduled frame.
@@ -19,7 +19,9 @@
 typedef enum
 {
     CAN_TX_PRIORITY_EMERGENCY = 0,
-    CAN_TX_PRIORITY_JOINT_CONTROL
+    CAN_TX_PRIORITY_JOINT_CONTROL,
+    CAN_TX_PRIORITY_FEEDBACK_QUERY,
+    CAN_TX_PRIORITY_PARAMETER
 } CanTxPriority;
 
 /**
@@ -28,27 +30,34 @@ typedef enum
 typedef enum
 {
     CAN_TX_SCHEDULER_STATUS_OK = 0,
-    CAN_TX_SCHEDULER_STATUS_REPLACED,
     CAN_TX_SCHEDULER_STATUS_EMPTY,
     CAN_TX_SCHEDULER_STATUS_INVALID_ARGUMENT,
-    CAN_TX_SCHEDULER_STATUS_INVALID_JOINT,
-    CAN_TX_SCHEDULER_STATUS_EMERGENCY_QUEUE_FULL
+    CAN_TX_SCHEDULER_STATUS_INVALID_PRIORITY,
+    CAN_TX_SCHEDULER_STATUS_FULL,
+    CAN_TX_SCHEDULER_STATUS_GROUP_REJECTED
 } CanTxSchedulerStatus;
 
 /**
- * @brief Owns emergency FIFO traffic and one coalescing slot per joint.
+ * @brief Owns one queued frame and its scheduling priority.
  */
 typedef struct
 {
-    CanFrame emergency_frames[CAN_TX_EMERGENCY_QUEUE_CAPACITY];
-    CanFrame joint_frames[ARM_JOINT_COUNT];
-    uint32_t coalesced_joint_frame_count;
-    uint32_t emergency_queue_full_count;
-    uint8_t emergency_head;
-    uint8_t emergency_count;
-    uint8_t emergency_high_watermark;
-    uint8_t pending_joint_mask;
-    uint8_t next_joint_index;
+    CanFrame frame;
+    CanTxPriority priority;
+    uint32_t sequence;
+} CanTxSchedulerEntry;
+
+/**
+ * @brief Owns a fixed-capacity stable-priority CAN transmit ring.
+ */
+typedef struct
+{
+    CanTxSchedulerEntry entries[CAN_TX_SCHEDULER_CAPACITY];
+    uint32_t next_sequence;
+    uint32_t full_count;
+    uint32_t atomic_group_reject_count;
+    uint8_t count;
+    uint8_t high_watermark;
     uint8_t initialized;
 } CanTxScheduler;
 
@@ -59,24 +68,26 @@ typedef struct
 void can_tx_scheduler_init(CanTxScheduler *scheduler);
 
 /**
- * @brief Queues one non-droppable emergency frame in FIFO order.
+ * @brief Queues one frame with a stable priority classification.
  * @param scheduler Initialized scheduler.
+ * @param priority Scheduling priority.
  * @param frame Frame to copy.
- * @return OK or an explicit capacity/argument error.
+ * @return OK or an explicit capacity/argument/priority error.
  */
-CanTxSchedulerStatus can_tx_scheduler_submit_emergency(CanTxScheduler *scheduler,
-                                                       const CanFrame *frame);
+CanTxSchedulerStatus can_tx_scheduler_submit(CanTxScheduler *scheduler,
+                                             CanTxPriority priority,
+                                             const CanFrame *frame);
 
 /**
- * @brief Stores the latest control frame for one joint, replacing older pending data.
+ * @brief Atomically queues one complete J1 through J7 control group.
  * @param scheduler Initialized scheduler.
- * @param joint_index Zero-based joint index.
- * @param frame Frame to copy.
- * @return OK, REPLACED, or an argument error.
+ * @param frames Ordered control frames.
+ * @param frame_count Must equal ARM_JOINT_COUNT.
+ * @return OK or GROUP_REJECTED without a partial enqueue.
  */
-CanTxSchedulerStatus can_tx_scheduler_submit_joint(CanTxScheduler *scheduler,
-                                                   uint8_t joint_index,
-                                                   const CanFrame *frame);
+CanTxSchedulerStatus can_tx_scheduler_submit_control_group(CanTxScheduler *scheduler,
+                                                           const CanFrame *frames,
+                                                           uint8_t frame_count);
 
 /**
  * @brief Pops the highest-priority pending frame without blocking.

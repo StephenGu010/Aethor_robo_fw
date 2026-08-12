@@ -105,9 +105,14 @@ static void test_can_scheduler_prioritizes_emergency_frames(void)
     CanTxPriority popped_priority;
 
     can_tx_scheduler_init(&scheduler);
-    assert(can_tx_scheduler_submit_joint(&scheduler, 0U, &normal_frame) ==
+    assert(CAN_TX_SCHEDULER_CAPACITY == 32U);
+    assert(can_tx_scheduler_submit(&scheduler,
+                                   CAN_TX_PRIORITY_JOINT_CONTROL,
+                                   &normal_frame) ==
            CAN_TX_SCHEDULER_STATUS_OK);
-    assert(can_tx_scheduler_submit_emergency(&scheduler, &emergency_frame) ==
+    assert(can_tx_scheduler_submit(&scheduler,
+                                   CAN_TX_PRIORITY_EMERGENCY,
+                                   &emergency_frame) ==
            CAN_TX_SCHEDULER_STATUS_OK);
 
     assert(can_tx_scheduler_pop(&scheduler, &popped_frame, &popped_priority) ==
@@ -122,34 +127,51 @@ static void test_can_scheduler_prioritizes_emergency_frames(void)
 }
 
 /**
- * @brief Verifies joint slots coalesce latest values and pop in round-robin order.
+ * @brief Verifies seven control frames are accepted atomically or not at all.
  */
-static void test_can_scheduler_is_bounded_and_fair(void)
+static void test_can_scheduler_accepts_atomic_seven_frame_groups(void)
 {
     CanTxScheduler scheduler;
-    CanFrame joint_zero_old = make_test_frame(0x101U, 0x10U);
-    CanFrame joint_zero_new = make_test_frame(0x101U, 0x20U);
-    CanFrame joint_three = make_test_frame(0x104U, 0x43U);
+    CanFrame parameter_frame = make_test_frame(0x7FFU, 0x33U);
+    CanFrame joint_frames[ARM_JOINT_COUNT];
     CanFrame popped_frame;
     CanTxPriority popped_priority;
+    uint8_t frame_index;
 
     can_tx_scheduler_init(&scheduler);
-    assert(can_tx_scheduler_submit_joint(&scheduler, 0U, &joint_zero_old) ==
-           CAN_TX_SCHEDULER_STATUS_OK);
-    assert(can_tx_scheduler_submit_joint(&scheduler, 3U, &joint_three) ==
-           CAN_TX_SCHEDULER_STATUS_OK);
-    assert(can_tx_scheduler_submit_joint(&scheduler, 0U, &joint_zero_new) ==
-           CAN_TX_SCHEDULER_STATUS_REPLACED);
-    assert(scheduler.coalesced_joint_frame_count == 1U);
+    for (frame_index = 0U; frame_index < ARM_JOINT_COUNT; ++frame_index)
+    {
+        joint_frames[frame_index] = make_test_frame((uint16_t)(0x101U + frame_index),
+                                                    (uint8_t)(0x10U + frame_index));
+    }
+    for (frame_index = 0U; frame_index < 26U; ++frame_index)
+    {
+        assert(can_tx_scheduler_submit(&scheduler,
+                                       CAN_TX_PRIORITY_PARAMETER,
+                                       &parameter_frame) == CAN_TX_SCHEDULER_STATUS_OK);
+    }
 
+    assert(can_tx_scheduler_submit_control_group(&scheduler,
+                                                 joint_frames,
+                                                 ARM_JOINT_COUNT) ==
+           CAN_TX_SCHEDULER_STATUS_GROUP_REJECTED);
+    assert(scheduler.count == 26U);
     assert(can_tx_scheduler_pop(&scheduler, &popped_frame, &popped_priority) ==
            CAN_TX_SCHEDULER_STATUS_OK);
-    assert(popped_frame.data[0] == 0x20U);
-    assert(can_tx_scheduler_pop(&scheduler, &popped_frame, &popped_priority) ==
+    assert(scheduler.count == 25U);
+    assert(can_tx_scheduler_submit_control_group(&scheduler,
+                                                 joint_frames,
+                                                 ARM_JOINT_COUNT) ==
            CAN_TX_SCHEDULER_STATUS_OK);
-    assert(popped_frame.data[0] == 0x43U);
-    assert(can_tx_scheduler_pop(&scheduler, &popped_frame, &popped_priority) ==
-           CAN_TX_SCHEDULER_STATUS_EMPTY);
+    assert(scheduler.count == CAN_TX_SCHEDULER_CAPACITY);
+
+    for (frame_index = 0U; frame_index < ARM_JOINT_COUNT; ++frame_index)
+    {
+        assert(can_tx_scheduler_pop(&scheduler, &popped_frame, &popped_priority) ==
+               CAN_TX_SCHEDULER_STATUS_OK);
+        assert(popped_priority == CAN_TX_PRIORITY_JOINT_CONTROL);
+        assert(popped_frame.data[0] == (uint8_t)(0x10U + frame_index));
+    }
 }
 
 /**
@@ -348,7 +370,7 @@ int main(void)
     test_motor_bank_uses_frozen_seven_axis_mapping();
     test_motor_bank_publishes_coherent_feedback_snapshots();
     test_can_scheduler_prioritizes_emergency_frames();
-    test_can_scheduler_is_bounded_and_fair();
+    test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();
     test_motor_discovery_rejects_mapping_mismatch();

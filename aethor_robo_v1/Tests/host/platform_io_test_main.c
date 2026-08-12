@@ -42,6 +42,7 @@ static void test_can_rx_inbox(void)
     uint8_t frame_index;
 
     can_rx_inbox_init(&inbox);
+    assert(CAN_RX_INBOX_CAPACITY == 32U);
     assert(can_frame_init(&frame, 0x11U, payload, sizeof(payload)) ==
            CAN_FRAME_STATUS_OK);
 
@@ -103,30 +104,48 @@ static void test_usb_transmit_lifetime_and_priority(void)
 {
     static const uint8_t response_one[] = "RSP 1 ok *0000\n";
     static const uint8_t response_two[] = "RSP 2 ok *0000\n";
-    static const uint8_t telemetry_old[] = "TEL 1 JOINT_STATE *0000\n";
-    static const uint8_t telemetry_new[] = "TEL 2 JOINT_STATE *0000\n";
+    static const uint8_t telemetry_one[] = "TEL 1 JOINT_STATE *0000\n";
+    static const uint8_t telemetry_two[] = "TEL 2 JOINT_STATE *0000\n";
+    static const uint8_t telemetry_three[] = "TEL 3 JOINT_STATE *0000\n";
+    static const uint8_t telemetry_four[] = "TEL 4 JOINT_STATE *0000\n";
+    static const uint8_t telemetry_five[] = "TEL 5 JOINT_STATE *0000\n";
     UsbCdcStream stream;
 
     simulated_usb_result = USB_CDC_STREAM_TRANSMIT_OK;
     simulated_usb_call_count = 0U;
     simulated_usb_last_length = 0U;
     usb_cdc_stream_init(&stream, simulated_usb_transmit);
+    assert(USB_CDC_STREAM_HIGH_PRIORITY_CAPACITY == 16U);
+    assert(USB_CDC_STREAM_QUERY_CAPACITY == 16U);
+    assert(USB_CDC_STREAM_TELEMETRY_CAPACITY == 4U);
 
     assert(usb_cdc_stream_queue_telemetry(&stream,
-                                          telemetry_old,
-                                          sizeof(telemetry_old) - 1U) ==
+                                          telemetry_one,
+                                          sizeof(telemetry_one) - 1U) ==
            USB_CDC_STREAM_STATUS_OK);
     assert(usb_cdc_stream_queue_telemetry(&stream,
-                                          telemetry_new,
-                                          sizeof(telemetry_new) - 1U) ==
-           USB_CDC_STREAM_STATUS_REPLACED);
-    assert(usb_cdc_stream_queue_response(&stream,
-                                         response_one,
-                                         sizeof(response_one) - 1U) ==
+                                          telemetry_two,
+                                          sizeof(telemetry_two) - 1U) ==
            USB_CDC_STREAM_STATUS_OK);
-    assert(usb_cdc_stream_queue_response(&stream,
-                                         response_two,
-                                         sizeof(response_two) - 1U) ==
+    assert(usb_cdc_stream_queue_telemetry(&stream,
+                                          telemetry_three,
+                                          sizeof(telemetry_three) - 1U) ==
+           USB_CDC_STREAM_STATUS_OK);
+    assert(usb_cdc_stream_queue_telemetry(&stream,
+                                          telemetry_four,
+                                          sizeof(telemetry_four) - 1U) ==
+           USB_CDC_STREAM_STATUS_OK);
+    assert(usb_cdc_stream_queue_telemetry(&stream,
+                                          telemetry_five,
+                                          sizeof(telemetry_five) - 1U) ==
+           USB_CDC_STREAM_STATUS_REPLACED);
+    assert(usb_cdc_stream_queue_query(&stream,
+                                      response_two,
+                                      sizeof(response_two) - 1U) ==
+           USB_CDC_STREAM_STATUS_OK);
+    assert(usb_cdc_stream_queue_high_priority(&stream,
+                                              response_one,
+                                              sizeof(response_one) - 1U) ==
            USB_CDC_STREAM_STATUS_OK);
 
     usb_cdc_stream_service_tx(&stream);
@@ -150,8 +169,8 @@ static void test_usb_transmit_lifetime_and_priority(void)
     usb_cdc_stream_service_tx(&stream);
     assert(simulated_usb_call_count == 3U);
     assert(memcmp(simulated_usb_last_data,
-                  telemetry_new,
-                  sizeof(telemetry_new) - 1U) == 0);
+                  telemetry_two,
+                  sizeof(telemetry_two) - 1U) == 0);
     assert(stream.telemetry_replaced_count == 1U);
 }
 
@@ -166,7 +185,9 @@ static void test_usb_busy_retry(void)
     simulated_usb_result = USB_CDC_STREAM_TRANSMIT_BUSY;
     simulated_usb_call_count = 0U;
     usb_cdc_stream_init(&stream, simulated_usb_transmit);
-    assert(usb_cdc_stream_queue_response(&stream, response, sizeof(response) - 1U) ==
+    assert(usb_cdc_stream_queue_high_priority(&stream,
+                                              response,
+                                              sizeof(response) - 1U) ==
            USB_CDC_STREAM_STATUS_OK);
     usb_cdc_stream_service_tx(&stream);
     assert(stream.tx_in_flight == 0U);

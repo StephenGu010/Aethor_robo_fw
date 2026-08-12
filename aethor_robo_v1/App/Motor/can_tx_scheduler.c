@@ -21,6 +21,40 @@ static uint8_t can_tx_scheduler_frame_is_valid(const CanFrame *frame)
 }
 
 /**
+ * @brief Checks whether a public priority value is recognized.
+ * @param priority Priority to inspect.
+ * @return One when valid, otherwise zero.
+ */
+static uint8_t can_tx_scheduler_priority_is_valid(CanTxPriority priority)
+{
+    return (uint8_t)((priority >= CAN_TX_PRIORITY_EMERGENCY) &&
+                     (priority <= CAN_TX_PRIORITY_PARAMETER));
+}
+
+/**
+ * @brief Appends one already validated entry without a capacity check.
+ * @param scheduler Scheduler with at least one free slot.
+ * @param priority Entry priority.
+ * @param frame Frame to copy.
+ */
+static void can_tx_scheduler_append(CanTxScheduler *scheduler,
+                                    CanTxPriority priority,
+                                    const CanFrame *frame)
+{
+    CanTxSchedulerEntry *entry = &scheduler->entries[scheduler->count];
+
+    entry->frame = *frame;
+    entry->priority = priority;
+    entry->sequence = scheduler->next_sequence;
+    ++scheduler->next_sequence;
+    ++scheduler->count;
+    if (scheduler->count > scheduler->high_watermark)
+    {
+        scheduler->high_watermark = scheduler->count;
+    }
+}
+
+/**
  * @brief Initializes an empty scheduler.
  * @param scheduler Scheduler storage.
  */
@@ -36,74 +70,73 @@ void can_tx_scheduler_init(CanTxScheduler *scheduler)
 }
 
 /**
- * @brief Queues one non-droppable emergency frame in FIFO order.
+ * @brief Queues one frame with a stable priority classification.
  * @param scheduler Initialized scheduler.
+ * @param priority Scheduling priority.
  * @param frame Frame to copy.
- * @return OK or an explicit capacity/argument error.
+ * @return OK or an explicit capacity/argument/priority error.
  */
-CanTxSchedulerStatus can_tx_scheduler_submit_emergency(CanTxScheduler *scheduler,
-                                                       const CanFrame *frame)
+CanTxSchedulerStatus can_tx_scheduler_submit(CanTxScheduler *scheduler,
+                                             CanTxPriority priority,
+                                             const CanFrame *frame)
 {
-    uint8_t write_index;
-
     if ((scheduler == NULL) || (scheduler->initialized == 0U) ||
         (can_tx_scheduler_frame_is_valid(frame) == 0U))
     {
         return CAN_TX_SCHEDULER_STATUS_INVALID_ARGUMENT;
     }
-
-    if (scheduler->emergency_count >= CAN_TX_EMERGENCY_QUEUE_CAPACITY)
+    if (can_tx_scheduler_priority_is_valid(priority) == 0U)
     {
-        ++scheduler->emergency_queue_full_count;
-        return CAN_TX_SCHEDULER_STATUS_EMERGENCY_QUEUE_FULL;
+        return CAN_TX_SCHEDULER_STATUS_INVALID_PRIORITY;
+    }
+    if (scheduler->count >= CAN_TX_SCHEDULER_CAPACITY)
+    {
+        ++scheduler->full_count;
+        return CAN_TX_SCHEDULER_STATUS_FULL;
     }
 
-    write_index = (uint8_t)((scheduler->emergency_head + scheduler->emergency_count) %
-                            CAN_TX_EMERGENCY_QUEUE_CAPACITY);
-    scheduler->emergency_frames[write_index] = *frame;
-    ++scheduler->emergency_count;
-    if (scheduler->emergency_count > scheduler->emergency_high_watermark)
-    {
-        scheduler->emergency_high_watermark = scheduler->emergency_count;
-    }
+    can_tx_scheduler_append(scheduler, priority, frame);
     return CAN_TX_SCHEDULER_STATUS_OK;
 }
 
 /**
- * @brief Stores the latest control frame for one joint, replacing older pending data.
+ * @brief Atomically queues one complete J1 through J7 control group.
  * @param scheduler Initialized scheduler.
- * @param joint_index Zero-based joint index.
- * @param frame Frame to copy.
- * @return OK, REPLACED, or an argument error.
+ * @param frames Ordered control frames.
+ * @param frame_count Must equal ARM_JOINT_COUNT.
+ * @return OK or GROUP_REJECTED without a partial enqueue.
  */
-CanTxSchedulerStatus can_tx_scheduler_submit_joint(CanTxScheduler *scheduler,
-                                                   uint8_t joint_index,
-                                                   const CanFrame *frame)
+CanTxSchedulerStatus can_tx_scheduler_submit_control_group(CanTxScheduler *scheduler,
+                                                           const CanFrame *frames,
+                                                           uint8_t frame_count)
 {
-    uint8_t joint_bit;
-    CanTxSchedulerStatus result = CAN_TX_SCHEDULER_STATUS_OK;
+    uint8_t frame_index;
 
-    if ((scheduler == NULL) || (scheduler->initialized == 0U) ||
-        (can_tx_scheduler_frame_is_valid(frame) == 0U))
+    if ((scheduler == NULL) || (scheduler->initialized == 0U) || (frames == NULL) ||
+        (frame_count != ARM_JOINT_COUNT))
     {
         return CAN_TX_SCHEDULER_STATUS_INVALID_ARGUMENT;
     }
-
-    if (joint_index >= ARM_JOINT_COUNT)
+    for (frame_index = 0U; frame_index < frame_count; ++frame_index)
     {
-        return CAN_TX_SCHEDULER_STATUS_INVALID_JOINT;
+        if (can_tx_scheduler_frame_is_valid(&frames[frame_index]) == 0U)
+        {
+            return CAN_TX_SCHEDULER_STATUS_INVALID_ARGUMENT;
+        }
+    }
+    if ((uint8_t)(CAN_TX_SCHEDULER_CAPACITY - scheduler->count) < frame_count)
+    {
+        ++scheduler->atomic_group_reject_count;
+        return CAN_TX_SCHEDULER_STATUS_GROUP_REJECTED;
     }
 
-    joint_bit = (uint8_t)(1U << joint_index);
-    if ((scheduler->pending_joint_mask & joint_bit) != 0U)
+    for (frame_index = 0U; frame_index < frame_count; ++frame_index)
     {
-        ++scheduler->coalesced_joint_frame_count;
-        result = CAN_TX_SCHEDULER_STATUS_REPLACED;
+        can_tx_scheduler_append(scheduler,
+                                CAN_TX_PRIORITY_JOINT_CONTROL,
+                                &frames[frame_index]);
     }
-
-    scheduler->joint_frames[joint_index] = *frame;
-    scheduler->pending_joint_mask |= joint_bit;
-    return result;
+    return CAN_TX_SCHEDULER_STATUS_OK;
 }
 
 /**
@@ -117,7 +150,9 @@ CanTxSchedulerStatus can_tx_scheduler_pop(CanTxScheduler *scheduler,
                                           CanFrame *frame,
                                           CanTxPriority *priority)
 {
-    uint8_t scan_offset;
+    uint8_t entry_index;
+    uint8_t selected_index = 0U;
+    uint8_t compact_index;
 
     if ((scheduler == NULL) || (scheduler->initialized == 0U) ||
         (frame == NULL) || (priority == NULL))
@@ -125,31 +160,32 @@ CanTxSchedulerStatus can_tx_scheduler_pop(CanTxScheduler *scheduler,
         return CAN_TX_SCHEDULER_STATUS_INVALID_ARGUMENT;
     }
 
-    if (scheduler->emergency_count != 0U)
+    if (scheduler->count == 0U)
     {
-        *frame = scheduler->emergency_frames[scheduler->emergency_head];
-        scheduler->emergency_head = (uint8_t)((scheduler->emergency_head + 1U) %
-                                              CAN_TX_EMERGENCY_QUEUE_CAPACITY);
-        --scheduler->emergency_count;
-        *priority = CAN_TX_PRIORITY_EMERGENCY;
-        return CAN_TX_SCHEDULER_STATUS_OK;
+        return CAN_TX_SCHEDULER_STATUS_EMPTY;
     }
 
-    for (scan_offset = 0U; scan_offset < ARM_JOINT_COUNT; ++scan_offset)
+    for (entry_index = 1U; entry_index < scheduler->count; ++entry_index)
     {
-        uint8_t joint_index = (uint8_t)((scheduler->next_joint_index + scan_offset) %
-                                        ARM_JOINT_COUNT);
-        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+        const CanTxSchedulerEntry *candidate = &scheduler->entries[entry_index];
+        const CanTxSchedulerEntry *selected = &scheduler->entries[selected_index];
 
-        if ((scheduler->pending_joint_mask & joint_bit) != 0U)
+        if ((candidate->priority < selected->priority) ||
+            ((candidate->priority == selected->priority) &&
+             (candidate->sequence < selected->sequence)))
         {
-            *frame = scheduler->joint_frames[joint_index];
-            scheduler->pending_joint_mask &= (uint8_t)~joint_bit;
-            scheduler->next_joint_index = (uint8_t)((joint_index + 1U) % ARM_JOINT_COUNT);
-            *priority = CAN_TX_PRIORITY_JOINT_CONTROL;
-            return CAN_TX_SCHEDULER_STATUS_OK;
+            selected_index = entry_index;
         }
     }
 
-    return CAN_TX_SCHEDULER_STATUS_EMPTY;
+    *frame = scheduler->entries[selected_index].frame;
+    *priority = scheduler->entries[selected_index].priority;
+    for (compact_index = selected_index;
+         compact_index < (uint8_t)(scheduler->count - 1U);
+         ++compact_index)
+    {
+        scheduler->entries[compact_index] = scheduler->entries[compact_index + 1U];
+    }
+    --scheduler->count;
+    return CAN_TX_SCHEDULER_STATUS_OK;
 }

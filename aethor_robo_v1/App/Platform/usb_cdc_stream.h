@@ -11,7 +11,9 @@
 
 #define USB_CDC_STREAM_RX_CAPACITY (1024U)
 #define USB_CDC_STREAM_LINE_CAPACITY (513U)
-#define USB_CDC_STREAM_RESPONSE_CAPACITY (8U)
+#define USB_CDC_STREAM_HIGH_PRIORITY_CAPACITY (16U)
+#define USB_CDC_STREAM_QUERY_CAPACITY (16U)
+#define USB_CDC_STREAM_TELEMETRY_CAPACITY (4U)
 #define USB_CDC_STREAM_MESSAGE_CAPACITY (520U)
 
 /**
@@ -62,25 +64,34 @@ typedef struct
 {
     uint8_t rx_bytes[USB_CDC_STREAM_RX_CAPACITY + 1U];
     char line_buffer[USB_CDC_STREAM_LINE_CAPACITY];
-    UsbCdcStreamMessage response_messages[USB_CDC_STREAM_RESPONSE_CAPACITY];
-    UsbCdcStreamMessage telemetry_message;
+    UsbCdcStreamMessage high_priority_messages[USB_CDC_STREAM_HIGH_PRIORITY_CAPACITY];
+    UsbCdcStreamMessage query_messages[USB_CDC_STREAM_QUERY_CAPACITY];
+    UsbCdcStreamMessage telemetry_messages[USB_CDC_STREAM_TELEMETRY_CAPACITY];
     UsbCdcStreamMessage active_message;
     UsbCdcStreamTransmitFunction transmit_function;
     volatile uint16_t rx_write_index;
     volatile uint16_t rx_read_index;
     uint16_t line_length;
-    uint8_t response_write_index;
-    uint8_t response_read_index;
-    uint8_t response_count;
-    uint8_t response_high_watermark;
-    uint8_t telemetry_pending;
+    uint8_t high_priority_write_index;
+    uint8_t high_priority_read_index;
+    uint8_t high_priority_count;
+    uint8_t high_priority_high_watermark;
+    uint8_t query_write_index;
+    uint8_t query_read_index;
+    uint8_t query_count;
+    uint8_t query_high_watermark;
+    uint8_t telemetry_write_index;
+    uint8_t telemetry_read_index;
+    uint8_t telemetry_count;
+    uint8_t telemetry_high_watermark;
     volatile uint8_t tx_in_flight;
     uint8_t discarding_overlong_line;
     uint8_t initialized;
     volatile uint32_t received_byte_count;
     volatile uint32_t dropped_byte_count;
     uint32_t overlong_line_count;
-    uint32_t response_queue_full_count;
+    uint32_t high_priority_queue_full_count;
+    uint32_t query_queue_full_count;
     uint32_t telemetry_replaced_count;
     uint32_t transmit_busy_count;
     uint32_t transmit_error_count;
@@ -101,7 +112,17 @@ UsbCdcStreamStatus usb_cdc_stream_next_line(UsbCdcStream *stream,
                                             size_t line_capacity,
                                             uint16_t *line_length);
 
-/** @brief Queues a non-droppable protocol response in FIFO order. */
+/** @brief Queues a non-droppable ACK, ERR, DONE, or event frame. */
+UsbCdcStreamStatus usb_cdc_stream_queue_high_priority(UsbCdcStream *stream,
+                                                      const uint8_t *data,
+                                                      uint16_t length);
+
+/** @brief Queues a non-droppable query response below state-changing results. */
+UsbCdcStreamStatus usb_cdc_stream_queue_query(UsbCdcStream *stream,
+                                              const uint8_t *data,
+                                              uint16_t length);
+
+/** @brief Compatibility alias that queues a high-priority response. */
 UsbCdcStreamStatus usb_cdc_stream_queue_response(UsbCdcStream *stream,
                                                  const uint8_t *data,
                                                  uint16_t length);

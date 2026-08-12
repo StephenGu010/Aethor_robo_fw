@@ -10,7 +10,7 @@
 
 #include "can_frame.h"
 
-#define CAN_RX_INBOX_CAPACITY (16U)
+#define CAN_RX_INBOX_CAPACITY (32U)
 
 /**
  * @brief Reports non-blocking CAN inbox outcomes.

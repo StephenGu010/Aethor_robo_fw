@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define DIAGNOSTICS_CAPACITY (64U)
+#define DIAGNOSTICS_CAPACITY (256U)
 #define DIAGNOSTIC_WATERMARK_NOT_SAMPLED (UINT32_MAX)
 
 /**

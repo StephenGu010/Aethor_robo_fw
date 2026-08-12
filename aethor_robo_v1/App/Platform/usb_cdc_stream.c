@@ -30,6 +30,42 @@ static UsbCdcStreamStatus usb_cdc_stream_copy_message(UsbCdcStreamMessage *messa
 }
 
 /**
+ * @brief Appends one message to a task-context FIFO.
+ */
+static UsbCdcStreamStatus usb_cdc_stream_queue_fifo(
+    UsbCdcStreamMessage *messages,
+    uint8_t capacity,
+    uint8_t *write_index,
+    uint8_t *count,
+    uint8_t *high_watermark,
+    uint32_t *full_count,
+    const uint8_t *data,
+    uint16_t length)
+{
+    UsbCdcStreamStatus copy_status;
+
+    if (*count >= capacity)
+    {
+        ++(*full_count);
+        return USB_CDC_STREAM_STATUS_RESPONSE_QUEUE_FULL;
+    }
+
+    copy_status = usb_cdc_stream_copy_message(&messages[*write_index], data, length);
+    if (copy_status != USB_CDC_STREAM_STATUS_OK)
+    {
+        return copy_status;
+    }
+
+    *write_index = (uint8_t)((*write_index + 1U) % capacity);
+    ++(*count);
+    if (*count > *high_watermark)
+    {
+        *high_watermark = *count;
+    }
+    return USB_CDC_STREAM_STATUS_OK;
+}
+
+/**
  * @brief Initializes an empty USB CDC stream around a physical transmitter.
  * @param stream Destination stream.
  * @param transmit_function Non-blocking physical transmit callback.
@@ -177,45 +213,59 @@ UsbCdcStreamStatus usb_cdc_stream_next_line(UsbCdcStream *stream,
 }
 
 /**
- * @brief Queues a non-droppable protocol response in FIFO order.
+ * @brief Queues a non-droppable ACK, ERR, DONE, or event frame.
  * @param stream Initialized stream.
  * @param data Complete encoded protocol frame.
  * @param length Frame length.
  * @return OK or an explicit capacity/argument error.
  */
-UsbCdcStreamStatus usb_cdc_stream_queue_response(UsbCdcStream *stream,
-                                                 const uint8_t *data,
-                                                 uint16_t length)
+UsbCdcStreamStatus usb_cdc_stream_queue_high_priority(UsbCdcStream *stream,
+                                                      const uint8_t *data,
+                                                      uint16_t length)
 {
-    UsbCdcStreamStatus copy_status;
-
     if ((stream == NULL) || (stream->initialized == 0U))
     {
         return USB_CDC_STREAM_STATUS_NOT_INITIALIZED;
     }
-    if (stream->response_count >= USB_CDC_STREAM_RESPONSE_CAPACITY)
-    {
-        ++stream->response_queue_full_count;
-        return USB_CDC_STREAM_STATUS_RESPONSE_QUEUE_FULL;
-    }
+    return usb_cdc_stream_queue_fifo(stream->high_priority_messages,
+                                     USB_CDC_STREAM_HIGH_PRIORITY_CAPACITY,
+                                     &stream->high_priority_write_index,
+                                     &stream->high_priority_count,
+                                     &stream->high_priority_high_watermark,
+                                     &stream->high_priority_queue_full_count,
+                                     data,
+                                     length);
+}
 
-    copy_status = usb_cdc_stream_copy_message(
-        &stream->response_messages[stream->response_write_index],
-        data,
-        length);
-    if (copy_status != USB_CDC_STREAM_STATUS_OK)
+/**
+ * @brief Queues a non-droppable query response below state-changing results.
+ */
+UsbCdcStreamStatus usb_cdc_stream_queue_query(UsbCdcStream *stream,
+                                              const uint8_t *data,
+                                              uint16_t length)
+{
+    if ((stream == NULL) || (stream->initialized == 0U))
     {
-        return copy_status;
+        return USB_CDC_STREAM_STATUS_NOT_INITIALIZED;
     }
+    return usb_cdc_stream_queue_fifo(stream->query_messages,
+                                     USB_CDC_STREAM_QUERY_CAPACITY,
+                                     &stream->query_write_index,
+                                     &stream->query_count,
+                                     &stream->query_high_watermark,
+                                     &stream->query_queue_full_count,
+                                     data,
+                                     length);
+}
 
-    stream->response_write_index = (uint8_t)((stream->response_write_index + 1U) %
-                                             USB_CDC_STREAM_RESPONSE_CAPACITY);
-    ++stream->response_count;
-    if (stream->response_count > stream->response_high_watermark)
-    {
-        stream->response_high_watermark = stream->response_count;
-    }
-    return USB_CDC_STREAM_STATUS_OK;
+/**
+ * @brief Compatibility alias that queues a high-priority response.
+ */
+UsbCdcStreamStatus usb_cdc_stream_queue_response(UsbCdcStream *stream,
+                                                 const uint8_t *data,
+                                                 uint16_t length)
+{
+    return usb_cdc_stream_queue_high_priority(stream, data, length);
 }
 
 /**
@@ -230,27 +280,38 @@ UsbCdcStreamStatus usb_cdc_stream_queue_telemetry(UsbCdcStream *stream,
                                                   uint16_t length)
 {
     UsbCdcStreamStatus copy_status;
-    UsbCdcStreamStatus result;
+    UsbCdcStreamStatus result = USB_CDC_STREAM_STATUS_OK;
 
     if ((stream == NULL) || (stream->initialized == 0U))
     {
         return USB_CDC_STREAM_STATUS_NOT_INITIALIZED;
     }
 
-    result = (stream->telemetry_pending != 0U)
-                 ? USB_CDC_STREAM_STATUS_REPLACED
-                 : USB_CDC_STREAM_STATUS_OK;
-    copy_status = usb_cdc_stream_copy_message(&stream->telemetry_message, data, length);
+    if (stream->telemetry_count >= USB_CDC_STREAM_TELEMETRY_CAPACITY)
+    {
+        stream->telemetry_read_index = (uint8_t)((stream->telemetry_read_index + 1U) %
+                                                 USB_CDC_STREAM_TELEMETRY_CAPACITY);
+        --stream->telemetry_count;
+        ++stream->telemetry_replaced_count;
+        result = USB_CDC_STREAM_STATUS_REPLACED;
+    }
+
+    copy_status = usb_cdc_stream_copy_message(
+        &stream->telemetry_messages[stream->telemetry_write_index],
+        data,
+        length);
     if (copy_status != USB_CDC_STREAM_STATUS_OK)
     {
         return copy_status;
     }
 
-    if (result == USB_CDC_STREAM_STATUS_REPLACED)
+    stream->telemetry_write_index = (uint8_t)((stream->telemetry_write_index + 1U) %
+                                              USB_CDC_STREAM_TELEMETRY_CAPACITY);
+    ++stream->telemetry_count;
+    if (stream->telemetry_count > stream->telemetry_high_watermark)
     {
-        ++stream->telemetry_replaced_count;
+        stream->telemetry_high_watermark = stream->telemetry_count;
     }
-    stream->telemetry_pending = 1U;
     return result;
 }
 
@@ -261,7 +322,7 @@ UsbCdcStreamStatus usb_cdc_stream_queue_telemetry(UsbCdcStream *stream,
 void usb_cdc_stream_service_tx(UsbCdcStream *stream)
 {
     UsbCdcStreamTransmitResult transmit_result;
-    uint8_t sending_response;
+    uint8_t selected_queue;
 
     if ((stream == NULL) || (stream->initialized == 0U) ||
         (stream->tx_in_flight != 0U))
@@ -269,14 +330,21 @@ void usb_cdc_stream_service_tx(UsbCdcStream *stream)
         return;
     }
 
-    sending_response = (uint8_t)(stream->response_count != 0U);
-    if (sending_response != 0U)
+    if (stream->high_priority_count != 0U)
     {
-        stream->active_message = stream->response_messages[stream->response_read_index];
+        selected_queue = 1U;
+        stream->active_message =
+            stream->high_priority_messages[stream->high_priority_read_index];
     }
-    else if (stream->telemetry_pending != 0U)
+    else if (stream->query_count != 0U)
     {
-        stream->active_message = stream->telemetry_message;
+        selected_queue = 2U;
+        stream->active_message = stream->query_messages[stream->query_read_index];
+    }
+    else if (stream->telemetry_count != 0U)
+    {
+        selected_queue = 3U;
+        stream->active_message = stream->telemetry_messages[stream->telemetry_read_index];
     }
     else
     {
@@ -297,15 +365,24 @@ void usb_cdc_stream_service_tx(UsbCdcStream *stream)
     }
 
     stream->tx_in_flight = 1U;
-    if (sending_response != 0U)
+    if (selected_queue == 1U)
     {
-        stream->response_read_index = (uint8_t)((stream->response_read_index + 1U) %
-                                                USB_CDC_STREAM_RESPONSE_CAPACITY);
-        --stream->response_count;
+        stream->high_priority_read_index =
+            (uint8_t)((stream->high_priority_read_index + 1U) %
+                      USB_CDC_STREAM_HIGH_PRIORITY_CAPACITY);
+        --stream->high_priority_count;
+    }
+    else if (selected_queue == 2U)
+    {
+        stream->query_read_index = (uint8_t)((stream->query_read_index + 1U) %
+                                             USB_CDC_STREAM_QUERY_CAPACITY);
+        --stream->query_count;
     }
     else
     {
-        stream->telemetry_pending = 0U;
+        stream->telemetry_read_index = (uint8_t)((stream->telemetry_read_index + 1U) %
+                                                 USB_CDC_STREAM_TELEMETRY_CAPACITY);
+        --stream->telemetry_count;
     }
 }
 

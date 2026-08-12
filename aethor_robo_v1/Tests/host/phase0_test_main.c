@@ -157,6 +157,8 @@ static void test_default_application_profile_is_safe_bench_control(void)
 static void test_diagnostics_initialize_deterministically(void)
 {
     Diagnostics diagnostics;
+
+    assert(DIAGNOSTICS_CAPACITY == 256U);
     DiagnosticCounters counters;
 
     diagnostics_init(&diagnostics);

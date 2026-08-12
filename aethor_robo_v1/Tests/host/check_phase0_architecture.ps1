@@ -115,7 +115,15 @@ function Invoke-Phase0ArchitectureCheck {
         'build_info.c',
         'arm_controller.c',
         'diagnostics.c',
-        'usb_cdc_transport.c',
+        'ascii_protocol.c',
+        'can_frame.c',
+        'can_tx_scheduler.c',
+        'motor_bank.c',
+        'motor_discovery.c',
+        's3519_codec.c',
+        'can_rx_inbox.c',
+        'usb_cdc_stream.c',
+        'stm32_platform.c',
         'usbd_core.c',
         'usbd_ctlreq.c',
         'usbd_ioreq.c',
@@ -130,13 +138,21 @@ function Invoke-Phase0ArchitectureCheck {
         }
     }
 
-    foreach ($legacyKeilSource in @('aethor_application.c', 'dual_motor_controller.c', 'joint_controller.c', 'bsp_fdcan.c'))
+    foreach ($legacyKeilSource in @('aethor_application.c', 'dual_motor_controller.c', 'joint_controller.c', 'bsp_fdcan.c', 'usb_cdc_transport.c'))
     {
         if ($keilFileNames -contains $legacyKeilSource)
         {
             Add-ArchitectureFailure -FailureList $failureList -Message "$legacyKeilSource must not be compiled in PRD Phase 0."
         }
     }
+
+    $usbInterfaceText = Get-Content -LiteralPath (Join-Path $projectRoot 'USB_DEVICE\App\usbd_cdc_if.c') -Raw
+    Assert-TextContains -FailureList $failureList -Text $usbInterfaceText `
+        -Pattern 'stm32_platform_usb_receive_isr\s*\(' `
+        -Message 'USB CDC receive callback is not connected to the new platform stream.'
+    Assert-TextContains -FailureList $failureList -Text $usbInterfaceText `
+        -Pattern 'stm32_platform_usb_tx_complete_isr\s*\(' `
+        -Message 'USB CDC transmit-complete callback is not connected to the in-flight buffer lifetime.'
 
     if ($failureList.Count -ne 0)
     {

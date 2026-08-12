@@ -689,12 +689,12 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>bsp</GroupName>
+          <GroupName>App/Protocol</GroupName>
           <Files>
             <File>
-              <FileName>usb_cdc_transport.c</FileName>
+              <FileName>ascii_protocol.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\User\usb_cdc_transport.c</FilePath>
+              <FilePath>..\App\Protocol\ascii_protocol.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -730,6 +730,56 @@
               <FileName>arm_controller.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\Arm\arm_controller.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>App/Motor</GroupName>
+          <Files>
+            <File>
+              <FileName>can_frame.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Motor\can_frame.c</FilePath>
+            </File>
+            <File>
+              <FileName>can_tx_scheduler.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Motor\can_tx_scheduler.c</FilePath>
+            </File>
+            <File>
+              <FileName>motor_bank.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Motor\motor_bank.c</FilePath>
+            </File>
+            <File>
+              <FileName>motor_discovery.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Motor\motor_discovery.c</FilePath>
+            </File>
+            <File>
+              <FileName>s3519_codec.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Motor\s3519_codec.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>App/Platform</GroupName>
+          <Files>
+            <File>
+              <FileName>can_rx_inbox.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Platform\can_rx_inbox.c</FilePath>
+            </File>
+            <File>
+              <FileName>usb_cdc_stream.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Platform\usb_cdc_stream.c</FilePath>
+            </File>
+            <File>
+              <FileName>stm32_platform.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Platform\stm32_platform.c</FilePath>
             </File>
           </Files>
         </Group>

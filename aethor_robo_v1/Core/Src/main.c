@@ -26,6 +26,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "aethor_app.h"
+#include "arm_config.h"
+#include "stm32_platform.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -101,6 +103,7 @@ int main(void)
   MX_FDCAN2_Init();
   MX_FDCAN3_Init();
   /* USER CODE BEGIN 2 */
+  (void)stm32_platform_init(arm_config_get_production());
   aethor_app_init((uint64_t)HAL_GetTick() * 1000ULL);
   /* USER CODE END 2 */
 

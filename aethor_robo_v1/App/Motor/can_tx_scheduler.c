@@ -27,8 +27,7 @@ static uint8_t can_tx_scheduler_frame_is_valid(const CanFrame *frame)
  */
 static uint8_t can_tx_scheduler_priority_is_valid(CanTxPriority priority)
 {
-    return (uint8_t)((priority >= CAN_TX_PRIORITY_EMERGENCY) &&
-                     (priority <= CAN_TX_PRIORITY_PARAMETER));
+    return (uint8_t)(priority <= CAN_TX_PRIORITY_PARAMETER);
 }
 
 /**

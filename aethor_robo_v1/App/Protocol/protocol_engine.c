@@ -1315,6 +1315,7 @@ static ProtocolEngineStatus protocol_engine_handle_lifecycle_action(
                                                 protocol_engine_arm_state_text(state));
             return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
         }
+        command.control_mode = engine->query_context.arm.control_mode;
     }
     else if (command_type == PROTOCOL_COMMAND_CLEAR_FAULT)
     {

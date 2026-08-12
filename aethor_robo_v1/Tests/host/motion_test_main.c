@@ -251,6 +251,53 @@ static void test_motion_can_group_encoding(void)
     }
 }
 
+/**
+ * @brief Verifies controlled stop preserves initial velocity and decelerates to zero.
+ */
+static void test_controlled_stop_plan_and_sampling(void)
+{
+    ArmConfig configuration = make_motion_test_configuration();
+    float start_position_rad[ARM_JOINT_COUNT] = {0};
+    float start_velocity_rad_s[ARM_JOINT_COUNT] = {1.0F, -1.0F, 0.0F, 0.0F,
+                                                  0.0F, 0.0F, 0.0F};
+    JointControlledStopPlan stop_plan;
+    JointMotionSample sample;
+
+    assert(joint_motion_plan_controlled_stop(&configuration,
+                                             start_position_rad,
+                                             start_velocity_rad_s,
+                                             1.0F,
+                                             1000U,
+                                             &stop_plan) ==
+           JOINT_MOTION_STATUS_OK);
+    assert(stop_plan.duration_us == 500000U);
+    assert(fabsf(stop_plan.hold_position_rad[0] - 0.25F) < 0.0001F);
+    assert(fabsf(stop_plan.hold_position_rad[1] + 0.25F) < 0.0001F);
+
+    assert(joint_motion_sample_controlled_stop(&stop_plan, 1000U, &sample) ==
+           JOINT_MOTION_STATUS_OK);
+    assert(fabsf(sample.velocity_rad_s[0] - 1.0F) < 0.0001F);
+    assert(joint_motion_sample_controlled_stop(&stop_plan, 251000U, &sample) ==
+           JOINT_MOTION_STATUS_OK);
+    assert(fabsf(sample.position_rad[0] - 0.1875F) < 0.0001F);
+    assert(fabsf(sample.velocity_rad_s[0] - 0.5F) < 0.0001F);
+    assert(fabsf(sample.acceleration_rad_s2[0] + 2.0F) < 0.0001F);
+    assert(joint_motion_sample_controlled_stop(&stop_plan, 501000U, &sample) ==
+           JOINT_MOTION_STATUS_OK);
+    assert(sample.trajectory_complete == 1U);
+    assert(fabsf(sample.position_rad[0] - 0.25F) < 0.0001F);
+    assert(sample.velocity_rad_s[0] == 0.0F);
+
+    start_position_rad[0] = 2.99F;
+    assert(joint_motion_plan_controlled_stop(&configuration,
+                                             start_position_rad,
+                                             start_velocity_rad_s,
+                                             1.0F,
+                                             1000U,
+                                             &stop_plan) ==
+           JOINT_MOTION_STATUS_TARGET_OUT_OF_RANGE);
+}
+
 /** @brief Runs all motion algorithm tests. */
 int main(void)
 {
@@ -259,6 +306,7 @@ int main(void)
     test_mit_quintic_boundaries_and_limits();
     test_motion_completion_requires_settle_window();
     test_motion_can_group_encoding();
+    test_controlled_stop_plan_and_sampling();
     puts("MOTION_TESTS_PASSED");
     return 0;
 }

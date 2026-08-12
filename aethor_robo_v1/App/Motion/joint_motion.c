@@ -207,6 +207,144 @@ JointMotionStatus joint_motion_sample(const JointMotionPlan *plan,
     return JOINT_MOTION_STATUS_OK;
 }
 
+/**
+ * @brief Plans one shared-duration constant-deceleration all-axis stop.
+ */
+JointMotionStatus joint_motion_plan_controlled_stop(
+    const ArmConfig *configuration,
+    const float start_position_rad[ARM_JOINT_COUNT],
+    const float start_velocity_rad_s[ARM_JOINT_COUNT],
+    float acceleration_ratio,
+    uint64_t start_time_us,
+    JointControlledStopPlan *plan)
+{
+    ArmConfigValidation validation;
+    JointControlledStopPlan validated_plan;
+    float duration_seconds = 0.0F;
+    uint8_t joint_index;
+
+    if ((configuration == NULL) || (start_position_rad == NULL) ||
+        (start_velocity_rad_s == NULL) || (plan == NULL))
+    {
+        return JOINT_MOTION_STATUS_INVALID_ARGUMENT;
+    }
+    if (!arm_config_is_enable_ready(configuration, &validation))
+    {
+        return JOINT_MOTION_STATUS_CONFIG_INCOMPLETE;
+    }
+    if (!joint_motion_float_is_finite(acceleration_ratio) ||
+        (acceleration_ratio < JOINT_MOTION_SPEED_RATIO_MIN) ||
+        (acceleration_ratio > JOINT_MOTION_SPEED_RATIO_MAX))
+    {
+        return JOINT_MOTION_STATUS_SPEED_RATIO_OUT_OF_RANGE;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        float joint_duration;
+
+        if (!joint_motion_float_is_finite(start_position_rad[joint_index]) ||
+            !joint_motion_float_is_finite(start_velocity_rad_s[joint_index]))
+        {
+            return JOINT_MOTION_STATUS_NONFINITE_VALUE;
+        }
+        joint_duration = fabsf(start_velocity_rad_s[joint_index]) /
+                         (acceleration_ratio *
+                          configuration->joints[joint_index]
+                              .max_acceleration_rad_s2);
+        if (joint_duration > duration_seconds)
+        {
+            duration_seconds = joint_duration;
+        }
+    }
+
+    memset(&validated_plan, 0, sizeof(validated_plan));
+    validated_plan.start_time_us = start_time_us;
+    validated_plan.duration_us =
+        joint_motion_seconds_to_microseconds(duration_seconds);
+    duration_seconds = (float)validated_plan.duration_us / 1000000.0F;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const JointConfig *joint = &configuration->joints[joint_index];
+
+        validated_plan.start_position_rad[joint_index] =
+            start_position_rad[joint_index];
+        validated_plan.start_velocity_rad_s[joint_index] =
+            start_velocity_rad_s[joint_index];
+        validated_plan.hold_position_rad[joint_index] =
+            start_position_rad[joint_index] +
+            (0.5F * start_velocity_rad_s[joint_index] * duration_seconds);
+        if ((validated_plan.hold_position_rad[joint_index] <
+             joint->soft_limit_min_rad) ||
+            (validated_plan.hold_position_rad[joint_index] >
+             joint->soft_limit_max_rad))
+        {
+            return JOINT_MOTION_STATUS_TARGET_OUT_OF_RANGE;
+        }
+    }
+    *plan = validated_plan;
+    return JOINT_MOTION_STATUS_OK;
+}
+
+/**
+ * @brief Samples position, velocity, and acceleration for a controlled stop.
+ */
+JointMotionStatus joint_motion_sample_controlled_stop(
+    const JointControlledStopPlan *plan,
+    uint64_t timestamp_us,
+    JointMotionSample *sample)
+{
+    float duration_seconds;
+    float elapsed_seconds;
+    uint8_t joint_index;
+
+    if ((plan == NULL) || (sample == NULL) || (plan->duration_us == 0U))
+    {
+        return JOINT_MOTION_STATUS_INVALID_ARGUMENT;
+    }
+    memset(sample, 0, sizeof(*sample));
+    sample->timestamp_us = timestamp_us;
+    duration_seconds = (float)plan->duration_us / 1000000.0F;
+    if (timestamp_us <= plan->start_time_us)
+    {
+        elapsed_seconds = 0.0F;
+    }
+    else if ((timestamp_us - plan->start_time_us) >= plan->duration_us)
+    {
+        elapsed_seconds = duration_seconds;
+        sample->trajectory_complete = 1U;
+    }
+    else
+    {
+        elapsed_seconds = (float)(timestamp_us - plan->start_time_us) /
+                          1000000.0F;
+    }
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        float initial_velocity = plan->start_velocity_rad_s[joint_index];
+        float deceleration = initial_velocity / duration_seconds;
+
+        if (sample->trajectory_complete != 0U)
+        {
+            sample->position_rad[joint_index] =
+                plan->hold_position_rad[joint_index];
+            sample->velocity_rad_s[joint_index] = 0.0F;
+            sample->acceleration_rad_s2[joint_index] = 0.0F;
+        }
+        else
+        {
+            sample->position_rad[joint_index] =
+                plan->start_position_rad[joint_index] +
+                (initial_velocity * elapsed_seconds) -
+                (0.5F * deceleration * elapsed_seconds * elapsed_seconds);
+            sample->velocity_rad_s[joint_index] =
+                initial_velocity - (deceleration * elapsed_seconds);
+            sample->acceleration_rad_s2[joint_index] = -deceleration;
+        }
+    }
+    return JOINT_MOTION_STATUS_OK;
+}
+
 /** @brief Resets one continuous-settle completion tracker. */
 void joint_motion_completion_init(JointMotionCompletion *completion)
 {

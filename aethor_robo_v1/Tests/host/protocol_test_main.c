@@ -550,6 +550,7 @@ static void test_protocol_engine_lifecycle_command_admission(void)
                                         4000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
     assert(protocol_engine_pop_command(&engine, &command) == 1U);
     assert(command.type == PROTOCOL_COMMAND_STOP);
+    assert(command.control_mode == ARM_CONTROL_MODE_POSITION_VELOCITY);
 }
 
 /**

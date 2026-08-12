@@ -25,7 +25,8 @@ typedef enum
     AETHOR_APP_ACTION_ENABLE_WAIT,
     AETHOR_APP_ACTION_DISABLE_WAIT,
     AETHOR_APP_ACTION_CLEAR_FAULT_WAIT,
-    AETHOR_APP_ACTION_MOTION
+    AETHOR_APP_ACTION_MOTION,
+    AETHOR_APP_ACTION_CONTROLLED_STOP
 } AethorAppActionState;
 
 /** @brief Owns the active protocol command and its bounded CAN frame batch. */
@@ -34,6 +35,7 @@ typedef struct
     ProtocolCommand command;
     MotorEmergencyFrameBatch frames;
     JointMotionPlan motion_plan;
+    JointControlledStopPlan controlled_stop_plan;
     JointMotionCompletion motion_completion;
     CanFrame control_group[ARM_JOINT_COUNT];
     uint64_t deadline_us;
@@ -117,6 +119,53 @@ static JointMotionCanStatus aethor_app_prepare_motion_group(
         return JOINT_MOTION_CAN_STATUS_INVALID_ARGUMENT;
     }
     if (joint_motion_can_pack_group(&application_action.motion_plan,
+                                    &sample,
+                                    &application_joint_reference,
+                                    &application_motor_runtime,
+                                    application_action.control_group) !=
+        JOINT_MOTION_CAN_STATUS_OK)
+    {
+        return JOINT_MOTION_CAN_STATUS_CODEC_ERROR;
+    }
+    application_action.control_group_ready = 1U;
+    return JOINT_MOTION_CAN_STATUS_OK;
+}
+
+/** @brief Builds the next controlled-stop group for the confirmed motor mode. */
+static JointMotionCanStatus aethor_app_prepare_controlled_stop_group(
+    uint64_t timestamp_us)
+{
+    JointMotionPlan encoding_plan;
+    JointMotionSample sample;
+    uint8_t joint_index;
+
+    memset(&encoding_plan, 0, sizeof(encoding_plan));
+    encoding_plan.mode =
+        (application_action.command.control_mode == ARM_CONTROL_MODE_MIT)
+            ? JOINT_MOTION_MODE_MIT
+            : JOINT_MOTION_MODE_POSITION_VELOCITY;
+    if (encoding_plan.mode == JOINT_MOTION_MODE_POSITION_VELOCITY)
+    {
+        memset(&sample, 0, sizeof(sample));
+        sample.timestamp_us = timestamp_us;
+        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+        {
+            sample.position_rad[joint_index] = application_action
+                                                    .controlled_stop_plan
+                                                    .hold_position_rad[joint_index];
+            sample.velocity_rad_s[joint_index] = application_action
+                                                     .controlled_stop_plan
+                                                     .start_velocity_rad_s[joint_index];
+        }
+    }
+    else if (joint_motion_sample_controlled_stop(
+                 &application_action.controlled_stop_plan,
+                 timestamp_us,
+                 &sample) != JOINT_MOTION_STATUS_OK)
+    {
+        return JOINT_MOTION_CAN_STATUS_INVALID_ARGUMENT;
+    }
+    if (joint_motion_can_pack_group(&encoding_plan,
                                     &sample,
                                     &application_joint_reference,
                                     &application_motor_runtime,
@@ -301,7 +350,8 @@ uint8_t aethor_app_report_control_group_failure(
     uint64_t timestamp_us)
 {
     if ((application_initialized == 0U) ||
-        (application_action.state != AETHOR_APP_ACTION_MOTION))
+        ((application_action.state != AETHOR_APP_ACTION_MOTION) &&
+         (application_action.state != AETHOR_APP_ACTION_CONTROLLED_STOP)))
     {
         return 0U;
     }
@@ -475,8 +525,76 @@ static uint8_t aethor_app_start_lifecycle_action(
             return 0U;
         }
     }
-    else if ((command->type == PROTOCOL_COMMAND_DISABLE) ||
-             (command->type == PROTOCOL_COMMAND_STOP))
+    else if (command->type == PROTOCOL_COMMAND_STOP)
+    {
+        JointStateSnapshot joint_snapshot;
+        JointControlledStopPlan stop_plan;
+        float position_rad[ARM_JOINT_COUNT];
+        float velocity_rad_s[ARM_JOINT_COUNT];
+        uint8_t joint_index;
+
+        memset(&joint_snapshot, 0, sizeof(joint_snapshot));
+        if ((snapshot_status == MOTOR_RUNTIME_STATUS_OK) &&
+            (joint_reference_get_snapshot(&application_joint_reference,
+                                          &joint_snapshot) ==
+             JOINT_REFERENCE_STATUS_OK) &&
+            (aethor_app_joint_snapshot_to_radians(&joint_snapshot,
+                                                  position_rad,
+                                                  velocity_rad_s) != 0U) &&
+            (joint_motion_plan_controlled_stop(arm_config_get_production(),
+                                               position_rad,
+                                               velocity_rad_s,
+                                               1.0F,
+                                               timestamp_us,
+                                               &stop_plan) ==
+             JOINT_MOTION_STATUS_OK) &&
+            (arm_controller_begin_controlled_stop(&application_controller,
+                                                  timestamp_us) ==
+             ARM_TRANSITION_STATUS_OK))
+        {
+            memset(&application_action, 0, sizeof(application_action));
+            application_action.command = *command;
+            application_action.controlled_stop_plan = stop_plan;
+            application_action.motion_plan.start_time_us = timestamp_us;
+            application_action.motion_plan.duration_us = stop_plan.duration_us;
+            application_action.motion_plan.mode =
+                (command->control_mode == ARM_CONTROL_MODE_MIT)
+                    ? JOINT_MOTION_MODE_MIT
+                    : JOINT_MOTION_MODE_POSITION_VELOCITY;
+            for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+            {
+                application_action.motion_plan.target_position_rad[joint_index] =
+                    stop_plan.hold_position_rad[joint_index];
+            }
+            application_action.state = AETHOR_APP_ACTION_CONTROLLED_STOP;
+            application_action.deadline_us =
+                timestamp_us + stop_plan.duration_us +
+                AETHOR_APP_MOTION_SETTLE_US +
+                AETHOR_APP_MOTION_TIMEOUT_MARGIN_US;
+            joint_motion_completion_init(&application_action.motion_completion);
+            if (aethor_app_prepare_controlled_stop_group(timestamp_us) ==
+                JOINT_MOTION_CAN_STATUS_OK)
+            {
+                return 0U;
+            }
+        }
+
+        memset(&application_action, 0, sizeof(application_action));
+        runtime_status = motor_runtime_build_emergency_disable(
+            &application_motor_runtime,
+            &application_action.frames);
+        if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
+        {
+            application_action.command = *command;
+            application_action.state = AETHOR_APP_ACTION_DISABLE_WAIT;
+            application_action.priority = CAN_TX_PRIORITY_EMERGENCY;
+            application_action.frame_read_index = 0U;
+            application_action.deadline_us = timestamp_us +
+                                             AETHOR_APP_ACTION_TIMEOUT_US;
+            return 0U;
+        }
+    }
+    else if (command->type == PROTOCOL_COMMAND_DISABLE)
     {
         runtime_status = motor_runtime_build_emergency_disable(
             &application_motor_runtime,
@@ -682,6 +800,57 @@ static uint8_t aethor_app_service_active_action(
                                               timestamp_us);
         }
     }
+    else if (application_action.state == AETHOR_APP_ACTION_CONTROLLED_STOP)
+    {
+        JointStateSnapshot joint_snapshot;
+        float feedback_position_rad[ARM_JOINT_COUNT];
+        float feedback_velocity_rad_s[ARM_JOINT_COUNT];
+        uint64_t trajectory_end_us =
+            application_action.controlled_stop_plan.start_time_us +
+            application_action.controlled_stop_plan.duration_us;
+
+        memset(&joint_snapshot, 0, sizeof(joint_snapshot));
+        if ((timestamp_us >= trajectory_end_us) &&
+            (joint_reference_get_snapshot(&application_joint_reference,
+                                          &joint_snapshot) ==
+             JOINT_REFERENCE_STATUS_OK) &&
+            (aethor_app_joint_snapshot_to_radians(&joint_snapshot,
+                                                  feedback_position_rad,
+                                                  feedback_velocity_rad_s) != 0U))
+        {
+            (void)joint_motion_update_completion(
+                &application_action.motion_plan,
+                arm_config_get_production(),
+                feedback_position_rad,
+                feedback_velocity_rad_s,
+                joint_snapshot.valid_joint_mask,
+                timestamp_us,
+                AETHOR_APP_MOTION_SETTLE_US,
+                &application_action.motion_completion);
+            if (application_action.motion_completion.completed != 0U)
+            {
+                if (arm_controller_complete_motion(&application_controller,
+                                                   timestamp_us) ==
+                    ARM_TRANSITION_STATUS_OK)
+                {
+                    return aethor_app_complete_action(
+                        PROTOCOL_COMMAND_RESULT_STOPPED,
+                        0U,
+                        timestamp_us);
+                }
+            }
+        }
+        if ((application_action.control_group_ready == 0U) &&
+            (application_action.command.control_mode == ARM_CONTROL_MODE_MIT) &&
+            (aethor_app_prepare_controlled_stop_group(timestamp_us) !=
+             JOINT_MOTION_CAN_STATUS_OK))
+        {
+            aethor_app_latch_motion_failure(4U, timestamp_us);
+            return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_FAILED,
+                                              4U,
+                                              timestamp_us);
+        }
+    }
     else if ((application_action.frame_read_index >=
               application_action.frames.count) &&
              (application_action.state == AETHOR_APP_ACTION_DISABLE_WAIT) &&
@@ -692,9 +861,12 @@ static uint8_t aethor_app_service_active_action(
     {
         (void)arm_controller_confirm_disabled(&application_controller,
                                               timestamp_us);
-        return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_COMPLETED,
-                                          0U,
-                                          timestamp_us);
+        return aethor_app_complete_action(
+            (application_action.command.type == PROTOCOL_COMMAND_STOP)
+                ? PROTOCOL_COMMAND_RESULT_STOPPED
+                : PROTOCOL_COMMAND_RESULT_COMPLETED,
+            0U,
+            timestamp_us);
     }
     else if ((application_action.frame_read_index >=
               application_action.frames.count) &&
@@ -724,7 +896,8 @@ static uint8_t aethor_app_service_active_action(
                 &application_motor_runtime,
                 &application_emergency_disable_batch);
         }
-        else if (application_action.state == AETHOR_APP_ACTION_MOTION)
+        else if ((application_action.state == AETHOR_APP_ACTION_MOTION) ||
+                 (application_action.state == AETHOR_APP_ACTION_CONTROLLED_STOP))
         {
             aethor_app_latch_motion_failure(3U, timestamp_us);
         }

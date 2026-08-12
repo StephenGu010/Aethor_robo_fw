@@ -45,6 +45,16 @@ typedef struct
     JointMotionMode mode;
 } JointMotionPlan;
 
+/** @brief Owns one shared-duration constant-deceleration controlled stop. */
+typedef struct
+{
+    float start_position_rad[ARM_JOINT_COUNT];
+    float start_velocity_rad_s[ARM_JOINT_COUNT];
+    float hold_position_rad[ARM_JOINT_COUNT];
+    uint64_t start_time_us;
+    uint64_t duration_us;
+} JointControlledStopPlan;
+
 /** @brief Stores one synchronized position, velocity, and acceleration sample. */
 typedef struct
 {
@@ -82,6 +92,25 @@ JointMotionStatus joint_motion_plan(
 JointMotionStatus joint_motion_sample(const JointMotionPlan *plan,
                                       uint64_t timestamp_us,
                                       JointMotionSample *sample);
+
+/**
+ * @brief Plans one shared-duration constant-deceleration all-axis stop.
+ */
+JointMotionStatus joint_motion_plan_controlled_stop(
+    const ArmConfig *configuration,
+    const float start_position_rad[ARM_JOINT_COUNT],
+    const float start_velocity_rad_s[ARM_JOINT_COUNT],
+    float acceleration_ratio,
+    uint64_t start_time_us,
+    JointControlledStopPlan *plan);
+
+/**
+ * @brief Samples position, velocity, and acceleration for a controlled stop.
+ */
+JointMotionStatus joint_motion_sample_controlled_stop(
+    const JointControlledStopPlan *plan,
+    uint64_t timestamp_us,
+    JointMotionSample *sample);
 
 /** @brief Resets one continuous-settle completion tracker. */
 void joint_motion_completion_init(JointMotionCompletion *completion);

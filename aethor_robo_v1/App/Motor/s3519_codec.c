@@ -263,6 +263,73 @@ S3519CodecStatus s3519_pack_parameter_read(uint8_t esc_id,
     if (can_frame_init(frame,
                        S3519_PARAMETER_COMMAND_IDENTIFIER,
                        payload,
+                       4U) != CAN_FRAME_STATUS_OK)
+    {
+        return S3519_CODEC_STATUS_INVALID_FRAME;
+    }
+    return S3519_CODEC_STATUS_OK;
+}
+
+/**
+ * @brief Packs one volatile control-mode register write for later readback.
+ */
+S3519CodecStatus s3519_pack_control_mode_write(uint8_t esc_id,
+                                               uint32_t control_mode,
+                                               CanFrame *frame)
+{
+    uint8_t payload[8] = {0U};
+
+    if (frame == NULL)
+    {
+        return S3519_CODEC_STATUS_INVALID_ARGUMENT;
+    }
+    if (s3519_esc_id_is_valid(esc_id) == 0U)
+    {
+        return S3519_CODEC_STATUS_INVALID_ID;
+    }
+    if ((control_mode != 1U) && (control_mode != 2U))
+    {
+        return S3519_CODEC_STATUS_INVALID_MODE;
+    }
+
+    payload[0] = esc_id;
+    payload[2] = 0x55U;
+    payload[3] = (uint8_t)S3519_REGISTER_CONTROL_MODE;
+    payload[4] = (uint8_t)(control_mode & 0xFFU);
+    payload[5] = (uint8_t)((control_mode >> 8U) & 0xFFU);
+    payload[6] = (uint8_t)((control_mode >> 16U) & 0xFFU);
+    payload[7] = (uint8_t)((control_mode >> 24U) & 0xFFU);
+    if (can_frame_init(frame,
+                       S3519_PARAMETER_COMMAND_IDENTIFIER,
+                       payload,
+                       sizeof(payload)) != CAN_FRAME_STATUS_OK)
+    {
+        return S3519_CODEC_STATUS_INVALID_FRAME;
+    }
+    return S3519_CODEC_STATUS_OK;
+}
+
+/**
+ * @brief Packs the vendor 0x7FF/0xCC explicit control-feedback query.
+ */
+S3519CodecStatus s3519_pack_feedback_query(uint8_t esc_id, CanFrame *frame)
+{
+    uint8_t payload[4] = {0U};
+
+    if (frame == NULL)
+    {
+        return S3519_CODEC_STATUS_INVALID_ARGUMENT;
+    }
+    if (s3519_esc_id_is_valid(esc_id) == 0U)
+    {
+        return S3519_CODEC_STATUS_INVALID_ID;
+    }
+
+    payload[0] = esc_id;
+    payload[2] = 0xCCU;
+    if (can_frame_init(frame,
+                       S3519_PARAMETER_COMMAND_IDENTIFIER,
+                       payload,
                        sizeof(payload)) != CAN_FRAME_STATUS_OK)
     {
         return S3519_CODEC_STATUS_INVALID_FRAME;

@@ -17,6 +17,7 @@
 #define S3519_KP_MAX (500.0F)
 #define S3519_KD_MIN (0.0F)
 #define S3519_KD_MAX (5.0F)
+#define S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED (0U)
 
 /**
  * @brief Identifies S3519 CAN identifier offsets for supported control modes.
@@ -128,6 +129,25 @@ S3519CodecStatus s3519_pack_mode_command(uint8_t esc_id,
 S3519CodecStatus s3519_pack_parameter_read(uint8_t esc_id,
                                           S3519Register register_address,
                                           CanFrame *frame);
+
+/**
+ * @brief Packs one volatile control-mode register write for later readback.
+ * @param esc_id Target motor receive identifier.
+ * @param control_mode Vendor mode value 1 (MIT) or 2 (POS_VEL).
+ * @param frame Destination Classic CAN frame.
+ * @return Detailed codec status.
+ */
+S3519CodecStatus s3519_pack_control_mode_write(uint8_t esc_id,
+                                               uint32_t control_mode,
+                                               CanFrame *frame);
+
+/**
+ * @brief Packs the vendor 0x7FF/0xCC explicit control-feedback query.
+ * @param esc_id Target motor receive identifier.
+ * @param frame Destination four-byte Classic CAN frame.
+ * @return Detailed codec status.
+ */
+S3519CodecStatus s3519_pack_feedback_query(uint8_t esc_id, CanFrame *frame);
 
 /**
  * @brief Packs one MIT command using discovered motor ranges.

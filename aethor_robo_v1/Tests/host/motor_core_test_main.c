@@ -186,6 +186,7 @@ static void test_s3519_command_encoding(void)
     CanFrame frame;
     S3519Ranges ranges = {12.5F, 45.0F, 18.0F};
 
+    assert(S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED == 0U);
     assert(s3519_pack_position_velocity(3U, 1.25F, 0.5F, &frame) ==
            S3519_CODEC_STATUS_OK);
     assert(frame.identifier == 0x103U);
@@ -204,9 +205,26 @@ static void test_s3519_command_encoding(void)
     assert(s3519_pack_parameter_read(3U, S3519_REGISTER_MASTER_ID, &frame) ==
            S3519_CODEC_STATUS_OK);
     assert(frame.identifier == 0x7FFU);
+    assert(frame.length == 4U);
     assert(frame.data[0] == 3U);
     assert(frame.data[2] == 0x33U);
     assert(frame.data[3] == 0x07U);
+
+    assert(s3519_pack_control_mode_write(3U, 2U, &frame) ==
+           S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x7FFU);
+    assert(frame.length == 8U);
+    assert(frame.data[2] == 0x55U);
+    assert(frame.data[3] == S3519_REGISTER_CONTROL_MODE);
+    assert(frame.data[4] == 2U);
+    assert(frame.data[5] == 0U);
+
+    assert(s3519_pack_feedback_query(3U, &frame) == S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x7FFU);
+    assert(frame.length == 4U);
+    assert(frame.data[0] == 3U);
+    assert(frame.data[2] == 0xCCU);
+    assert(frame.data[3] == 0U);
 
     assert(s3519_pack_mit(3U,
                           &ranges,
@@ -314,6 +332,7 @@ static void test_motor_discovery_verifies_every_joint(void)
             assert(motor_discovery_next_request(&discovery, timestamp_us, &request_frame) ==
                    MOTOR_DISCOVERY_STATUS_FRAME_READY);
             assert(request_frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER);
+            assert(request_frame.length == 4U);
             assert(request_frame.data[0] == (uint8_t)(joint_index + 1U));
             assert(request_frame.data[3] == (uint8_t)expected_registers[register_index]);
 

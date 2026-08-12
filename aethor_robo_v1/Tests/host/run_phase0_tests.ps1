@@ -34,6 +34,7 @@ function Invoke-Phase0HostTests {
     $compilerCommand = Get-Phase0Compiler
     $sourceFiles = @(
         'Tests\host\phase0_test_main.c',
+        'App\aethor_app.c',
         'App\Config\arm_config.c',
         'App\Config\build_info.c',
         'App\Telemetry\diagnostics.c',
@@ -44,9 +45,14 @@ function Invoke-Phase0HostTests {
         '-Wall',
         '-Wextra',
         '-Werror',
+        '-IApp',
         '-IApp\Config',
         '-IApp\Telemetry',
-        '-IApp\Arm'
+        '-IApp\Arm',
+        '-IApp\Protocol',
+        '-IApp\Motion',
+        '-IApp\Motor',
+        '-IApp\Platform'
     ) + $sourceFiles + @('-lm', '-o', $testExecutable)
 
     if (-not (Test-Path -LiteralPath $buildDirectory))

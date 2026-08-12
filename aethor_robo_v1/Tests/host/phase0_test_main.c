@@ -7,11 +7,16 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "aethor_app.h"
 #include "arm_config.h"
 #include "arm_controller.h"
 #include "board_config.h"
 #include "build_info.h"
 #include "diagnostics.h"
+#include "motion_types.h"
+#include "motor_types.h"
+#include "platform_contract.h"
+#include "protocol_contract.h"
 
 /**
  * @brief Verifies the production configuration contains seven ordered joints.
@@ -271,6 +276,74 @@ static void test_phase0_state_queries_reject_null_outputs(void)
 }
 
 /**
+ * @brief Verifies fixed capacities and disabled Phase 0 platform capabilities.
+ */
+static void test_layer_contracts_are_frozen(void)
+{
+    MotionSnapshot motion_snapshot = {0};
+    MotorFeedbackSnapshot motor_snapshot = {0};
+
+    assert(PROTOCOL_MAX_LINE_LENGTH == 512U);
+    assert(PROTOCOL_RECENT_RESULT_CAPACITY == 32U);
+    assert(PROTOCOL_BUSINESS_COMMAND_CAPACITY == 8U);
+    assert(PROTOCOL_PHASE0_STATUS == PROTOCOL_STATUS_NOT_AVAILABLE);
+    assert(PLATFORM_CONTROL_PERIOD_US == 4000UL);
+    assert(PLATFORM_FORMAL_LINK_VALIDATED == 0U);
+    assert(motion_snapshot.valid_joint_mask == 0U);
+    assert(motor_snapshot.valid_joint_mask == 0U);
+}
+
+/**
+ * @brief Verifies the application facade reaches only the safe Phase 0 fault.
+ */
+static void test_aethor_app_latches_safe_phase0_fault(void)
+{
+    ArmSnapshot snapshot;
+    DiagnosticEvent event;
+    DiagnosticCounters counters;
+
+    assert(!aethor_app_get_snapshot(&snapshot));
+    assert(!aethor_app_get_snapshot(NULL));
+    assert(!aethor_app_get_diagnostic(0U, &event));
+    assert(!aethor_app_get_diagnostic_counters(&counters));
+
+    aethor_app_init(1000ULL);
+    assert(aethor_app_get_snapshot(&snapshot));
+    assert(snapshot.state == ARM_STATE_BOOT);
+
+    aethor_app_service(2000ULL);
+    aethor_app_service(3000ULL);
+    assert(aethor_app_get_snapshot(&snapshot));
+    assert(snapshot.state == ARM_STATE_FAULT);
+    assert(snapshot.fault == ARM_FAULT_CONFIG_INCOMPLETE);
+
+    assert(aethor_app_get_diagnostic(0U, &event));
+    assert(event.code == DIAGNOSTIC_CODE_BOOT);
+    assert(aethor_app_get_diagnostic_counters(&counters));
+    assert(counters.service_cycles == 2U);
+    assert(counters.can_tx_frames == 0U);
+    assert(counters.uart_tx_bytes == 0U);
+}
+
+/**
+ * @brief Verifies reinitialization resets all static application state.
+ */
+static void test_aethor_app_reinitializes_deterministically(void)
+{
+    ArmSnapshot snapshot;
+    DiagnosticCounters counters;
+
+    aethor_app_service(4000ULL);
+    aethor_app_init(5000ULL);
+
+    assert(aethor_app_get_snapshot(&snapshot));
+    assert(snapshot.state == ARM_STATE_BOOT);
+    assert(snapshot.fault == ARM_FAULT_NONE);
+    assert(aethor_app_get_diagnostic_counters(&counters));
+    assert(counters.service_cycles == 0U);
+}
+
+/**
  * @brief Runs the Phase 0 configuration and identity test suite.
  * @return Zero when every assertion passes.
  */
@@ -289,6 +362,9 @@ int main(void)
     test_arm_controller_latches_incomplete_config_fault();
     test_arm_controller_latches_invalid_config_fault();
     test_phase0_state_queries_reject_null_outputs();
+    test_layer_contracts_are_frozen();
+    test_aethor_app_latches_safe_phase0_fault();
+    test_aethor_app_reinitializes_deterministically();
 
     printf("PHASE0_TESTS_PASSED\n");
     return 0;

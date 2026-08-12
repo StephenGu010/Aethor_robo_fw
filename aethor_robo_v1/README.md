@@ -1,3 +1,52 @@
+# Aethor 七自由度机械臂固件
+
+当前分支实现 PRD Phase 0 安全基线：STM32H723 工程已经切换到静态内存的 `App/` 分层入口，启动状态固定为 `BOOT → SELF_TEST → FAULT(CONFIG_INCOMPLETE)`。由于真实机械参数尚未完成逐轴验证，本固件不会进入使能或运动状态，也没有可执行的电机发送接口。
+
+## 当前入口与范围
+
+- 正式入口：`App/aethor_app.c`，由 `main.c` 初始化、FreeRTOS 默认任务每 4 ms 服务一次。
+- 默认任务：CubeMX 静态创建，栈缓冲区为 512 words。
+- 关节模型：固定 7 轴；ESC ID 为 1–7，Master ID 为 11–17。
+- 物理参数：方向、零位/限位、速度、加速度、MIT 增益、电机量程和外部减速比均保持未验证状态，因此配置不能通过使能就绪检查。
+- 旧验证代码：`User/` 原样保留作为迁移参考，但旧按键双电机和旧七轴控制链不进入当前 Keil 目标。
+- 本阶段未实现：正式 UART 协议、电机控制、同步轨迹、DH 正逆解、RGB 和上位机业务逻辑。
+
+## 分层目录
+
+```text
+App/
+├─ Config/       七轴只读配置、构建身份、验证位
+├─ Protocol/     上位机协议边界，Phase 0 不执行命令
+├─ Arm/          状态唯一所有者与启动自检
+├─ Motion/       运动类型边界，不生成设定值
+├─ Motor/        电机类型边界，不发送 CAN 帧
+├─ Telemetry/    固定容量事件环与诊断计数
+└─ Platform/     HAL/RTOS/FDCAN/UART 适配契约
+```
+
+核心业务层不包含 HAL、FreeRTOS 或 USB/FDCAN 头文件；`App/` 禁止动态分配。架构规则由脚本持续检查。
+
+## 构建与自动化验证
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_phase0_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\check_phase0_architecture.ps1
+```
+
+Keil 工程：`MDK-ARM\CtrBoard-H7_FDCAN.uvprojx`
+
+CubeMX 工程：`CtrBoard-H7_FDCAN.ioc`
+
+最近一次 ARMCC 5 构建结果为 `0 Error(s), 0 Warning(s)`；该结果只证明源码和工程配置能够生成固件，不证明 USB、CAN、电机、关节方向、限位、减速比或运动精度已通过实机验证。详细证据与交接说明见 `docs/handoffs/phase-00/`。
+
+## 后续入口
+
+Phase 1 应先建立参数来源、审核和逐轴确认机制，再迁移 DM3520/S3519 参数读取与反馈解码。任何运动功能都必须等配置验证位、单轴台架验收和安全条件满足后才能接入。
+
+<details>
+<summary>历史 PA15 双电机验证资料（保留源码参考，不是当前固件入口）</summary>
+
 # Aethor STM32H723 S3519 电机控制固件
 
 本工程以 STM32H723VGT6、FreeRTOS、USB CDC 和 FDCAN1 为基础。当前运行入口由 PA15 按键触发两台 S3519 各转一圈，方向优先正反交替，并在首选方向超过 PMAX 时自动改选两台共同安全的反方向；USB CDC 只承担查询和探针输出。原七轴关节控制模块仍保留，但当前不参与运行。
@@ -107,3 +156,5 @@ E:\oss-cad-suite\bin\openocd.exe `
 ```
 
 当前 PA15 镜像已完成主机测试和 Keil 构建，但尚未由本轮烧录，按键、CAN 反馈和双电机一圈运动仍属于待完成的实机验收。烧录前应可靠固定两台空载电机，并准备可立即切断 24 V 电机电源的措施。
+
+</details>

@@ -1,5 +1,26 @@
 # 变更记录
 
+## Unreleased — PRD Phase 0
+
+### 新增
+
+- 建立 `App/Config`、`Protocol`、`Arm`、`Motion`、`Motor`、`Telemetry`、`Platform` 分层契约和统一 `aethor_app` 入口。
+- 新增固定七轴配置模型；ESC ID 1–7、Master ID 11–17 已固化，所有未实测物理参数用验证位阻止误使能。
+- 新增 `BOOT → SELF_TEST → FAULT(CONFIG_INCOMPLETE)` 安全启动路径、固定 64 项结构化诊断环和饱和计数器。
+- 新增 Phase 0 主机测试与架构守卫，检查动态分配、层间依赖、CubeMX 静态任务和 Keil 源列表。
+
+### 变更
+
+- CubeMX 默认任务改为静态创建，`aethor_app_service()` 以 4 ms 周期运行；USB 初始化保持在调度器启动后的默认任务中。
+- Keil 目标改为编译 Phase 0 分层应用；旧 `User/` 源码保留在磁盘，但旧按键双电机和旧七轴控制链不参与当前固件构建。
+- 同步 STM32CubeH7 1.11.2 的 USB HAL/中间件生成依赖与当前 `.ioc`。
+
+### 验证边界
+
+- Phase 0 主机测试、旧代码回归测试、架构守卫和 ARMCC 5 构建均通过；Keil 结果为 `0 Error(s), 0 Warning(s)`。
+- 本阶段没有实现电机使能、位置/速度控制、同步轨迹、正式 UART 数据链路、DH 正逆解、RGB 或上位机业务协议。
+- 未进行本固件镜像的 USB、CAN 或电机实机验证；软件测试与构建结果不得解释为七轴硬件验收完成。
+
 ## 2026-08-12
 
 ### PA15 双电机运行入口

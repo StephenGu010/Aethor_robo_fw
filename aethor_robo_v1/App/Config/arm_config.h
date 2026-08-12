@@ -23,7 +23,8 @@ typedef enum
     ARM_JOINT_VERIFIED_MAX_ACCELERATION = (1UL << 3),
     ARM_JOINT_VERIFIED_MIT_GAINS = (1UL << 4),
     ARM_JOINT_VERIFIED_MOTOR_RANGES = (1UL << 5),
-    ARM_JOINT_VERIFIED_GEAR_RATIO = (1UL << 6)
+    ARM_JOINT_VERIFIED_GEAR_RATIO = (1UL << 6),
+    ARM_JOINT_VERIFIED_COMPLETION_TOLERANCE = (1UL << 7)
 } ArmJointVerifiedField;
 
 #define ARM_JOINT_REQUIRED_ENABLE_FIELDS                                     \
@@ -32,7 +33,8 @@ typedef enum
                 ARM_JOINT_VERIFIED_MAX_ACCELERATION |                        \
                 ARM_JOINT_VERIFIED_MIT_GAINS |                               \
                 ARM_JOINT_VERIFIED_MOTOR_RANGES |                            \
-                ARM_JOINT_VERIFIED_GEAR_RATIO))
+                ARM_JOINT_VERIFIED_GEAR_RATIO |                              \
+                ARM_JOINT_VERIFIED_COMPLETION_TOLERANCE))
 
 /**
  * @brief Reports structural and confirmed-value configuration failures.
@@ -53,7 +55,8 @@ typedef enum
     ARM_CONFIG_ERROR_MIT_GAINS = (1UL << 10),
     ARM_CONFIG_ERROR_MOTOR_RANGES = (1UL << 11),
     ARM_CONFIG_ERROR_GEAR_RATIO = (1UL << 12),
-    ARM_CONFIG_ERROR_VERIFIED_FIELDS = (1UL << 13)
+    ARM_CONFIG_ERROR_VERIFIED_FIELDS = (1UL << 13),
+    ARM_CONFIG_ERROR_COMPLETION_TOLERANCE = (1UL << 14)
 } ArmConfigError;
 
 /**
@@ -78,6 +81,8 @@ typedef struct
     float motor_vmax_rad_s;
     float motor_tmax_nm;
     float gear_ratio;
+    float position_tolerance_rad;
+    float velocity_tolerance_rad_s;
     uint32_t verified_fields;
 } JointConfig;
 

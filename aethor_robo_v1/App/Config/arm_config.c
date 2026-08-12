@@ -13,7 +13,8 @@
 #define ARM_UNVERIFIED_JOINT(joint_number, esc_identifier, master_identifier) \
     {                                                                         \
         (joint_number), (esc_identifier), (master_identifier), 0,             \
-        0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0U      \
+        0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F,         \
+        0.0F, 0.0F, 0U                                                       \
     }
 
 static const ArmConfig production_configuration = {
@@ -143,6 +144,19 @@ static void arm_config_validate_verified_values(const JointConfig *joint,
          (joint->gear_ratio <= 0.0F)))
     {
         arm_config_record_error(validation, ARM_CONFIG_ERROR_GEAR_RATIO, joint_index);
+    }
+
+    if ((verified_fields & ARM_JOINT_VERIFIED_COMPLETION_TOLERANCE) != 0U)
+    {
+        if (!arm_config_float_is_finite(joint->position_tolerance_rad) ||
+            !arm_config_float_is_finite(joint->velocity_tolerance_rad_s) ||
+            (joint->position_tolerance_rad <= 0.0F) ||
+            (joint->velocity_tolerance_rad_s <= 0.0F))
+        {
+            arm_config_record_error(validation,
+                                    ARM_CONFIG_ERROR_COMPLETION_TOLERANCE,
+                                    joint_index);
+        }
     }
 }
 

@@ -744,6 +744,16 @@
           </Files>
         </Group>
         <Group>
+          <GroupName>App/Motion</GroupName>
+          <Files>
+            <File>
+              <FileName>joint_motion.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Motion\joint_motion.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
           <GroupName>App/Motor</GroupName>
           <Files>
             <File>

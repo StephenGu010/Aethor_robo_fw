@@ -46,6 +46,8 @@ static ArmConfig make_test_commissioned_configuration(void)
         joint->motor_vmax_rad_s = 45.0F;
         joint->motor_tmax_nm = 18.0F;
         joint->gear_ratio = 2.0F;
+        joint->position_tolerance_rad = 0.01F;
+        joint->velocity_tolerance_rad_s = 0.02F;
         joint->verified_fields = ARM_JOINT_REQUIRED_ENABLE_FIELDS;
     }
     return configuration;

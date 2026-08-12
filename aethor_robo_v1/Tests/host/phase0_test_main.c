@@ -8,8 +8,10 @@
 #include <stdio.h>
 
 #include "arm_config.h"
+#include "arm_controller.h"
 #include "board_config.h"
 #include "build_info.h"
+#include "diagnostics.h"
 
 /**
  * @brief Verifies the production configuration contains seven ordered joints.
@@ -133,6 +135,142 @@ static void test_build_and_board_identity_are_frozen(void)
 }
 
 /**
+ * @brief Verifies diagnostics initialization uses explicit unsampled watermarks.
+ */
+static void test_diagnostics_initialize_deterministically(void)
+{
+    Diagnostics diagnostics;
+    DiagnosticCounters counters;
+
+    diagnostics_init(&diagnostics);
+
+    assert(diagnostics_get_counters(&diagnostics, &counters));
+    assert(counters.service_cycles == 0U);
+    assert(counters.config_validation_failures == 0U);
+    assert(counters.can_rx_frames == 0U);
+    assert(counters.can_tx_frames == 0U);
+    assert(counters.uart_rx_bytes == 0U);
+    assert(counters.uart_tx_bytes == 0U);
+    assert(counters.minimum_stack_words == DIAGNOSTIC_WATERMARK_NOT_SAMPLED);
+    assert(counters.minimum_heap_bytes == DIAGNOSTIC_WATERMARK_NOT_SAMPLED);
+}
+
+/**
+ * @brief Verifies a full diagnostic ring retains newest events without allocation.
+ */
+static void test_diagnostics_ring_overwrites_oldest_event(void)
+{
+    Diagnostics diagnostics;
+    DiagnosticEvent event;
+    uint32_t event_index;
+
+    diagnostics_init(&diagnostics);
+    for (event_index = 0U; event_index < (DIAGNOSTICS_CAPACITY + 2U); ++event_index)
+    {
+        assert(diagnostics_push(&diagnostics,
+                                (uint64_t)event_index,
+                                DIAGNOSTIC_CODE_BOOT,
+                                DIAGNOSTIC_SEVERITY_INFO,
+                                event_index));
+    }
+
+    assert(diagnostics.count == DIAGNOSTICS_CAPACITY);
+    assert(diagnostics.dropped_count == 2U);
+    assert(diagnostics_get(&diagnostics, 0U, &event));
+    assert(event.sequence == 3U);
+    assert(event.detail == 2U);
+    assert(diagnostics_get(&diagnostics, DIAGNOSTICS_CAPACITY - 1U, &event));
+    assert(event.sequence == DIAGNOSTICS_CAPACITY + 2U);
+    assert(!diagnostics_get(&diagnostics, DIAGNOSTICS_CAPACITY, &event));
+}
+
+/**
+ * @brief Verifies the production controller safely latches incomplete config.
+ */
+static void test_arm_controller_latches_incomplete_config_fault(void)
+{
+    Diagnostics diagnostics;
+    DiagnosticCounters counters;
+    ArmController controller;
+    ArmSnapshot snapshot;
+
+    diagnostics_init(&diagnostics);
+    arm_controller_init(&controller,
+                        arm_config_get_production(),
+                        &diagnostics,
+                        1000ULL);
+
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_BOOT);
+    assert(snapshot.fault == ARM_FAULT_NONE);
+
+    arm_controller_step(&controller, 2000ULL);
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_SELF_TEST);
+
+    arm_controller_step(&controller, 3000ULL);
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_FAULT);
+    assert(snapshot.fault == ARM_FAULT_CONFIG_INCOMPLETE);
+    assert(snapshot.joint_count == ARM_JOINT_COUNT);
+    assert(snapshot.fault_detail == ARM_JOINT_REQUIRED_ENABLE_FIELDS);
+
+    assert(diagnostics_get_counters(&diagnostics, &counters));
+    assert(counters.service_cycles == 2U);
+    assert(counters.config_validation_failures == 1U);
+
+    arm_controller_step(&controller, 4000ULL);
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_FAULT);
+    assert(snapshot.fault == ARM_FAULT_CONFIG_INCOMPLETE);
+    assert(diagnostics_get_counters(&diagnostics, &counters));
+    assert(counters.service_cycles == 3U);
+    assert(counters.config_validation_failures == 1U);
+}
+
+/**
+ * @brief Verifies malformed configuration produces the distinct invalid fault.
+ */
+static void test_arm_controller_latches_invalid_config_fault(void)
+{
+    ArmConfig invalid_configuration = *arm_config_get_production();
+    Diagnostics diagnostics;
+    ArmController controller;
+    ArmSnapshot snapshot;
+
+    invalid_configuration.joints[1].esc_id = invalid_configuration.joints[0].esc_id;
+    diagnostics_init(&diagnostics);
+    arm_controller_init(&controller, &invalid_configuration, &diagnostics, 1000ULL);
+    arm_controller_step(&controller, 2000ULL);
+    arm_controller_step(&controller, 3000ULL);
+
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_FAULT);
+    assert(snapshot.fault == ARM_FAULT_CONFIG_INVALID);
+    assert((snapshot.fault_detail & ARM_CONFIG_ERROR_DUPLICATE_ESC_ID) != 0U);
+}
+
+/**
+ * @brief Verifies public diagnostics and snapshot queries reject null outputs.
+ */
+static void test_phase0_state_queries_reject_null_outputs(void)
+{
+    Diagnostics diagnostics;
+    ArmController controller;
+
+    diagnostics_init(&diagnostics);
+    arm_controller_init(&controller,
+                        arm_config_get_production(),
+                        &diagnostics,
+                        0ULL);
+
+    assert(!diagnostics_get(NULL, 0U, NULL));
+    assert(!diagnostics_get_counters(&diagnostics, NULL));
+    assert(!arm_controller_get_snapshot(&controller, NULL));
+    assert(!arm_controller_get_snapshot(NULL, NULL));
+}
+
+/**
  * @brief Runs the Phase 0 configuration and identity test suite.
  * @return Zero when every assertion passes.
  */
@@ -146,6 +284,11 @@ int main(void)
     test_verified_invalid_limits_are_rejected();
     test_null_configuration_is_rejected();
     test_build_and_board_identity_are_frozen();
+    test_diagnostics_initialize_deterministically();
+    test_diagnostics_ring_overwrites_oldest_event();
+    test_arm_controller_latches_incomplete_config_fault();
+    test_arm_controller_latches_invalid_config_fault();
+    test_phase0_state_queries_reject_null_outputs();
 
     printf("PHASE0_TESTS_PASSED\n");
     return 0;

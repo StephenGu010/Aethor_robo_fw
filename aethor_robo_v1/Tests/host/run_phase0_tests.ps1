@@ -35,14 +35,18 @@ function Invoke-Phase0HostTests {
     $sourceFiles = @(
         'Tests\host\phase0_test_main.c',
         'App\Config\arm_config.c',
-        'App\Config\build_info.c'
+        'App\Config\build_info.c',
+        'App\Telemetry\diagnostics.c',
+        'App\Arm\arm_controller.c'
     )
     $compilerArguments = @(
         '-std=c11',
         '-Wall',
         '-Wextra',
         '-Werror',
-        '-IApp\Config'
+        '-IApp\Config',
+        '-IApp\Telemetry',
+        '-IApp\Arm'
     ) + $sourceFiles + @('-lm', '-o', $testExecutable)
 
     if (-not (Test-Path -LiteralPath $buildDirectory))

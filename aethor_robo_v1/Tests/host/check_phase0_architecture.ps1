@@ -138,8 +138,8 @@ function Invoke-Phase0ArchitectureCheck {
         -Pattern 'pdMS_TO_TICKS\s*\(\s*4U\s*\)' `
         -Message 'ArmControlTask period is not 4 ms.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
-        -Pattern 'pdMS_TO_TICKS\s*\(\s*20U\s*\)' `
-        -Message 'TelemetryTask default period is not 20 ms.'
+        -Pattern 'pdMS_TO_TICKS\s*\(\s*10U\s*\)' `
+        -Message 'TelemetryTask does not service the 100 Hz maximum cadence.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'pdMS_TO_TICKS\s*\(\s*100U\s*\)' `
         -Message 'DiagnosticsTask period is not 100 ms.'

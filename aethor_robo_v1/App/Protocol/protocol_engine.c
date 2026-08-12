@@ -411,6 +411,30 @@ static uint8_t protocol_engine_stream_fields_are_valid(
     return 1U;
 }
 
+/** @brief Checks whether one exact token is present in a stored CSV list. */
+static uint8_t protocol_engine_csv_contains(const char *csv,
+                                            const char *expected)
+{
+    const char *token_start = csv;
+    size_t expected_length = strlen(expected);
+
+    while ((token_start != NULL) && (*token_start != '\0'))
+    {
+        const char *token_end = strchr(token_start, ',');
+        size_t token_length = (token_end == NULL)
+                                  ? strlen(token_start)
+                                  : (size_t)(token_end - token_start);
+
+        if ((token_length == expected_length) &&
+            (strncmp(token_start, expected, expected_length) == 0))
+        {
+            return 1U;
+        }
+        token_start = (token_end == NULL) ? NULL : token_end + 1;
+    }
+    return 0U;
+}
+
 /**
  * @brief Finds a retained request ID while expiring records older than 60 seconds.
  */
@@ -544,6 +568,10 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     engine->session_active = 1U;
     engine->watchdog_timeout_reported = 0U;
     engine->last_valid_request_at_us = timestamp_us;
+    engine->next_telemetry_due_us = timestamp_us;
+    engine->telemetry_sequence = 0U;
+    engine->event_sequence = 0U;
+    engine->last_published_state_valid = 0U;
     engine->stream_rate_hz = 50U;
     (void)strcpy(engine->stream_fields, "jpos,jvel,state,motor");
     return protocol_engine_append_format(
@@ -1032,6 +1060,7 @@ static ProtocolEngineStatus protocol_engine_handle_set_stream(
     engine->stream_rate_hz = (uint8_t)rate_hz;
     memcpy(engine->stream_fields, fields_span.data, fields_span.length);
     engine->stream_fields[fields_span.length] = '\0';
+    engine->next_telemetry_due_us = 0U;
     return protocol_engine_append_format(output_batch,
                                          PROTOCOL_OUTPUT_QUERY,
                                          "RSP %lu ok rate_hz=%lu fields=%s",
@@ -1300,6 +1329,201 @@ uint8_t protocol_engine_pop_result_output(
                (size_t)recent_result->response_length + 1U);
     }
     return 1U;
+}
+
+/**
+ * @brief Generates due telemetry and immediate state-change events.
+ */
+uint8_t protocol_engine_generate_stream_output(
+    ProtocolEngine *engine,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    char body[PROTOCOL_MAX_LINE_LENGTH + 1U];
+    size_t body_length = 0U;
+    uint64_t interval_us;
+    uint8_t joint_index;
+
+    if ((engine == NULL) || (output_batch == NULL))
+    {
+        return 0U;
+    }
+    protocol_engine_clear_output(output_batch);
+    if ((engine->session_active == 0U) || (engine->query_context_valid == 0U))
+    {
+        return 0U;
+    }
+
+    if (engine->last_published_state_valid == 0U)
+    {
+        engine->last_published_state = engine->query_context.arm.state;
+        engine->last_published_state_valid = 1U;
+    }
+    else if (engine->last_published_state != engine->query_context.arm.state)
+    {
+        ArmState previous_state = engine->last_published_state;
+
+        ++engine->event_sequence;
+        if (protocol_engine_append_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "EVT %lu STATE_CHANGED from=%s to=%s t_us=%lu",
+                (unsigned long)engine->event_sequence,
+                protocol_engine_arm_state_text(previous_state),
+                protocol_engine_arm_state_text(engine->query_context.arm.state),
+                (unsigned long)timestamp_us) != PROTOCOL_ENGINE_STATUS_OK)
+        {
+            return 0U;
+        }
+        engine->last_published_state = engine->query_context.arm.state;
+    }
+
+    if (engine->stream_rate_hz == 0U)
+    {
+        return output_batch->count;
+    }
+    interval_us = 1000000ULL / engine->stream_rate_hz;
+    if ((engine->next_telemetry_due_us != 0U) &&
+        (timestamp_us < engine->next_telemetry_due_us))
+    {
+        return output_batch->count;
+    }
+    engine->next_telemetry_due_us = timestamp_us + interval_us;
+    ++engine->telemetry_sequence;
+
+    if (protocol_engine_append_text(body,
+                                    sizeof(body),
+                                    &body_length,
+                                    "TEL %lu JOINT_STATE t_us=%lu",
+                                    (unsigned long)engine->telemetry_sequence,
+                                    (unsigned long)engine->query_context.joints.published_at_us) == 0U)
+    {
+        return output_batch->count;
+    }
+    if (protocol_engine_csv_contains(engine->stream_fields, "jpos") != 0U)
+    {
+        if ((protocol_engine_append_text(body,
+                                         sizeof(body),
+                                         &body_length,
+                                         " q_deg=") == 0U) ||
+            (protocol_engine_append_joint_vector(
+                 body,
+                 sizeof(body),
+                 &body_length,
+                 engine->query_context.joints.position_deg) == 0U))
+        {
+            return output_batch->count;
+        }
+    }
+    if (protocol_engine_csv_contains(engine->stream_fields, "jvel") != 0U)
+    {
+        if ((protocol_engine_append_text(body,
+                                         sizeof(body),
+                                         &body_length,
+                                         " qd_deg_s=") == 0U) ||
+            (protocol_engine_append_joint_vector(
+                 body,
+                 sizeof(body),
+                 &body_length,
+                 engine->query_context.joints.velocity_deg_s) == 0U))
+        {
+            return output_batch->count;
+        }
+    }
+    if (protocol_engine_csv_contains(engine->stream_fields, "jtor") != 0U)
+    {
+        if ((protocol_engine_append_text(body,
+                                         sizeof(body),
+                                         &body_length,
+                                         " tau_nm=") == 0U) ||
+            (protocol_engine_append_joint_vector(
+                 body,
+                 sizeof(body),
+                 &body_length,
+                 engine->query_context.joints.torque_nm) == 0U))
+        {
+            return output_batch->count;
+        }
+    }
+    if (protocol_engine_csv_contains(engine->stream_fields, "state") != 0U)
+    {
+        if (protocol_engine_append_text(
+                body,
+                sizeof(body),
+                &body_length,
+                " arm_state=%s aligned=%u enabled=%u moving=%u",
+                protocol_engine_arm_state_text(engine->query_context.arm.state),
+                engine->query_context.arm.aligned,
+                engine->query_context.arm.enabled,
+                engine->query_context.arm.moving) == 0U)
+        {
+            return output_batch->count;
+        }
+    }
+    if (protocol_engine_csv_contains(engine->stream_fields, "motor") != 0U)
+    {
+        uint8_t fault_mask = 0U;
+
+        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+        {
+            if (engine->query_context.motors.joints[joint_index].fault_flags != 0U)
+            {
+                fault_mask |= (uint8_t)(1U << joint_index);
+            }
+        }
+        if (protocol_engine_append_text(
+                body,
+                sizeof(body),
+                &body_length,
+                " motor_valid_mask=%u motor_fault_mask=%u",
+                engine->query_context.motors.valid_joint_mask,
+                fault_mask) == 0U)
+        {
+            return output_batch->count;
+        }
+    }
+    if (protocol_engine_csv_contains(engine->stream_fields, "diag") != 0U)
+    {
+        if (protocol_engine_append_text(
+                body,
+                sizeof(body),
+                &body_length,
+                " can_rx=%lu can_tx=%lu queue_hwm=%lu",
+                (unsigned long)engine->query_context.diagnostics.can_rx_frames,
+                (unsigned long)engine->query_context.diagnostics.can_tx_frames,
+                (unsigned long)engine->query_context.diagnostics.queue_high_watermark) == 0U)
+        {
+            return output_batch->count;
+        }
+    }
+    if (protocol_engine_append_text(body,
+                                    sizeof(body),
+                                    &body_length,
+                                    " valid_mask=%u",
+                                    engine->query_context.joints.valid_joint_mask) == 0U)
+    {
+        return output_batch->count;
+    }
+    (void)protocol_engine_append_body(output_batch,
+                                      PROTOCOL_OUTPUT_TELEMETRY,
+                                      body);
+    return output_batch->count;
+}
+
+/**
+ * @brief Formats one transport-layer line overflow error without parsing.
+ */
+ProtocolEngineStatus protocol_engine_format_line_too_long(
+    ProtocolOutputBatch *output_batch)
+{
+    if (output_batch == NULL)
+    {
+        return PROTOCOL_ENGINE_STATUS_INVALID_ARGUMENT;
+    }
+    protocol_engine_clear_output(output_batch);
+    return protocol_engine_append_format(output_batch,
+                                         PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                         "ERR 0 LINE_TOO_LONG");
 }
 
 /**

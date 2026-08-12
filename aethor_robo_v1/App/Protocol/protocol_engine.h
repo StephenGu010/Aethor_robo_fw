@@ -138,9 +138,12 @@ typedef struct
     ProtocolQueryContext query_context;
     char stream_fields[64];
     uint64_t last_valid_request_at_us;
+    uint64_t next_telemetry_due_us;
     uint32_t boot_id;
     uint32_t session_id;
     uint32_t next_session_nonce;
+    uint32_t telemetry_sequence;
+    uint32_t event_sequence;
     uint8_t recent_write_index;
     volatile uint8_t command_write_sequence;
     volatile uint8_t command_read_sequence;
@@ -150,6 +153,8 @@ typedef struct
     uint8_t query_context_valid;
     uint8_t session_active;
     uint8_t watchdog_timeout_reported;
+    ArmState last_published_state;
+    uint8_t last_published_state_valid;
 } ProtocolEngine;
 
 /**
@@ -195,6 +200,26 @@ uint8_t protocol_engine_submit_command_result(
  */
 uint8_t protocol_engine_pop_result_output(
     ProtocolEngine *engine,
+    ProtocolOutputBatch *output_batch);
+
+/**
+ * @brief Generates due telemetry and immediate state-change events.
+ * @param engine Initialized engine with a current query context.
+ * @param timestamp_us Current monotonic timestamp.
+ * @param output_batch Destination containing zero to two outputs.
+ * @return Number of generated outputs.
+ */
+uint8_t protocol_engine_generate_stream_output(
+    ProtocolEngine *engine,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch);
+
+/**
+ * @brief Formats one transport-layer line overflow error without parsing.
+ * @param output_batch Destination high-priority error output.
+ * @return OK or INVALID_ARGUMENT/OUTPUT_TOO_SMALL.
+ */
+ProtocolEngineStatus protocol_engine_format_line_too_long(
     ProtocolOutputBatch *output_batch);
 
 /**

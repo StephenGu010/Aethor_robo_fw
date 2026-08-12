@@ -406,6 +406,61 @@ static void test_protocol_engine_align_reference_lifecycle(void)
 }
 
 /**
+ * @brief Verifies rate-gated telemetry, state events, and overlong-line errors.
+ */
+static void test_protocol_engine_stream_generation(void)
+{
+    ProtocolEngine engine;
+    ProtocolQueryContext query_context;
+    ProtocolOutputBatch output_batch;
+    char request_frame[256];
+    size_t request_length;
+
+    memset(&query_context, 0, sizeof(query_context));
+    query_context.arm.state = ARM_STATE_UNALIGNED;
+    query_context.joints.position_deg[0] = 1.25F;
+    query_context.joints.valid_joint_mask = 0x01U;
+    query_context.joints.published_at_us = 1000U;
+    protocol_engine_init(&engine, 3456U);
+    request_length = build_request_frame(
+        "REQ 1 HELLO client=test protocol=1",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        1000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    protocol_engine_update_query_context(&engine, &query_context);
+
+    assert(protocol_engine_generate_stream_output(&engine, 1000U, &output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data, "TEL 1 JOINT_STATE") != NULL);
+    assert(strstr(output_batch.messages[0].data, "q_deg=1.250") != NULL);
+    assert(output_batch.messages[0].priority == PROTOCOL_OUTPUT_TELEMETRY);
+    assert(protocol_engine_generate_stream_output(&engine, 1001U, &output_batch) == 0U);
+
+    query_context.arm.state = ARM_STATE_DISABLED;
+    protocol_engine_update_query_context(&engine, &query_context);
+    assert(protocol_engine_generate_stream_output(&engine, 2000U, &output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data, "EVT 1 STATE_CHANGED") != NULL);
+    assert(output_batch.messages[0].priority == PROTOCOL_OUTPUT_HIGH_PRIORITY);
+
+    request_length = build_request_frame(
+        "REQ 2 SET_STREAM rate_hz=100 fields=jpos",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        3000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(protocol_engine_generate_stream_output(&engine, 3000U, &output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data, "q_deg=1.250") != NULL);
+    assert(strstr(output_batch.messages[0].data, "arm_state=") == NULL);
+    assert(protocol_engine_generate_stream_output(&engine, 12999U, &output_batch) == 0U);
+    assert(protocol_engine_generate_stream_output(&engine, 13000U, &output_batch) == 1U);
+
+    assert(protocol_engine_format_line_too_long(&output_batch) ==
+           PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "ERR 0 LINE_TOO_LONG") != NULL);
+    assert(output_batch.messages[0].priority == PROTOCOL_OUTPUT_HIGH_PRIORITY);
+}
+
+/**
  * @brief Runs all protocol contract tests.
  * @return Zero when every assertion passes.
  */
@@ -419,6 +474,7 @@ int main(void)
     test_protocol_engine_session_lifecycle();
     test_protocol_engine_query_dispatch();
     test_protocol_engine_align_reference_lifecycle();
+    test_protocol_engine_stream_generation();
     puts("PROTOCOL_TESTS_PASSED");
     return 0;
 }

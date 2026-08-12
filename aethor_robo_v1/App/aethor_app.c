@@ -17,6 +17,27 @@ static MotorRuntime application_motor_runtime;
 static ProtocolEngine application_protocol_engine;
 static uint8_t application_initialized;
 
+/** @brief Refreshes the protocol query context from coherent domain snapshots. */
+static void aethor_app_update_protocol_context(uint64_t timestamp_us)
+{
+    ProtocolQueryContext query_context;
+
+    memset(&query_context, 0, sizeof(query_context));
+    (void)arm_controller_get_snapshot(&application_controller,
+                                      &query_context.arm);
+    (void)joint_reference_get_snapshot(&application_joint_reference,
+                                       &query_context.joints);
+    (void)motor_runtime_get_snapshot(&application_motor_runtime,
+                                     timestamp_us,
+                                     MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
+                                     &query_context.motors);
+    (void)diagnostics_get_counters(&application_diagnostics,
+                                   &query_context.diagnostics);
+    query_context.timestamp_us = timestamp_us;
+    protocol_engine_update_query_context(&application_protocol_engine,
+                                         &query_context);
+}
+
 /**
  * @brief Initializes all static Phase 0 application state.
  * @param timestamp_us Initialization timestamp in microseconds.
@@ -49,26 +70,11 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
     uint64_t timestamp_us,
     ProtocolOutputBatch *output_batch)
 {
-    ProtocolQueryContext query_context;
-
     if (application_initialized == 0U)
     {
         return PROTOCOL_ENGINE_STATUS_INVALID_ARGUMENT;
     }
-    memset(&query_context, 0, sizeof(query_context));
-    (void)arm_controller_get_snapshot(&application_controller,
-                                      &query_context.arm);
-    (void)joint_reference_get_snapshot(&application_joint_reference,
-                                       &query_context.joints);
-    (void)motor_runtime_get_snapshot(&application_motor_runtime,
-                                     timestamp_us,
-                                     MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
-                                     &query_context.motors);
-    (void)diagnostics_get_counters(&application_diagnostics,
-                                   &query_context.diagnostics);
-    query_context.timestamp_us = timestamp_us;
-    protocol_engine_update_query_context(&application_protocol_engine,
-                                         &query_context);
+    aethor_app_update_protocol_context(timestamp_us);
     return protocol_engine_process_line(&application_protocol_engine,
                                         line,
                                         length,
@@ -233,6 +239,32 @@ uint8_t aethor_app_pop_protocol_result_output(
     }
     return protocol_engine_pop_result_output(&application_protocol_engine,
                                              output_batch);
+}
+
+/**
+ * @brief Generates due session telemetry and state-change events.
+ */
+uint8_t aethor_app_generate_stream_output(
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    if ((application_initialized == 0U) || (output_batch == NULL))
+    {
+        return 0U;
+    }
+    aethor_app_update_protocol_context(timestamp_us);
+    return protocol_engine_generate_stream_output(&application_protocol_engine,
+                                                  timestamp_us,
+                                                  output_batch);
+}
+
+/**
+ * @brief Formats a high-priority error for one discarded overlong USB line.
+ */
+ProtocolEngineStatus aethor_app_format_line_too_long(
+    ProtocolOutputBatch *output_batch)
+{
+    return protocol_engine_format_line_too_long(output_batch);
 }
 
 /**

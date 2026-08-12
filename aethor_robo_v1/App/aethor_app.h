@@ -87,6 +87,24 @@ uint8_t aethor_app_pop_protocol_result_output(
     ProtocolOutputBatch *output_batch);
 
 /**
+ * @brief Generates due session telemetry and state-change events.
+ * @param timestamp_us Current monotonic timestamp.
+ * @param output_batch Destination stream output batch.
+ * @return Number of generated outputs.
+ */
+uint8_t aethor_app_generate_stream_output(
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch);
+
+/**
+ * @brief Formats a high-priority error for one discarded overlong USB line.
+ * @param output_batch Destination output batch.
+ * @return Detailed formatting status.
+ */
+ProtocolEngineStatus aethor_app_format_line_too_long(
+    ProtocolOutputBatch *output_batch);
+
+/**
  * @brief Copies the current arm state snapshot.
  * @param snapshot Output snapshot.
  * @return true after initialization when snapshot is non-null.

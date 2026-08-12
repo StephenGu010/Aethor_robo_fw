@@ -278,6 +278,14 @@ void StartProtocolTask(void const * argument)
             &outputBatch);
         QueueProtocolOutputBatch(&outputBatch);
       }
+      else if (lineStatus == USB_CDC_STREAM_STATUS_LINE_TOO_LONG)
+      {
+        if (aethor_app_format_line_too_long(&outputBatch) ==
+            PROTOCOL_ENGINE_STATUS_OK)
+        {
+          QueueProtocolOutputBatch(&outputBatch);
+        }
+      }
     } while ((lineStatus == USB_CDC_STREAM_STATUS_OK) ||
              (lineStatus == USB_CDC_STREAM_STATUS_LINE_TOO_LONG));
   }
@@ -314,7 +322,15 @@ void StartTelemetryTask(void const * argument)
   (void)argument;
   for(;;)
   {
-    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(20U));
+    ProtocolOutputBatch outputBatch;
+
+    if (aethor_app_generate_stream_output(
+            (uint64_t)HAL_GetTick() * 1000ULL,
+            &outputBatch) != 0U)
+    {
+      QueueProtocolOutputBatch(&outputBatch);
+    }
+    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(10U));
   }
 }
 
@@ -385,6 +401,7 @@ static void QueueProtocolOutputBatch(const ProtocolOutputBatch *outputBatch)
   {
     const ProtocolOutputMessage *message = &outputBatch->messages[messageIndex];
 
+    taskENTER_CRITICAL();
     if (message->priority == PROTOCOL_OUTPUT_HIGH_PRIORITY)
     {
       (void)stm32_platform_usb_queue_high_priority(
@@ -402,6 +419,7 @@ static void QueueProtocolOutputBatch(const ProtocolOutputBatch *outputBatch)
           (const uint8_t *)message->data,
           message->length);
     }
+    taskEXIT_CRITICAL();
   }
   if (UsbTxTaskHandle != NULL)
   {

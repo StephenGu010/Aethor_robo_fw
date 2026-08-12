@@ -79,6 +79,24 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
 uint8_t aethor_app_pop_emergency_can_frame(CanFrame *frame);
 
 /**
+ * @brief Pops one ordered atomic J1-J7 motion control group.
+ * @param frames Destination array with capacity for ARM_JOINT_COUNT frames.
+ * @return One when a complete group was copied, otherwise zero.
+ */
+uint8_t aethor_app_pop_control_group(
+    CanFrame frames[ARM_JOINT_COUNT]);
+
+/**
+ * @brief Latches an atomic control-group scheduler rejection and stops safely.
+ * @param scheduler_status Rejected scheduler status retained as fault detail.
+ * @param timestamp_us Failure timestamp.
+ * @return One when a terminal command result was queued, otherwise zero.
+ */
+uint8_t aethor_app_report_control_group_failure(
+    CanTxSchedulerStatus scheduler_status,
+    uint64_t timestamp_us);
+
+/**
  * @brief Formats one pending terminal command result for ProtocolTask.
  * @param output_batch Destination output batch.
  * @return One when a result was available, otherwise zero.

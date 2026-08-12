@@ -36,7 +36,8 @@ typedef enum
     ARM_FAULT_NONE = 0,
     ARM_FAULT_CONFIG_INVALID,
     ARM_FAULT_CONFIG_INCOMPLETE,
-    ARM_FAULT_LINK_TIMEOUT
+    ARM_FAULT_LINK_TIMEOUT,
+    ARM_FAULT_MOTION_CONTROL
 } ArmFault;
 
 /** @brief Identifies the currently confirmed seven-motor control mode. */
@@ -129,6 +130,20 @@ ArmTransitionStatus arm_controller_force_stop_disable(
     uint64_t timestamp_us);
 
 /**
+ * @brief Latches a non-configuration runtime fault and clears enable/motion flags.
+ * @param controller Initialized controller.
+ * @param fault Runtime fault other than NONE or a configuration fault.
+ * @param detail Stable subsystem-specific detail code.
+ * @param timestamp_us Fault timestamp.
+ * @return OK or an argument error.
+ */
+ArmTransitionStatus arm_controller_latch_runtime_fault(
+    ArmController *controller,
+    ArmFault fault,
+    uint32_t detail,
+    uint64_t timestamp_us);
+
+/**
  * @brief Records a seven-motor mode after register readback confirmation.
  * @param controller Initialized disabled controller.
  * @param control_mode Confirmed POS_VEL or MIT mode.
@@ -156,6 +171,34 @@ ArmTransitionStatus arm_controller_begin_enable(ArmController *controller,
  * @return OK or an argument/state error.
  */
 ArmTransitionStatus arm_controller_confirm_enabled(ArmController *controller,
+                                                   uint64_t timestamp_us);
+
+/**
+ * @brief Enters MOVING after a complete seven-axis plan has been validated.
+ * @param controller Enabled controller in READY.
+ * @param timestamp_us Motion start timestamp.
+ * @return OK or an argument/state error.
+ */
+ArmTransitionStatus arm_controller_begin_motion(ArmController *controller,
+                                                uint64_t timestamp_us);
+
+/**
+ * @brief Enters STOPPING while retaining logical motor enable.
+ * @param controller Controller in READY, MOVING, or STOPPING.
+ * @param timestamp_us Controlled-stop start timestamp.
+ * @return OK or an argument/state error.
+ */
+ArmTransitionStatus arm_controller_begin_controlled_stop(
+    ArmController *controller,
+    uint64_t timestamp_us);
+
+/**
+ * @brief Returns a completed motion or controlled stop to enabled READY.
+ * @param controller Controller in MOVING or STOPPING.
+ * @param timestamp_us Completion timestamp.
+ * @return OK or an argument/state error.
+ */
+ArmTransitionStatus arm_controller_complete_motion(ArmController *controller,
                                                    uint64_t timestamp_us);
 
 /**

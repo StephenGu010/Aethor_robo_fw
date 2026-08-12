@@ -183,6 +183,7 @@ void StartArmControlTask(void const * argument)
   {
     uint64_t timestampUs = (uint64_t)HAL_GetTick() * 1000ULL;
     CanFrame pendingFrame;
+    CanFrame controlGroup[ARM_JOINT_COUNT];
     CanTxPriority pendingPriority;
 
     if ((aethor_app_service(timestampUs) != 0U) &&
@@ -194,6 +195,20 @@ void StartArmControlTask(void const * argument)
     {
       (void)stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY,
                                       &pendingFrame);
+    }
+    if (aethor_app_pop_control_group(controlGroup) != 0U)
+    {
+      CanTxSchedulerStatus controlGroupStatus =
+          stm32_platform_can_submit_control_group(controlGroup,
+                                                  ARM_JOINT_COUNT);
+
+      if ((controlGroupStatus != CAN_TX_SCHEDULER_STATUS_OK) &&
+          (aethor_app_report_control_group_failure(controlGroupStatus,
+                                                   timestampUs) != 0U) &&
+          (ProtocolTaskHandle != NULL))
+      {
+        (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
+      }
     }
     if (aethor_app_next_can_frame(timestampUs,
                                   &pendingFrame,

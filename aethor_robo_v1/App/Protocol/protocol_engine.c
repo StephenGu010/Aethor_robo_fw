@@ -13,8 +13,10 @@
 
 #include "build_info.h"
 #include "arm_config.h"
+#include "joint_motion.h"
 
 #define PROTOCOL_ENGINE_RAD_TO_DEG (57.29577951308232F)
+#define PROTOCOL_ENGINE_DEG_TO_RAD (0.017453292519943295F)
 #define PROTOCOL_ENGINE_ALL_JOINTS_MASK ((uint8_t)0x7FU)
 #define PROTOCOL_ENGINE_FLOAT_TOKEN_CAPACITY (32U)
 
@@ -136,6 +138,33 @@ static uint8_t protocol_engine_parse_joint_vector(
         }
     }
     return (uint8_t)(value_index == ARM_JOINT_COUNT);
+}
+
+/** @brief Parses one finite float field without accepting suffix characters. */
+static uint8_t protocol_engine_parse_float(const AsciiProtocolSpan *span,
+                                           float *value)
+{
+    char token[PROTOCOL_ENGINE_FLOAT_TOKEN_CAPACITY];
+    char *parse_end;
+    double parsed_value;
+
+    if ((span == NULL) || (value == NULL) || (span->length == 0U) ||
+        (span->length >= sizeof(token)))
+    {
+        return 0U;
+    }
+    memcpy(token, span->data, span->length);
+    token[span->length] = '\0';
+    parse_end = NULL;
+    parsed_value = strtod(token, &parse_end);
+    if ((parse_end == token) || (*parse_end != '\0') ||
+        (parsed_value != parsed_value) ||
+        (parsed_value > FLT_MAX) || (parsed_value < -FLT_MAX))
+    {
+        return 0U;
+    }
+    *value = (float)parsed_value;
+    return 1U;
 }
 
 /** @brief Enqueues one normal business command into the bounded SPSC ring. */
@@ -1368,6 +1397,192 @@ static ProtocolEngineStatus protocol_engine_handle_lifecycle_action(
                                          (unsigned long)request->request_id);
 }
 
+/** @brief Validates and plans one all-axis motion before queue admission. */
+static ProtocolEngineStatus protocol_engine_handle_move_joints(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    AsciiProtocolSpan target_span;
+    AsciiProtocolSpan speed_span;
+    AsciiProtocolSpan mode_span;
+    ProtocolCommand command;
+    JointMotionPlan motion_plan;
+    JointMotionMode motion_mode;
+    float start_position_rad[ARM_JOINT_COUNT];
+    float target_position_rad[ARM_JOINT_COUNT];
+    float speed_ratio = 0.20F;
+    uint8_t joint_index;
+
+    if ((engine->configuration == NULL) || (engine->query_context_valid == 0U))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu INTERNAL_ERROR context=motion",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (engine->query_context.arm.state == ARM_STATE_MOVING)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BUSY state=MOVING",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (engine->active_motion_request_id != 0U)
+    {
+        (void)protocol_engine_append_format(
+            output_batch,
+            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+            "ERR %lu BUSY motion_id=%lu",
+            (unsigned long)request->request_id,
+            (unsigned long)engine->active_motion_request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if ((engine->query_context.arm.state != ARM_STATE_READY) ||
+        (engine->query_context.arm.aligned == 0U) ||
+        (engine->query_context.arm.enabled == 0U) ||
+        (engine->query_context.arm.moving != 0U) ||
+        (engine->query_context.arm.fault != ARM_FAULT_NONE) ||
+        (engine->query_context.joints.aligned == 0U) ||
+        (engine->query_context.joints.valid_joint_mask !=
+         PROTOCOL_ENGINE_ALL_JOINTS_MASK) ||
+        (engine->query_context.motors.valid_joint_mask !=
+         PROTOCOL_ENGINE_ALL_JOINTS_MASK))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu NOT_READY state=%s",
+                                            (unsigned long)request->request_id,
+                                            protocol_engine_arm_state_text(
+                                                engine->query_context.arm.state));
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (engine->query_context.motors.joints[joint_index].fault_flags != 0U)
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu NOT_READY joint=%u fault=%lu",
+                                                (unsigned long)request->request_id,
+                                                (unsigned int)(joint_index + 1U),
+                                                (unsigned long)engine->query_context.motors
+                                                    .joints[joint_index].fault_flags);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+    }
+    if (ascii_protocol_find_field(request, "q_deg", &target_span) == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu MISSING_FIELD field=q_deg",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    memset(&command, 0, sizeof(command));
+    if (protocol_engine_parse_joint_vector(&target_span, command.values) == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BAD_VALUE field=q_deg",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if ((ascii_protocol_find_field(request, "speed", &speed_span) != 0U) &&
+        (protocol_engine_parse_float(&speed_span, &speed_ratio) == 0U))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BAD_VALUE field=speed",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+
+    command.control_mode = engine->query_context.arm.control_mode;
+    if (ascii_protocol_find_field(request, "mode", &mode_span) != 0U)
+    {
+        ArmControlMode requested_mode;
+
+        if (protocol_engine_span_equals(&mode_span, "POS_VEL") != 0U)
+        {
+            requested_mode = ARM_CONTROL_MODE_POSITION_VELOCITY;
+        }
+        else if (protocol_engine_span_equals(&mode_span, "MIT") != 0U)
+        {
+            requested_mode = ARM_CONTROL_MODE_MIT;
+        }
+        else
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu BAD_VALUE field=mode",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (requested_mode != command.control_mode)
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu MODE_MISMATCH",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+    }
+    motion_mode = (command.control_mode == ARM_CONTROL_MODE_MIT)
+                      ? JOINT_MOTION_MODE_MIT
+                      : JOINT_MOTION_MODE_POSITION_VELOCITY;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        start_position_rad[joint_index] =
+            engine->query_context.joints.position_deg[joint_index] *
+            PROTOCOL_ENGINE_DEG_TO_RAD;
+        target_position_rad[joint_index] =
+            command.values[joint_index] * PROTOCOL_ENGINE_DEG_TO_RAD;
+    }
+    if (joint_motion_plan(engine->configuration,
+                          start_position_rad,
+                          target_position_rad,
+                          speed_ratio,
+                          motion_mode,
+                          timestamp_us,
+                          &motion_plan) != JOINT_MOTION_STATUS_OK)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BAD_VALUE field=motion",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+
+    command.type = PROTOCOL_COMMAND_MOVE_JOINTS;
+    command.request_id = request->request_id;
+    command.session_id = engine->session_id;
+    command.accepted_at_us = timestamp_us;
+    command.planned_duration_us = motion_plan.duration_us;
+    command.speeds[0] = speed_ratio;
+    command.motor_mask = PROTOCOL_ENGINE_ALL_JOINTS_MASK;
+    if (protocol_engine_enqueue_command(engine, &command) == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BUSY queue=command",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    engine->active_motion_request_id = request->request_id;
+    return protocol_engine_append_format(
+        output_batch,
+        PROTOCOL_OUTPUT_HIGH_PRIORITY,
+        "ACK %lu accepted motion_id=%lu duration_ms=%lu mode=%s",
+        (unsigned long)request->request_id,
+        (unsigned long)request->request_id,
+        (unsigned long)((motion_plan.duration_us + 999ULL) / 1000ULL),
+        (command.control_mode == ARM_CONTROL_MODE_MIT) ? "MIT" : "POS_VEL");
+}
+
 /**
  * @brief Initializes one protocol engine for the current firmware boot.
  */
@@ -1378,9 +1593,27 @@ void protocol_engine_init(ProtocolEngine *engine, uint32_t boot_id)
         return;
     }
     memset(engine, 0, sizeof(*engine));
+    engine->configuration = arm_config_get_production();
     engine->boot_id = (boot_id == 0U) ? 1U : boot_id;
     engine->stream_rate_hz = 50U;
     (void)strcpy(engine->stream_fields, "jpos,jvel,state,motor");
+}
+
+/**
+ * @brief Selects the immutable configuration used for atomic motion admission.
+ */
+void protocol_engine_set_configuration(
+    ProtocolEngine *engine,
+    const ArmConfig *configuration)
+{
+    ArmConfigValidation validation;
+
+    if ((engine == NULL) ||
+        !arm_config_validate_schema(configuration, &validation))
+    {
+        return;
+    }
+    engine->configuration = configuration;
 }
 
 /**
@@ -1454,6 +1687,7 @@ void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
     {
         engine->command_read_sequence = engine->command_write_sequence;
         engine->stop_read_sequence = engine->stop_write_sequence;
+        engine->active_motion_request_id = 0U;
     }
 }
 
@@ -1532,6 +1766,12 @@ uint8_t protocol_engine_pop_result_output(
         protocol_engine_compiler_barrier();
         ++engine->result_read_sequence;
     } while (result.session_id != engine->session_id);
+
+    if ((result.type == PROTOCOL_COMMAND_MOVE_JOINTS) &&
+        (result.request_id == engine->active_motion_request_id))
+    {
+        engine->active_motion_request_id = 0U;
+    }
 
     protocol_engine_clear_output(output_batch);
     if (result.type == PROTOCOL_COMMAND_LINK_TIMEOUT)
@@ -1975,6 +2215,14 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
         engine->last_valid_request_at_us = timestamp_us;
         engine_status = protocol_engine_handle_lifecycle_action(
             engine, &request, PROTOCOL_COMMAND_CLEAR_FAULT, timestamp_us, output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "MOVE_JOINTS") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_move_joints(engine,
+                                                           &request,
+                                                           timestamp_us,
+                                                           output_batch);
     }
     else
     {

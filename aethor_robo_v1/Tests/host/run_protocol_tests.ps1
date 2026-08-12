@@ -53,6 +53,7 @@ function Invoke-ProtocolHostTests {
             '-Werror' `
             '-IApp\Arm' `
             '-IApp\Config' `
+            '-IApp\Motion' `
             '-IApp\Motor' `
             '-IApp\Protocol' `
             '-IApp\Telemetry' `
@@ -62,6 +63,8 @@ function Invoke-ProtocolHostTests {
             'App\Protocol\protocol_engine.c' `
             'App\Config\arm_config.c' `
             'App\Config\build_info.c' `
+            'App\Motion\joint_motion.c' `
+            '-lm' `
             '-o' $testExecutable
         if ($LASTEXITCODE -ne 0)
         {

@@ -205,6 +205,30 @@ ArmTransitionStatus arm_controller_force_stop_disable(
 }
 
 /**
+ * @brief Latches a non-configuration runtime fault and clears enable/motion flags.
+ */
+ArmTransitionStatus arm_controller_latch_runtime_fault(
+    ArmController *controller,
+    ArmFault fault,
+    uint32_t detail,
+    uint64_t timestamp_us)
+{
+    if ((controller == NULL) || (controller->initialized == 0U) ||
+        (fault == ARM_FAULT_NONE) || (fault == ARM_FAULT_CONFIG_INVALID) ||
+        (fault == ARM_FAULT_CONFIG_INCOMPLETE))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_ARGUMENT;
+    }
+    controller->state = ARM_STATE_FAULT;
+    controller->fault = fault;
+    controller->fault_detail = detail;
+    controller->state_entered_at_us = timestamp_us;
+    controller->enabled = 0U;
+    controller->moving = 0U;
+    return ARM_TRANSITION_STATUS_OK;
+}
+
+/**
  * @brief Records a seven-motor mode after register readback confirmation.
  */
 ArmTransitionStatus arm_controller_confirm_control_mode(
@@ -269,6 +293,75 @@ ArmTransitionStatus arm_controller_confirm_enabled(ArmController *controller,
     controller->state = ARM_STATE_READY;
     controller->state_entered_at_us = timestamp_us;
     controller->enabled = 1U;
+    controller->moving = 0U;
+    return ARM_TRANSITION_STATUS_OK;
+}
+
+/**
+ * @brief Enters MOVING after a complete seven-axis plan has been validated.
+ */
+ArmTransitionStatus arm_controller_begin_motion(ArmController *controller,
+                                                uint64_t timestamp_us)
+{
+    if ((controller == NULL) || (controller->initialized == 0U))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_ARGUMENT;
+    }
+    if ((controller->state != ARM_STATE_READY) ||
+        (controller->aligned == 0U) || (controller->enabled == 0U) ||
+        (controller->moving != 0U) || (controller->fault != ARM_FAULT_NONE) ||
+        (controller->control_mode == ARM_CONTROL_MODE_UNKNOWN))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_STATE;
+    }
+    controller->state = ARM_STATE_MOVING;
+    controller->state_entered_at_us = timestamp_us;
+    controller->moving = 1U;
+    return ARM_TRANSITION_STATUS_OK;
+}
+
+/**
+ * @brief Enters STOPPING while retaining logical motor enable.
+ */
+ArmTransitionStatus arm_controller_begin_controlled_stop(
+    ArmController *controller,
+    uint64_t timestamp_us)
+{
+    if ((controller == NULL) || (controller->initialized == 0U))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_ARGUMENT;
+    }
+    if (((controller->state != ARM_STATE_READY) &&
+         (controller->state != ARM_STATE_MOVING) &&
+         (controller->state != ARM_STATE_STOPPING)) ||
+        (controller->enabled == 0U) || (controller->fault != ARM_FAULT_NONE))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_STATE;
+    }
+    controller->state = ARM_STATE_STOPPING;
+    controller->state_entered_at_us = timestamp_us;
+    controller->moving = 1U;
+    return ARM_TRANSITION_STATUS_OK;
+}
+
+/**
+ * @brief Returns a completed motion or controlled stop to enabled READY.
+ */
+ArmTransitionStatus arm_controller_complete_motion(ArmController *controller,
+                                                   uint64_t timestamp_us)
+{
+    if ((controller == NULL) || (controller->initialized == 0U))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_ARGUMENT;
+    }
+    if (((controller->state != ARM_STATE_MOVING) &&
+         (controller->state != ARM_STATE_STOPPING)) ||
+        (controller->enabled == 0U) || (controller->fault != ARM_FAULT_NONE))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_STATE;
+    }
+    controller->state = ARM_STATE_READY;
+    controller->state_entered_at_us = timestamp_us;
     controller->moving = 0U;
     return ARM_TRANSITION_STATUS_OK;
 }

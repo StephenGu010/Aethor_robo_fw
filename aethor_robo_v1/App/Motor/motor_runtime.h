@@ -127,6 +127,22 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
     MotorEmergencyFrameBatch *batch);
 
 /**
+ * @brief Encodes one ordered all-or-nothing J1-J7 motor control group.
+ * @param runtime Initialized runtime owning identities, gains, and ranges.
+ * @param control_mode Confirmed S3519 POS_VEL or MIT mode.
+ * @param motor_position_rad Seven already-mapped motor positions.
+ * @param motor_velocity_rad_s Seven already-mapped signed motor velocities.
+ * @param frames Destination ordered group, unchanged on failure.
+ * @return OK or an argument, range, or codec error.
+ */
+MotorRuntimeStatus motor_runtime_build_control_group(
+    const MotorRuntime *runtime,
+    S3519ControlMode control_mode,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_velocity_rad_s[ARM_JOINT_COUNT],
+    CanFrame frames[ARM_JOINT_COUNT]);
+
+/**
  * @brief Starts a seven-motor volatile control-mode write/readback operation.
  * @param runtime Initialized runtime with completed discovery.
  * @param control_mode Requested MIT or POS_VEL mode.

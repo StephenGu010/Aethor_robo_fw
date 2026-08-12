@@ -143,6 +143,65 @@ JointReferenceStatus joint_reference_publish(
 }
 
 /**
+ * @brief Converts one aligned joint-space command into motor coordinates.
+ */
+JointReferenceStatus joint_reference_joint_to_motor(
+    const JointReference *reference,
+    const float joint_position_rad[ARM_JOINT_COUNT],
+    const float joint_velocity_rad_s[ARM_JOINT_COUNT],
+    float motor_position_rad[ARM_JOINT_COUNT],
+    float motor_velocity_rad_s[ARM_JOINT_COUNT])
+{
+    float validated_motor_position_rad[ARM_JOINT_COUNT];
+    float validated_motor_velocity_rad_s[ARM_JOINT_COUNT];
+    uint8_t joint_index;
+
+    if ((reference == NULL) || (joint_position_rad == NULL) ||
+        (joint_velocity_rad_s == NULL) || (motor_position_rad == NULL) ||
+        (motor_velocity_rad_s == NULL) || (reference->initialized == 0U))
+    {
+        return JOINT_REFERENCE_STATUS_INVALID_ARGUMENT;
+    }
+    if (reference->aligned == 0U)
+    {
+        return JOINT_REFERENCE_STATUS_NOT_ALIGNED;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const JointConfig *joint =
+            &reference->configuration->joints[joint_index];
+        float direction = (float)joint->direction;
+
+        if ((joint_reference_float_is_finite(joint_position_rad[joint_index]) == 0U) ||
+            (joint_reference_float_is_finite(joint_velocity_rad_s[joint_index]) == 0U) ||
+            (joint_position_rad[joint_index] < joint->soft_limit_min_rad) ||
+            (joint_position_rad[joint_index] > joint->soft_limit_max_rad))
+        {
+            return JOINT_REFERENCE_STATUS_REFERENCE_OUT_OF_RANGE;
+        }
+        validated_motor_position_rad[joint_index] =
+            direction * joint->gear_ratio *
+            (joint_position_rad[joint_index] - reference->bias_rad[joint_index]);
+        validated_motor_velocity_rad_s[joint_index] =
+            direction * joint->gear_ratio * joint_velocity_rad_s[joint_index];
+        if ((validated_motor_position_rad[joint_index] < -joint->motor_pmax_rad) ||
+            (validated_motor_position_rad[joint_index] > joint->motor_pmax_rad) ||
+            (validated_motor_velocity_rad_s[joint_index] < -joint->motor_vmax_rad_s) ||
+            (validated_motor_velocity_rad_s[joint_index] > joint->motor_vmax_rad_s))
+        {
+            return JOINT_REFERENCE_STATUS_REFERENCE_OUT_OF_RANGE;
+        }
+    }
+    memcpy(motor_position_rad,
+           validated_motor_position_rad,
+           sizeof(validated_motor_position_rad));
+    memcpy(motor_velocity_rad_s,
+           validated_motor_velocity_rad_s,
+           sizeof(validated_motor_velocity_rad_s));
+    return JOINT_REFERENCE_STATUS_OK;
+}
+
+/**
  * @brief Aligns fresh raw motor positions to a supplied seven-axis pose.
  */
 JointReferenceStatus joint_reference_align(

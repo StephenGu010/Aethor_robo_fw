@@ -42,6 +42,8 @@ function Invoke-Phase0HostTests {
         'App\Telemetry\diagnostics.c',
         'App\Arm\arm_controller.c',
         'App\Arm\joint_reference.c',
+        'App\Motion\joint_motion.c',
+        'App\Motion\joint_motion_can.c',
         'App\Motor\can_frame.c',
         'App\Motor\can_tx_scheduler.c',
         'App\Motor\motor_bank.c',

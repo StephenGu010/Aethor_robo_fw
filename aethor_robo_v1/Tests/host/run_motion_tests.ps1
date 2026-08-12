@@ -30,10 +30,17 @@ function Invoke-MotionHostTests {
     {
         & $compilerCommand.Source `
             '-std=c11' '-Wall' '-Wextra' '-Werror' `
-            '-IApp\Config' '-IApp\Motion' `
+            '-IApp\Arm' '-IApp\Config' '-IApp\Motion' '-IApp\Motor' `
             'Tests\host\motion_test_main.c' `
             'App\Config\arm_config.c' `
+            'App\Arm\joint_reference.c' `
             'App\Motion\joint_motion.c' `
+            'App\Motion\joint_motion_can.c' `
+            'App\Motor\can_frame.c' `
+            'App\Motor\motor_bank.c' `
+            'App\Motor\motor_discovery.c' `
+            'App\Motor\motor_runtime.c' `
+            'App\Motor\s3519_codec.c' `
             '-lm' '-o' $testExecutable
         if ($LASTEXITCODE -ne 0)
         {

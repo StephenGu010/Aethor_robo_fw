@@ -335,6 +335,67 @@ static void test_arm_controller_enters_unaligned_after_self_test(void)
 }
 
 /**
+ * @brief Verifies READY, MOVING, STOPPING, and READY motion transitions.
+ */
+static void test_arm_controller_motion_transitions(void)
+{
+    ArmConfig configuration = make_test_commissioned_configuration();
+    Diagnostics diagnostics;
+    ArmController controller;
+    ArmSnapshot snapshot;
+
+    diagnostics_init(&diagnostics);
+    arm_controller_init(&controller, &configuration, &diagnostics, 1000U);
+    arm_controller_step(&controller, 2000U);
+    arm_controller_step(&controller, 3000U);
+    assert(arm_controller_mark_reference_aligned(&controller, 4000U) ==
+           ARM_TRANSITION_STATUS_OK);
+    assert(arm_controller_confirm_control_mode(
+               &controller,
+               ARM_CONTROL_MODE_POSITION_VELOCITY,
+               5000U) == ARM_TRANSITION_STATUS_OK);
+    assert(arm_controller_begin_enable(&controller, 6000U) ==
+           ARM_TRANSITION_STATUS_OK);
+    assert(arm_controller_confirm_enabled(&controller, 7000U) ==
+           ARM_TRANSITION_STATUS_OK);
+
+    assert(arm_controller_begin_motion(&controller, 8000U) ==
+           ARM_TRANSITION_STATUS_OK);
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_MOVING);
+    assert(snapshot.enabled == 1U);
+    assert(snapshot.moving == 1U);
+    assert(arm_controller_begin_motion(&controller, 9000U) ==
+           ARM_TRANSITION_STATUS_INVALID_STATE);
+
+    assert(arm_controller_begin_controlled_stop(&controller, 10000U) ==
+           ARM_TRANSITION_STATUS_OK);
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_STOPPING);
+    assert(snapshot.enabled == 1U);
+    assert(snapshot.moving == 1U);
+
+    assert(arm_controller_complete_motion(&controller, 11000U) ==
+           ARM_TRANSITION_STATUS_OK);
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_READY);
+    assert(snapshot.enabled == 1U);
+    assert(snapshot.moving == 0U);
+
+    assert(arm_controller_latch_runtime_fault(&controller,
+                                              ARM_FAULT_MOTION_CONTROL,
+                                              77U,
+                                              12000U) ==
+           ARM_TRANSITION_STATUS_OK);
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_FAULT);
+    assert(snapshot.fault == ARM_FAULT_MOTION_CONTROL);
+    assert(snapshot.fault_detail == 77U);
+    assert(snapshot.enabled == 0U);
+    assert(snapshot.moving == 0U);
+}
+
+/**
  * @brief Verifies alignment converts motor radians into coherent joint degrees.
  */
 static void test_joint_reference_alignment_and_reboot_invalidation(void)
@@ -382,6 +443,80 @@ static void test_joint_reference_alignment_and_reboot_invalidation(void)
            JOINT_REFERENCE_STATUS_OK);
     assert(joint_snapshot.aligned == 0U);
     assert(joint_snapshot.valid_joint_mask == 0U);
+}
+
+/**
+ * @brief Verifies aligned joint commands round-trip through motor coordinates.
+ */
+static void test_joint_reference_inverse_command_mapping(void)
+{
+    ArmConfig configuration = make_test_commissioned_configuration();
+    JointReference reference;
+    JointStateSnapshot joint_snapshot;
+    MotorFeedbackSnapshot motor_snapshot = {0};
+    float alignment_degrees[ARM_JOINT_COUNT] = {10.0F, -20.0F, 0.0F, 0.0F,
+                                                0.0F, 0.0F, 0.0F};
+    float target_position_rad[ARM_JOINT_COUNT] = {0.5F, -0.4F, 0.1F, 0.2F,
+                                                  0.3F, -0.2F, -0.1F};
+    float target_velocity_rad_s[ARM_JOINT_COUNT] = {0.2F, -0.1F, 0.0F, 0.1F,
+                                                    -0.1F, 0.2F, -0.2F};
+    float motor_position_rad[ARM_JOINT_COUNT];
+    float motor_velocity_rad_s[ARM_JOINT_COUNT];
+    uint8_t joint_index;
+
+    motor_snapshot.valid_joint_mask = 0x7FU;
+    motor_snapshot.generation = 1U;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        motor_snapshot.joints[joint_index].position_rad = 1.0F;
+    }
+    assert(joint_reference_init(&reference, &configuration) ==
+           JOINT_REFERENCE_STATUS_OK);
+    assert(joint_reference_joint_to_motor(&reference,
+                                          target_position_rad,
+                                          target_velocity_rad_s,
+                                          motor_position_rad,
+                                          motor_velocity_rad_s) ==
+           JOINT_REFERENCE_STATUS_NOT_ALIGNED);
+    assert(joint_reference_align(&reference,
+                                 &motor_snapshot,
+                                 alignment_degrees,
+                                 1000U) == JOINT_REFERENCE_STATUS_OK);
+    assert(joint_reference_joint_to_motor(&reference,
+                                          target_position_rad,
+                                          target_velocity_rad_s,
+                                          motor_position_rad,
+                                          motor_velocity_rad_s) ==
+           JOINT_REFERENCE_STATUS_OK);
+
+    motor_snapshot.generation = 2U;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        motor_snapshot.joints[joint_index].position_rad =
+            motor_position_rad[joint_index];
+        motor_snapshot.joints[joint_index].velocity_rad_s =
+            motor_velocity_rad_s[joint_index];
+    }
+    assert(joint_reference_publish(&reference, &motor_snapshot, 2000U) ==
+           JOINT_REFERENCE_STATUS_OK);
+    assert(joint_reference_get_snapshot(&reference, &joint_snapshot) ==
+           JOINT_REFERENCE_STATUS_OK);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        float expected_position_deg = target_position_rad[joint_index] *
+                                      57.29577951308232F;
+        float expected_velocity_deg_s = target_velocity_rad_s[joint_index] *
+                                        57.29577951308232F;
+
+        assert(joint_snapshot.position_deg[joint_index] >
+               expected_position_deg - 0.001F);
+        assert(joint_snapshot.position_deg[joint_index] <
+               expected_position_deg + 0.001F);
+        assert(joint_snapshot.velocity_deg_s[joint_index] >
+               expected_velocity_deg_s - 0.001F);
+        assert(joint_snapshot.velocity_deg_s[joint_index] <
+               expected_velocity_deg_s + 0.001F);
+    }
 }
 
 /**
@@ -548,7 +683,9 @@ int main(void)
     test_arm_controller_bench_profile_keeps_enable_locked_without_fault();
     test_arm_controller_latches_invalid_config_fault();
     test_arm_controller_enters_unaligned_after_self_test();
+    test_arm_controller_motion_transitions();
     test_joint_reference_alignment_and_reboot_invalidation();
+    test_joint_reference_inverse_command_mapping();
     test_phase0_state_queries_reject_null_outputs();
     test_layer_contracts_are_frozen();
     test_aethor_app_latches_safe_phase0_fault();

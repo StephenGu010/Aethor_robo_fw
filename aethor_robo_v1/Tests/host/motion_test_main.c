@@ -6,9 +6,11 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "arm_config.h"
 #include "joint_motion.h"
+#include "joint_motion_can.h"
 
 /** @brief Builds deterministic commissioned limits for pure motion tests. */
 static ArmConfig make_motion_test_configuration(void)
@@ -165,6 +167,90 @@ static void test_motion_completion_requires_settle_window(void)
            JOINT_MOTION_STATUS_FEEDBACK_INCOMPLETE);
 }
 
+/**
+ * @brief Verifies seven control frames are encoded as one validated J1-J7 group.
+ */
+static void test_motion_can_group_encoding(void)
+{
+    ArmConfig configuration = make_motion_test_configuration();
+    JointReference reference;
+    MotorFeedbackSnapshot motor_snapshot = {0};
+    MotorRuntime motor_runtime = {0};
+    JointMotionPlan plan;
+    JointMotionSample sample;
+    CanFrame frames[ARM_JOINT_COUNT];
+    float alignment_degrees[ARM_JOINT_COUNT] = {0};
+    float start_position_rad[ARM_JOINT_COUNT] = {0};
+    float target_position_rad[ARM_JOINT_COUNT] = {0.5F, 0.4F, 0.3F, 0.2F,
+                                                  0.1F, -0.1F, -0.2F};
+    uint8_t joint_index;
+
+    motor_snapshot.valid_joint_mask = 0x7FU;
+    motor_snapshot.generation = 1U;
+    assert(joint_reference_init(&reference, &configuration) ==
+           JOINT_REFERENCE_STATUS_OK);
+    assert(joint_reference_align(&reference,
+                                 &motor_snapshot,
+                                 alignment_degrees,
+                                 1000U) == JOINT_REFERENCE_STATUS_OK);
+    motor_runtime.configuration = &configuration;
+    motor_runtime.initialized = 1U;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        motor_runtime.discovery.results[joint_index].ranges.position_max_rad = 12.5F;
+        motor_runtime.discovery.results[joint_index].ranges.velocity_max_rad_s = 45.0F;
+        motor_runtime.discovery.results[joint_index].ranges.torque_max_nm = 18.0F;
+    }
+
+    assert(joint_motion_plan(&configuration,
+                             start_position_rad,
+                             target_position_rad,
+                             0.5F,
+                             JOINT_MOTION_MODE_POSITION_VELOCITY,
+                             2000U,
+                             &plan) == JOINT_MOTION_STATUS_OK);
+    assert(joint_motion_sample(&plan, 2000U, &sample) ==
+           JOINT_MOTION_STATUS_OK);
+    assert(joint_motion_can_pack_group(&plan,
+                                       &sample,
+                                       &reference,
+                                       &motor_runtime,
+                                       frames) == JOINT_MOTION_CAN_STATUS_OK);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        assert(frames[joint_index].identifier ==
+               (uint16_t)(0x101U + joint_index));
+        assert(frames[joint_index].length == 8U);
+    }
+    {
+        float encoded_velocity_rad_s = 0.0F;
+
+        memcpy(&encoded_velocity_rad_s, &frames[0].data[4], sizeof(float));
+        assert(fabsf(encoded_velocity_rad_s - 0.5F) < 0.0001F);
+    }
+
+    assert(joint_motion_plan(&configuration,
+                             start_position_rad,
+                             target_position_rad,
+                             0.5F,
+                             JOINT_MOTION_MODE_MIT,
+                             3000U,
+                             &plan) == JOINT_MOTION_STATUS_OK);
+    assert(joint_motion_sample(&plan, 3000U, &sample) ==
+           JOINT_MOTION_STATUS_OK);
+    assert(joint_motion_can_pack_group(&plan,
+                                       &sample,
+                                       &reference,
+                                       &motor_runtime,
+                                       frames) == JOINT_MOTION_CAN_STATUS_OK);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        assert(frames[joint_index].identifier ==
+               (uint16_t)(1U + joint_index));
+        assert(frames[joint_index].length == 8U);
+    }
+}
+
 /** @brief Runs all motion algorithm tests. */
 int main(void)
 {
@@ -172,6 +258,7 @@ int main(void)
     test_motion_plan_rejects_bad_inputs();
     test_mit_quintic_boundaries_and_limits();
     test_motion_completion_requires_settle_window();
+    test_motion_can_group_encoding();
     puts("MOTION_TESTS_PASSED");
     return 0;
 }

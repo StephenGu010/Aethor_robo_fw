@@ -83,6 +83,22 @@ JointReferenceStatus joint_reference_publish(
     uint64_t timestamp_us);
 
 /**
+ * @brief Converts one aligned joint-space command into motor coordinates.
+ * @param reference Initialized and aligned reference domain.
+ * @param joint_position_rad Seven target joint positions in radians.
+ * @param joint_velocity_rad_s Seven target joint velocities in radians per second.
+ * @param motor_position_rad Destination motor positions in radians.
+ * @param motor_velocity_rad_s Destination motor velocities in radians per second.
+ * @return OK or a precise alignment, argument, or range error.
+ */
+JointReferenceStatus joint_reference_joint_to_motor(
+    const JointReference *reference,
+    const float joint_position_rad[ARM_JOINT_COUNT],
+    const float joint_velocity_rad_s[ARM_JOINT_COUNT],
+    float motor_position_rad[ARM_JOINT_COUNT],
+    float motor_velocity_rad_s[ARM_JOINT_COUNT]);
+
+/**
  * @brief Copies the latest generation-consistent joint snapshot.
  * @param reference Initialized reference domain.
  * @param snapshot Destination snapshot.

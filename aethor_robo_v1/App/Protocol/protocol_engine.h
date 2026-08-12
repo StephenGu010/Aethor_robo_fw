@@ -102,6 +102,7 @@ typedef struct
     float values[ARM_JOINT_COUNT];
     float speeds[ARM_JOINT_COUNT];
     uint64_t accepted_at_us;
+    uint64_t planned_duration_us;
     uint32_t request_id;
     uint32_t session_id;
     ProtocolCommandType type;
@@ -135,6 +136,7 @@ typedef struct
 /** @brief Owns the fixed current session and bounded recent-result cache. */
 typedef struct
 {
+    const ArmConfig *configuration;
     ProtocolRecentResult recent_results[PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY];
     ProtocolCommand commands[PROTOCOL_ENGINE_COMMAND_CAPACITY];
     ProtocolCommand stop_command;
@@ -148,6 +150,7 @@ typedef struct
     uint32_t next_session_nonce;
     uint32_t telemetry_sequence;
     uint32_t event_sequence;
+    uint32_t active_motion_request_id;
     uint8_t recent_write_index;
     volatile uint8_t command_write_sequence;
     volatile uint8_t command_read_sequence;
@@ -169,6 +172,15 @@ typedef struct
  * @param boot_id Nonzero boot identity returned to the host.
  */
 void protocol_engine_init(ProtocolEngine *engine, uint32_t boot_id);
+
+/**
+ * @brief Selects the immutable configuration used for atomic motion admission.
+ * @param engine Initialized engine.
+ * @param configuration Structurally valid seven-axis configuration.
+ */
+void protocol_engine_set_configuration(
+    ProtocolEngine *engine,
+    const ArmConfig *configuration);
 
 /**
  * @brief Copies the latest coherent application values used by query commands.

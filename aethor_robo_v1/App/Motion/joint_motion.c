@@ -198,7 +198,10 @@ JointMotionStatus joint_motion_sample(const JointMotionPlan *plan,
 
         sample->position_rad[joint_index] =
             plan->start_position_rad[joint_index] + (distance * scale);
-        sample->velocity_rad_s[joint_index] = distance * scale_velocity;
+        sample->velocity_rad_s[joint_index] =
+            (plan->mode == JOINT_MOTION_MODE_POSITION_VELOCITY)
+                ? plan->command_velocity_rad_s[joint_index]
+                : (distance * scale_velocity);
         sample->acceleration_rad_s2[joint_index] = distance * scale_acceleration;
     }
     return JOINT_MOTION_STATUS_OK;

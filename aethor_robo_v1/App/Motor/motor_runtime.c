@@ -5,6 +5,7 @@
 
 #include "motor_runtime.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -446,6 +447,65 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
             }
         }
     }
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
+ * @brief Encodes one ordered all-or-nothing J1-J7 motor control group.
+ */
+MotorRuntimeStatus motor_runtime_build_control_group(
+    const MotorRuntime *runtime,
+    S3519ControlMode control_mode,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_velocity_rad_s[ARM_JOINT_COUNT],
+    CanFrame frames[ARM_JOINT_COUNT])
+{
+    CanFrame validated_frames[ARM_JOINT_COUNT];
+    uint8_t joint_index;
+
+    if ((runtime == NULL) || (motor_position_rad == NULL) ||
+        (motor_velocity_rad_s == NULL) || (frames == NULL) ||
+        ((control_mode != S3519_CONTROL_MODE_POSITION_VELOCITY) &&
+         (control_mode != S3519_CONTROL_MODE_MIT)))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    memset(validated_frames, 0, sizeof(validated_frames));
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const JointConfig *joint = &runtime->configuration->joints[joint_index];
+        S3519CodecStatus codec_status;
+
+        if (control_mode == S3519_CONTROL_MODE_POSITION_VELOCITY)
+        {
+            codec_status = s3519_pack_position_velocity(
+                (uint8_t)joint->esc_id,
+                motor_position_rad[joint_index],
+                fabsf(motor_velocity_rad_s[joint_index]),
+                &validated_frames[joint_index]);
+        }
+        else
+        {
+            codec_status = s3519_pack_mit(
+                (uint8_t)joint->esc_id,
+                &runtime->discovery.results[joint_index].ranges,
+                motor_position_rad[joint_index],
+                motor_velocity_rad_s[joint_index],
+                joint->mit_kp,
+                joint->mit_kd,
+                0.0F,
+                &validated_frames[joint_index]);
+        }
+        if (codec_status != S3519_CODEC_STATUS_OK)
+        {
+            return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+        }
+    }
+    memcpy(frames, validated_frames, sizeof(validated_frames));
     return MOTOR_RUNTIME_STATUS_OK;
 }
 

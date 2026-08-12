@@ -10,6 +10,18 @@
 #include <string.h>
 
 #include "build_info.h"
+#include "arm_config.h"
+
+#define PROTOCOL_ENGINE_RAD_TO_DEG (57.29577951308232F)
+
+/** @brief Selects one joint configuration vector for deterministic formatting. */
+typedef enum
+{
+    PROTOCOL_CONFIG_Q_MIN = 0,
+    PROTOCOL_CONFIG_Q_MAX,
+    PROTOCOL_CONFIG_V_LIMIT,
+    PROTOCOL_CONFIG_A_LIMIT
+} ProtocolConfigVector;
 
 /** @brief Clears an output batch before every processing attempt. */
 static void protocol_engine_clear_output(ProtocolOutputBatch *output_batch)
@@ -114,6 +126,170 @@ static ProtocolEngineStatus protocol_engine_append_format(
         return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
     }
     return protocol_engine_append_body(output_batch, priority, body);
+}
+
+/**
+ * @brief Appends formatted text to a bounded response body.
+ */
+static uint8_t protocol_engine_append_text(char *body,
+                                           size_t body_capacity,
+                                           size_t *body_length,
+                                           const char *format,
+                                           ...)
+{
+    int written_length;
+    va_list arguments;
+
+    if (*body_length >= body_capacity)
+    {
+        return 0U;
+    }
+    va_start(arguments, format);
+    written_length = vsnprintf(&body[*body_length],
+                               body_capacity - *body_length,
+                               format,
+                               arguments);
+    va_end(arguments);
+    if ((written_length < 0) ||
+        ((size_t)written_length >= (body_capacity - *body_length)))
+    {
+        return 0U;
+    }
+    *body_length += (size_t)written_length;
+    return 1U;
+}
+
+/**
+ * @brief Returns one configured joint limit converted to the public degree unit.
+ */
+static float protocol_engine_config_value_deg(const JointConfig *joint,
+                                              ProtocolConfigVector vector)
+{
+    switch (vector)
+    {
+        case PROTOCOL_CONFIG_Q_MIN:
+            return joint->soft_limit_min_rad * PROTOCOL_ENGINE_RAD_TO_DEG;
+        case PROTOCOL_CONFIG_Q_MAX:
+            return joint->soft_limit_max_rad * PROTOCOL_ENGINE_RAD_TO_DEG;
+        case PROTOCOL_CONFIG_V_LIMIT:
+            return joint->max_velocity_rad_s * PROTOCOL_ENGINE_RAD_TO_DEG;
+        case PROTOCOL_CONFIG_A_LIMIT:
+        default:
+            return joint->max_acceleration_rad_s2 * PROTOCOL_ENGINE_RAD_TO_DEG;
+    }
+}
+
+/**
+ * @brief Appends one seven-value configuration vector with fixed precision.
+ */
+static uint8_t protocol_engine_append_config_vector(
+    char *body,
+    size_t body_capacity,
+    size_t *body_length,
+    const ArmConfig *configuration,
+    ProtocolConfigVector vector,
+    uint8_t decimal_places)
+{
+    uint8_t joint_index;
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const char *separator = (joint_index == 0U) ? "" : ",";
+        float value = protocol_engine_config_value_deg(
+            &configuration->joints[joint_index],
+            vector);
+
+        if (decimal_places == 6U)
+        {
+            if (protocol_engine_append_text(body,
+                                            body_capacity,
+                                            body_length,
+                                            "%s%.6f",
+                                            separator,
+                                            value) == 0U)
+            {
+                return 0U;
+            }
+        }
+        else if (protocol_engine_append_text(body,
+                                             body_capacity,
+                                             body_length,
+                                             "%s%.3f",
+                                             separator,
+                                             value) == 0U)
+        {
+            return 0U;
+        }
+    }
+    return 1U;
+}
+
+/** @brief Returns the stable protocol text for one controller state. */
+static const char *protocol_engine_arm_state_text(ArmState state)
+{
+    switch (state)
+    {
+        case ARM_STATE_BOOT:
+            return "BOOT";
+        case ARM_STATE_SELF_TEST:
+            return "SELF_TEST";
+        case ARM_STATE_FAULT:
+        default:
+            return "FAULT";
+    }
+}
+
+/** @brief Returns the stable protocol text for one controller fault. */
+static const char *protocol_engine_arm_fault_text(ArmFault fault)
+{
+    switch (fault)
+    {
+        case ARM_FAULT_NONE:
+            return "NONE";
+        case ARM_FAULT_CONFIG_INVALID:
+            return "CONFIG_INVALID";
+        case ARM_FAULT_CONFIG_INCOMPLETE:
+        default:
+            return "CONFIG_INCOMPLETE";
+    }
+}
+
+/**
+ * @brief Validates the SET_STREAM comma-separated capability list.
+ */
+static uint8_t protocol_engine_stream_fields_are_valid(
+    const AsciiProtocolSpan *fields)
+{
+    uint16_t token_start = 0U;
+    uint16_t character_index;
+
+    if ((fields == NULL) || (fields->length == 0U) ||
+        (fields->length >= sizeof(((ProtocolEngine *)0)->stream_fields)))
+    {
+        return 0U;
+    }
+    for (character_index = 0U; character_index <= fields->length; ++character_index)
+    {
+        if ((character_index == fields->length) ||
+            (fields->data[character_index] == ','))
+        {
+            AsciiProtocolSpan token;
+
+            token.data = &fields->data[token_start];
+            token.length = (uint16_t)(character_index - token_start);
+            if ((protocol_engine_span_equals(&token, "jpos") == 0U) &&
+                (protocol_engine_span_equals(&token, "jvel") == 0U) &&
+                (protocol_engine_span_equals(&token, "jtor") == 0U) &&
+                (protocol_engine_span_equals(&token, "state") == 0U) &&
+                (protocol_engine_span_equals(&token, "motor") == 0U) &&
+                (protocol_engine_span_equals(&token, "diag") == 0U))
+            {
+                return 0U;
+            }
+            token_start = (uint16_t)(character_index + 1U);
+        }
+    }
+    return 1U;
 }
 
 /**
@@ -247,6 +423,8 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     engine->session_active = 1U;
     engine->watchdog_timeout_reported = 0U;
     engine->last_valid_request_at_us = timestamp_us;
+    engine->stream_rate_hz = 50U;
+    (void)strcpy(engine->stream_fields, "jpos,jvel,state,motor");
     return protocol_engine_append_format(
         output_batch,
         PROTOCOL_OUTPUT_QUERY,
@@ -318,6 +496,330 @@ static ProtocolEngineStatus protocol_engine_handle_get_info(
         (unsigned long)engine->boot_id);
 }
 
+/** @brief Returns the current controller state without touching the CAN bus. */
+static ProtocolEngineStatus protocol_engine_handle_get_state(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    ProtocolOutputBatch *output_batch)
+{
+    if (engine->query_context_valid == 0U)
+    {
+        return protocol_engine_append_format(output_batch,
+                                             PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                             "ERR %lu INTERNAL_ERROR context=state",
+                                             (unsigned long)request->request_id);
+    }
+    return protocol_engine_append_format(
+        output_batch,
+        PROTOCOL_OUTPUT_QUERY,
+        "RSP %lu ok state=%s aligned=0 enabled=0 moving=0 mode=UNKNOWN active_request=0 fault=%s feedback_age_max_ms=0",
+        (unsigned long)request->request_id,
+        protocol_engine_arm_state_text(engine->query_context.arm.state),
+        protocol_engine_arm_fault_text(engine->query_context.arm.fault));
+}
+
+/** @brief Returns an explicitly invalid joint snapshot until reference alignment. */
+static ProtocolEngineStatus protocol_engine_handle_get_jpos(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    ProtocolOutputBatch *output_batch)
+{
+    if (engine->query_context_valid == 0U)
+    {
+        return protocol_engine_append_format(output_batch,
+                                             PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                             "ERR %lu INTERNAL_ERROR context=jpos",
+                                             (unsigned long)request->request_id);
+    }
+    return protocol_engine_append_format(
+        output_batch,
+        PROTOCOL_OUTPUT_QUERY,
+        "RSP %lu ok t_us=%lu q_deg=0.000,0.000,0.000,0.000,0.000,0.000,0.000 valid=0,0,0,0,0,0,0 aligned=0",
+        (unsigned long)request->request_id,
+        (unsigned long)engine->query_context.timestamp_us);
+}
+
+/** @brief Returns motor validity, raw driver state, temperatures, and age. */
+static ProtocolEngineStatus protocol_engine_handle_get_motors(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    ProtocolOutputBatch *output_batch)
+{
+    char body[PROTOCOL_MAX_LINE_LENGTH + 1U];
+    size_t body_length = 0U;
+    uint8_t joint_index;
+
+    if (engine->query_context_valid == 0U)
+    {
+        return protocol_engine_append_format(output_batch,
+                                             PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                             "ERR %lu INTERNAL_ERROR context=motors",
+                                             (unsigned long)request->request_id);
+    }
+    if (protocol_engine_append_text(body,
+                                    sizeof(body),
+                                    &body_length,
+                                    "RSP %lu ok status=",
+                                    (unsigned long)request->request_id) == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (protocol_engine_append_text(
+                body,
+                sizeof(body),
+                &body_length,
+                "%s%u",
+                (joint_index == 0U) ? "" : ",",
+                (engine->query_context.motors.valid_joint_mask &
+                 (uint8_t)(1U << joint_index)) != 0U) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    if (protocol_engine_append_text(body, sizeof(body), &body_length, " fault=") == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const MotorJointFeedback *feedback =
+            &engine->query_context.motors.joints[joint_index];
+        if (protocol_engine_append_text(body,
+                                        sizeof(body),
+                                        &body_length,
+                                        "%s%lu",
+                                        (joint_index == 0U) ? "" : ",",
+                                        (unsigned long)feedback->fault_flags) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    if (protocol_engine_append_text(body, sizeof(body), &body_length, " mos_c=") == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (protocol_engine_append_text(
+                body,
+                sizeof(body),
+                &body_length,
+                "%s%d",
+                (joint_index == 0U) ? "" : ",",
+                (int)engine->query_context.motors.joints[joint_index].mos_temperature_c) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    if (protocol_engine_append_text(body, sizeof(body), &body_length, " rotor_c=") == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (protocol_engine_append_text(
+                body,
+                sizeof(body),
+                &body_length,
+                "%s%d",
+                (joint_index == 0U) ? "" : ",",
+                (int)engine->query_context.motors.joints[joint_index].rotor_temperature_c) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    return protocol_engine_append_body(output_batch, PROTOCOL_OUTPUT_QUERY, body);
+}
+
+/** @brief Returns the current bounded software diagnostic counters. */
+static ProtocolEngineStatus protocol_engine_handle_get_diag(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    ProtocolOutputBatch *output_batch)
+{
+    const DiagnosticCounters *diagnostics = &engine->query_context.diagnostics;
+
+    if (engine->query_context_valid == 0U)
+    {
+        return protocol_engine_append_format(output_batch,
+                                             PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                             "ERR %lu INTERNAL_ERROR context=diag",
+                                             (unsigned long)request->request_id);
+    }
+    return protocol_engine_append_format(
+        output_batch,
+        PROTOCOL_OUTPUT_QUERY,
+        "RSP %lu ok control_hz=250 service_cycles=%lu can_rx=%lu can_tx=%lu config_fail=%lu queue_hwm=%lu stack_min_words=%lu",
+        (unsigned long)request->request_id,
+        (unsigned long)diagnostics->service_cycles,
+        (unsigned long)diagnostics->can_rx_frames,
+        (unsigned long)diagnostics->can_tx_frames,
+        (unsigned long)diagnostics->config_validation_failures,
+        (unsigned long)diagnostics->queue_high_watermark,
+        (unsigned long)diagnostics->minimum_stack_words);
+}
+
+/** @brief Returns the explicit uncommissioned configuration and deterministic hash. */
+static ProtocolEngineStatus protocol_engine_handle_get_config(
+    const AsciiProtocolRequest *request,
+    ProtocolOutputBatch *output_batch)
+{
+    const ArmConfig *configuration = arm_config_get_production();
+    ArmConfigValidation validation;
+    char canonical_map[PROTOCOL_MAX_LINE_LENGTH + 1U];
+    char response_body[PROTOCOL_MAX_LINE_LENGTH + 1U];
+    size_t canonical_length = 0U;
+    size_t response_length = 0U;
+    uint32_t map_hash;
+    uint8_t joint_index;
+    uint8_t enable_ready = arm_config_is_enable_ready(configuration, &validation);
+    static const char *canonical_keys[4] = {
+        ";q_min_deg=", ";q_max_deg=", ";v_limit_deg_s=", ";a_limit_deg_s2="
+    };
+    static const char *response_keys[4] = {
+        " q_min_deg=", " q_max_deg=", " v_limit_deg_s=", " a_limit_deg_s2="
+    };
+    uint8_t vector_index;
+
+    if (protocol_engine_append_text(canonical_map,
+                                    sizeof(canonical_map),
+                                    &canonical_length,
+                                    "dof=7;direction=") == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (protocol_engine_append_text(
+                canonical_map,
+                sizeof(canonical_map),
+                &canonical_length,
+                "%s%d",
+                (joint_index == 0U) ? "" : ",",
+                (int)configuration->joints[joint_index].direction) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    for (vector_index = 0U; vector_index < 4U; ++vector_index)
+    {
+        if ((protocol_engine_append_text(canonical_map,
+                                         sizeof(canonical_map),
+                                         &canonical_length,
+                                         "%s",
+                                         canonical_keys[vector_index]) == 0U) ||
+            (protocol_engine_append_config_vector(
+                 canonical_map,
+                 sizeof(canonical_map),
+                 &canonical_length,
+                 configuration,
+                 (ProtocolConfigVector)vector_index,
+                 6U) == 0U))
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    map_hash = ascii_protocol_crc32_iso_hdlc(
+        (const uint8_t *)canonical_map,
+        canonical_length);
+
+    if (protocol_engine_append_text(
+            response_body,
+            sizeof(response_body),
+            &response_length,
+            "RSP %lu ok config_rev=2026-08-12.1 verified=%u direction=",
+            (unsigned long)request->request_id,
+            enable_ready) == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (protocol_engine_append_text(
+                response_body,
+                sizeof(response_body),
+                &response_length,
+                "%s%d",
+                (joint_index == 0U) ? "" : ",",
+                (int)configuration->joints[joint_index].direction) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    for (vector_index = 0U; vector_index < 4U; ++vector_index)
+    {
+        if ((protocol_engine_append_text(response_body,
+                                         sizeof(response_body),
+                                         &response_length,
+                                         "%s",
+                                         response_keys[vector_index]) == 0U) ||
+            (protocol_engine_append_config_vector(
+                 response_body,
+                 sizeof(response_body),
+                 &response_length,
+                 configuration,
+                 (ProtocolConfigVector)vector_index,
+                 3U) == 0U))
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    if (protocol_engine_append_text(response_body,
+                                    sizeof(response_body),
+                                    &response_length,
+                                    " map_hash=%08lX",
+                                    (unsigned long)map_hash) == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    return protocol_engine_append_body(output_batch,
+                                       PROTOCOL_OUTPUT_QUERY,
+                                       response_body);
+}
+
+/** @brief Validates and applies the session-scoped telemetry configuration. */
+static ProtocolEngineStatus protocol_engine_handle_set_stream(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    ProtocolOutputBatch *output_batch)
+{
+    AsciiProtocolSpan rate_span;
+    AsciiProtocolSpan fields_span;
+    uint32_t rate_hz;
+
+    if ((ascii_protocol_find_field(request, "rate_hz", &rate_span) == 0U) ||
+        (ascii_protocol_find_field(request, "fields", &fields_span) == 0U))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu MISSING_FIELD",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if ((protocol_engine_parse_u32(&rate_span, &rate_hz) == 0U) ||
+        (rate_hz > 100U) ||
+        (protocol_engine_stream_fields_are_valid(&fields_span) == 0U))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BAD_VALUE field=SET_STREAM",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+
+    engine->stream_rate_hz = (uint8_t)rate_hz;
+    memcpy(engine->stream_fields, fields_span.data, fields_span.length);
+    engine->stream_fields[fields_span.length] = '\0';
+    return protocol_engine_append_format(output_batch,
+                                         PROTOCOL_OUTPUT_QUERY,
+                                         "RSP %lu ok rate_hz=%lu fields=%s",
+                                         (unsigned long)request->request_id,
+                                         (unsigned long)rate_hz,
+                                         engine->stream_fields);
+}
+
 /**
  * @brief Initializes one protocol engine for the current firmware boot.
  */
@@ -329,6 +831,23 @@ void protocol_engine_init(ProtocolEngine *engine, uint32_t boot_id)
     }
     memset(engine, 0, sizeof(*engine));
     engine->boot_id = (boot_id == 0U) ? 1U : boot_id;
+    engine->stream_rate_hz = 50U;
+    (void)strcpy(engine->stream_fields, "jpos,jvel,state,motor");
+}
+
+/**
+ * @brief Copies the latest coherent application values used by query commands.
+ */
+void protocol_engine_update_query_context(
+    ProtocolEngine *engine,
+    const ProtocolQueryContext *query_context)
+{
+    if ((engine == NULL) || (query_context == NULL))
+    {
+        return;
+    }
+    engine->query_context = *query_context;
+    engine->query_context_valid = 1U;
 }
 
 /**
@@ -429,6 +948,46 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
         engine_status = protocol_engine_handle_get_info(engine,
                                                         &request,
                                                         output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "GET_CONFIG") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_get_config(&request, output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "GET_STATE") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_get_state(engine,
+                                                         &request,
+                                                         output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "GET_JPOS") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_get_jpos(engine,
+                                                        &request,
+                                                        output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "GET_MOTORS") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_get_motors(engine,
+                                                          &request,
+                                                          output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "GET_DIAG") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_get_diag(engine,
+                                                        &request,
+                                                        output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "SET_STREAM") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_set_stream(engine,
+                                                          &request,
+                                                          output_batch);
     }
     else
     {

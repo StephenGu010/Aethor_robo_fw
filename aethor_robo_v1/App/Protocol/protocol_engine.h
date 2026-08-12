@@ -10,6 +10,9 @@
 #include <stdint.h>
 
 #include "ascii_protocol.h"
+#include "arm_controller.h"
+#include "diagnostics.h"
+#include "motor_types.h"
 
 #define PROTOCOL_ENGINE_MESSAGE_CAPACITY (520U)
 #define PROTOCOL_ENGINE_MAX_OUTPUT_COUNT (2U)
@@ -66,15 +69,28 @@ typedef struct
     uint8_t valid;
 } ProtocolRecentResult;
 
+/** @brief Supplies one coherent application snapshot for synchronous queries. */
+typedef struct
+{
+    ArmSnapshot arm;
+    MotorFeedbackSnapshot motors;
+    DiagnosticCounters diagnostics;
+    uint64_t timestamp_us;
+} ProtocolQueryContext;
+
 /** @brief Owns the fixed current session and bounded recent-result cache. */
 typedef struct
 {
     ProtocolRecentResult recent_results[PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY];
+    ProtocolQueryContext query_context;
+    char stream_fields[64];
     uint64_t last_valid_request_at_us;
     uint32_t boot_id;
     uint32_t session_id;
     uint32_t next_session_nonce;
     uint8_t recent_write_index;
+    uint8_t stream_rate_hz;
+    uint8_t query_context_valid;
     uint8_t session_active;
     uint8_t watchdog_timeout_reported;
 } ProtocolEngine;
@@ -85,6 +101,15 @@ typedef struct
  * @param boot_id Nonzero boot identity returned to the host.
  */
 void protocol_engine_init(ProtocolEngine *engine, uint32_t boot_id);
+
+/**
+ * @brief Copies the latest coherent application values used by query commands.
+ * @param engine Initialized engine.
+ * @param query_context Snapshot assembled by the application facade.
+ */
+void protocol_engine_update_query_context(
+    ProtocolEngine *engine,
+    const ProtocolQueryContext *query_context);
 
 /**
  * @brief Processes one complete CRC-protected request line.

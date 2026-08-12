@@ -6,6 +6,7 @@
 #include "aethor_app.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #include "arm_config.h"
 
@@ -45,10 +46,24 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
     uint64_t timestamp_us,
     ProtocolOutputBatch *output_batch)
 {
+    ProtocolQueryContext query_context;
+
     if (application_initialized == 0U)
     {
         return PROTOCOL_ENGINE_STATUS_INVALID_ARGUMENT;
     }
+    memset(&query_context, 0, sizeof(query_context));
+    (void)arm_controller_get_snapshot(&application_controller,
+                                      &query_context.arm);
+    (void)motor_runtime_get_snapshot(&application_motor_runtime,
+                                     timestamp_us,
+                                     MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
+                                     &query_context.motors);
+    (void)diagnostics_get_counters(&application_diagnostics,
+                                   &query_context.diagnostics);
+    query_context.timestamp_us = timestamp_us;
+    protocol_engine_update_query_context(&application_protocol_engine,
+                                         &query_context);
     return protocol_engine_process_line(&application_protocol_engine,
                                         line,
                                         length,

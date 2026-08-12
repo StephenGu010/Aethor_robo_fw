@@ -235,6 +235,96 @@ static void test_protocol_engine_session_lifecycle(void)
 }
 
 /**
+ * @brief Verifies snapshot queries and session-scoped stream configuration.
+ */
+static void test_protocol_engine_query_dispatch(void)
+{
+    ProtocolEngine engine;
+    ProtocolQueryContext query_context;
+    ProtocolOutputBatch output_batch;
+    char request_frame[256];
+    size_t request_length;
+
+    memset(&query_context, 0, sizeof(query_context));
+    query_context.arm.state = ARM_STATE_FAULT;
+    query_context.arm.fault = ARM_FAULT_CONFIG_INCOMPLETE;
+    query_context.motors.valid_joint_mask = 0x01U;
+    query_context.motors.joints[0].mos_temperature_c = 42.0F;
+    query_context.motors.joints[0].rotor_temperature_c = 40.0F;
+    query_context.diagnostics.service_cycles = 5U;
+    query_context.timestamp_us = 9000U;
+
+    protocol_engine_init(&engine, 4321U);
+    request_length = build_request_frame(
+        "REQ 10 HELLO client=test protocol=1",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine,
+                                        request_frame,
+                                        request_length,
+                                        1000U,
+                                        &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    protocol_engine_update_query_context(&engine, &query_context);
+
+    request_length = build_request_frame("REQ 11 GET_STATE",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "state=FAULT") != NULL);
+    assert(strstr(output_batch.messages[0].data, "fault=CONFIG_INCOMPLETE") != NULL);
+
+    request_length = build_request_frame("REQ 12 GET_JPOS",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2100U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "valid=0,0,0,0,0,0,0") != NULL);
+    assert(strstr(output_batch.messages[0].data, "aligned=0") != NULL);
+
+    request_length = build_request_frame("REQ 13 GET_MOTORS",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2200U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "status=1,0,0,0,0,0,0") != NULL);
+    assert(strstr(output_batch.messages[0].data, "mos_c=42,0,0,0,0,0,0") != NULL);
+
+    request_length = build_request_frame("REQ 14 GET_DIAG",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2300U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "service_cycles=5") != NULL);
+
+    request_length = build_request_frame("REQ 15 GET_CONFIG",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2400U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "verified=0") != NULL);
+    assert(strstr(output_batch.messages[0].data, "map_hash=E0DA65E8") != NULL);
+    assert(output_batch.messages[0].length <= PROTOCOL_MAX_LINE_LENGTH);
+
+    request_length = build_request_frame(
+        "REQ 16 SET_STREAM rate_hz=100 fields=jpos,jvel,state,motor",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2500U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(engine.stream_rate_hz == 100U);
+    assert(strcmp(engine.stream_fields, "jpos,jvel,state,motor") == 0);
+
+    request_length = build_request_frame(
+        "REQ 17 SET_STREAM rate_hz=101 fields=jpos",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2600U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(strstr(output_batch.messages[0].data, "BAD_VALUE") != NULL);
+}
+
+/**
  * @brief Runs all protocol contract tests.
  * @return Zero when every assertion passes.
  */
@@ -246,6 +336,7 @@ int main(void)
     test_shared_golden_frames();
     test_field_lookup();
     test_protocol_engine_session_lifecycle();
+    test_protocol_engine_query_dispatch();
     puts("PROTOCOL_TESTS_PASSED");
     return 0;
 }

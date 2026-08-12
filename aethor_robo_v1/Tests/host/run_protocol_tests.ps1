@@ -51,12 +51,16 @@ function Invoke-ProtocolHostTests {
             '-Wall' `
             '-Wextra' `
             '-Werror' `
+            '-IApp\Arm' `
             '-IApp\Config' `
+            '-IApp\Motor' `
             '-IApp\Protocol' `
+            '-IApp\Telemetry' `
             '-ITests\host\build' `
             'Tests\host\protocol_test_main.c' `
             'App\Protocol\ascii_protocol.c' `
             'App\Protocol\protocol_engine.c' `
+            'App\Config\arm_config.c' `
             'App\Config\build_info.c' `
             '-o' $testExecutable
         if ($LASTEXITCODE -ne 0)

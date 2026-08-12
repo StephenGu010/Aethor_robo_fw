@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "ascii_protocol.h"
+#include "protocol_engine.h"
 #include "protocol_golden_vectors.h"
 
 /**
@@ -137,6 +138,103 @@ static void test_field_lookup(void)
 }
 
 /**
+ * @brief Formats one request body into a complete CRC-protected line.
+ * @param body Request body before CRC.
+ * @param frame Destination line buffer.
+ * @param frame_capacity Destination capacity.
+ * @return Encoded line length.
+ */
+static size_t build_request_frame(const char *body,
+                                  char *frame,
+                                  size_t frame_capacity)
+{
+    size_t frame_length = 0U;
+
+    assert(ascii_protocol_format_frame(body,
+                                       strlen(body),
+                                       frame,
+                                       frame_capacity,
+                                       &frame_length) == ASCII_PROTOCOL_STATUS_OK);
+    return frame_length;
+}
+
+/**
+ * @brief Verifies HELLO sessions, replay safety, conflicts, heartbeat, and timeout.
+ */
+static void test_protocol_engine_session_lifecycle(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    char request_frame[256];
+    char duplicate_response[PROTOCOL_ENGINE_MESSAGE_CAPACITY];
+    char heartbeat_body[96];
+    size_t request_length;
+
+    protocol_engine_init(&engine, 1234U);
+    request_length = build_request_frame(
+        "REQ 1 HELLO client=aethor-studio-v2 protocol=1",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine,
+                                        request_frame,
+                                        request_length,
+                                        1000U,
+                                        &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(output_batch.count == 1U);
+    assert(output_batch.messages[0].priority == PROTOCOL_OUTPUT_QUERY);
+    assert(strstr(output_batch.messages[0].data, "RSP 1 ok") != NULL);
+    assert(strstr(output_batch.messages[0].data, "boot_id=1234") != NULL);
+    assert(strstr(output_batch.messages[0].data, "session=") != NULL);
+    assert(engine.session_active != 0U);
+    strcpy(duplicate_response, output_batch.messages[0].data);
+
+    assert(protocol_engine_process_line(&engine,
+                                        request_frame,
+                                        request_length,
+                                        1100U,
+                                        &output_batch) == PROTOCOL_ENGINE_STATUS_REPLAYED);
+    assert(strcmp(output_batch.messages[0].data, duplicate_response) == 0);
+
+    request_length = build_request_frame("REQ 1 GET_INFO",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine,
+                                        request_frame,
+                                        request_length,
+                                        1200U,
+                                        &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT);
+    assert(strstr(output_batch.messages[0].data, "ERR 1 REQUEST_ID_CONFLICT") != NULL);
+
+    request_length = build_request_frame("REQ 2 HEARTBEAT session=999",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine,
+                                        request_frame,
+                                        request_length,
+                                        2000U,
+                                        &output_batch) == PROTOCOL_ENGINE_STATUS_SESSION_MISMATCH);
+    assert(strstr(output_batch.messages[0].data, "ERR 2 INVALID_SESSION") != NULL);
+
+    assert(snprintf(heartbeat_body,
+                    sizeof(heartbeat_body),
+                    "REQ 3 HEARTBEAT session=%lu",
+                    (unsigned long)engine.session_id) > 0);
+    request_length = build_request_frame(heartbeat_body,
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine,
+                                        request_frame,
+                                        request_length,
+                                        3000U,
+                                        &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "RSP 3 ok") != NULL);
+    assert(protocol_engine_watchdog_expired(&engine, 1002999U) == 0U);
+    assert(protocol_engine_watchdog_expired(&engine, 1003000U) != 0U);
+    assert(protocol_engine_watchdog_expired(&engine, 1004000U) == 0U);
+}
+
+/**
  * @brief Runs all protocol contract tests.
  * @return Zero when every assertion passes.
  */
@@ -147,6 +245,7 @@ int main(void)
     test_frame_formatter();
     test_shared_golden_frames();
     test_field_lookup();
+    test_protocol_engine_session_lifecycle();
     puts("PROTOCOL_TESTS_PASSED");
     return 0;
 }

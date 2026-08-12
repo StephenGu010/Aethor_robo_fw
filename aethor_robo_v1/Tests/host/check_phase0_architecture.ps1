@@ -155,6 +155,7 @@ function Invoke-Phase0ArchitectureCheck {
         'arm_controller.c',
         'diagnostics.c',
         'ascii_protocol.c',
+        'protocol_engine.c',
         'can_frame.c',
         'can_tx_scheduler.c',
         'motor_bank.c',

@@ -72,11 +72,11 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
     ProtocolOutputBatch *output_batch);
 
 /**
- * @brief Detects the first communication watchdog expiry for the session.
- * @param timestamp_us Current monotonic timestamp.
- * @return One exactly once per timeout, otherwise zero.
+ * @brief Pops one pending fail-safe motor disable frame.
+ * @param frame Destination emergency CAN frame.
+ * @return One when copied, otherwise zero.
  */
-uint8_t aethor_app_protocol_watchdog_expired(uint64_t timestamp_us);
+uint8_t aethor_app_pop_emergency_can_frame(CanFrame *frame);
 
 /**
  * @brief Formats one pending terminal command result for ProtocolTask.

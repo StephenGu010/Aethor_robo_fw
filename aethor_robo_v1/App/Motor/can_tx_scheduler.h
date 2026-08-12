@@ -56,6 +56,7 @@ typedef struct
     uint32_t next_sequence;
     uint32_t full_count;
     uint32_t atomic_group_reject_count;
+    uint32_t emergency_eviction_count;
     uint8_t count;
     uint8_t high_watermark;
     uint8_t initialized;

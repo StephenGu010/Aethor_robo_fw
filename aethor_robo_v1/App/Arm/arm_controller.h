@@ -35,7 +35,8 @@ typedef enum
 {
     ARM_FAULT_NONE = 0,
     ARM_FAULT_CONFIG_INVALID,
-    ARM_FAULT_CONFIG_INCOMPLETE
+    ARM_FAULT_CONFIG_INCOMPLETE,
+    ARM_FAULT_LINK_TIMEOUT
 } ArmFault;
 
 /** @brief Reports whether a requested arm-domain transition was accepted. */
@@ -104,6 +105,16 @@ void arm_controller_step(ArmController *controller, uint64_t timestamp_us);
  * @return OK only from UNALIGNED or already aligned DISABLED.
  */
 ArmTransitionStatus arm_controller_mark_reference_aligned(
+    ArmController *controller,
+    uint64_t timestamp_us);
+
+/**
+ * @brief Latches communication loss and clears all logical enable/motion flags.
+ * @param controller Initialized controller.
+ * @param timestamp_us Fault timestamp.
+ * @return OK or INVALID_ARGUMENT.
+ */
+ArmTransitionStatus arm_controller_force_stop_disable(
     ArmController *controller,
     uint64_t timestamp_us);
 

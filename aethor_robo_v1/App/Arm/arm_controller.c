@@ -175,6 +175,26 @@ ArmTransitionStatus arm_controller_mark_reference_aligned(
 }
 
 /**
+ * @brief Latches communication loss and clears all logical enable/motion flags.
+ */
+ArmTransitionStatus arm_controller_force_stop_disable(
+    ArmController *controller,
+    uint64_t timestamp_us)
+{
+    if ((controller == NULL) || (controller->initialized == 0U))
+    {
+        return ARM_TRANSITION_STATUS_INVALID_ARGUMENT;
+    }
+    controller->state = ARM_STATE_FAULT;
+    controller->fault = ARM_FAULT_LINK_TIMEOUT;
+    controller->fault_detail = 0U;
+    controller->state_entered_at_us = timestamp_us;
+    controller->enabled = 0U;
+    controller->moving = 0U;
+    return ARM_TRANSITION_STATUS_OK;
+}
+
+/**
  * @brief Copies the current controller state.
  * @param controller Initialized controller to inspect.
  * @param snapshot Output snapshot.

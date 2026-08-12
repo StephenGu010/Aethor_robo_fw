@@ -146,6 +146,56 @@ static void test_can_scheduler_prioritizes_emergency_frames(void)
 }
 
 /**
+ * @brief Verifies emergency traffic evicts lower-priority work from a full ring.
+ */
+static void test_can_scheduler_reserves_progress_for_emergency_frames(void)
+{
+    CanTxScheduler scheduler;
+    CanFrame parameter_frame = make_test_frame(0x7FFU, 0x33U);
+    CanFrame emergency_frame = make_test_frame(0x101U, 0xFDU);
+    CanFrame popped_frame;
+    CanTxPriority popped_priority;
+    uint8_t frame_index;
+
+    can_tx_scheduler_init(&scheduler);
+    for (frame_index = 0U; frame_index < CAN_TX_SCHEDULER_CAPACITY; ++frame_index)
+    {
+        assert(can_tx_scheduler_submit(&scheduler,
+                                       CAN_TX_PRIORITY_PARAMETER,
+                                       &parameter_frame) ==
+               CAN_TX_SCHEDULER_STATUS_OK);
+    }
+    assert(can_tx_scheduler_submit(&scheduler,
+                                   CAN_TX_PRIORITY_EMERGENCY,
+                                   &emergency_frame) ==
+           CAN_TX_SCHEDULER_STATUS_OK);
+    assert(scheduler.count == CAN_TX_SCHEDULER_CAPACITY);
+    assert(can_tx_scheduler_pop(&scheduler, &popped_frame, &popped_priority) ==
+           CAN_TX_SCHEDULER_STATUS_OK);
+    assert(popped_priority == CAN_TX_PRIORITY_EMERGENCY);
+    assert(popped_frame.data[0] == 0xFDU);
+}
+
+/**
+ * @brief Verifies an unknown motor mode produces both safe disable identifiers.
+ */
+static void test_motor_runtime_builds_fail_safe_disable_batch(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_build_emergency_disable(&runtime, &batch) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(batch.count == 14U);
+    assert(batch.frames[0].identifier == 0x001U);
+    assert(batch.frames[1].identifier == 0x101U);
+    assert(batch.frames[0].data[7] == 0xFDU);
+    assert(batch.frames[1].data[7] == 0xFDU);
+}
+
+/**
  * @brief Verifies seven control frames are accepted atomically or not at all.
  */
 static void test_can_scheduler_accepts_atomic_seven_frame_groups(void)
@@ -571,6 +621,8 @@ int main(void)
     test_motor_bank_publishes_coherent_feedback_snapshots();
     test_motor_bank_rejects_snapshot_during_publish();
     test_can_scheduler_prioritizes_emergency_frames();
+    test_can_scheduler_reserves_progress_for_emergency_frames();
+    test_motor_runtime_builds_fail_safe_disable_batch();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();

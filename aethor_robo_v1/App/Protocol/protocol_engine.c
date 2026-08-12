@@ -368,6 +368,9 @@ static const char *protocol_engine_arm_fault_text(ArmFault fault)
         case ARM_FAULT_CONFIG_INVALID:
             return "CONFIG_INVALID";
         case ARM_FAULT_CONFIG_INCOMPLETE:
+            return "CONFIG_INCOMPLETE";
+        case ARM_FAULT_LINK_TIMEOUT:
+            return "LINK_TIMEOUT";
         default:
             return "CONFIG_INCOMPLETE";
     }
@@ -1200,6 +1203,17 @@ uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
 }
 
 /**
+ * @brief Cancels all accepted commands not yet taken by ArmControlTask.
+ */
+void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
+{
+    if (engine != NULL)
+    {
+        engine->command_read_sequence = engine->command_write_sequence;
+    }
+}
+
+/**
  * @brief Submits one terminal result from ArmControlTask without formatting.
  */
 uint8_t protocol_engine_submit_command_result(
@@ -1276,6 +1290,20 @@ uint8_t protocol_engine_pop_result_output(
     } while (result.session_id != engine->session_id);
 
     protocol_engine_clear_output(output_batch);
+    if (result.type == PROTOCOL_COMMAND_LINK_TIMEOUT)
+    {
+        ++engine->event_sequence;
+        if (protocol_engine_append_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "EVT %lu LINK_TIMEOUT elapsed_ms=1000 action=STOP_DISABLE",
+                (unsigned long)engine->event_sequence) !=
+            PROTOCOL_ENGINE_STATUS_OK)
+        {
+            return 0U;
+        }
+        return 1U;
+    }
     if (protocol_engine_append_text(body,
                                     sizeof(body),
                                     &body_length,

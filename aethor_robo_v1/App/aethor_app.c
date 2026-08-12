@@ -15,6 +15,8 @@ static ArmController application_controller;
 static JointReference application_joint_reference;
 static MotorRuntime application_motor_runtime;
 static ProtocolEngine application_protocol_engine;
+static MotorEmergencyFrameBatch application_emergency_disable_batch;
+static uint8_t application_emergency_disable_read_index;
 static uint8_t application_initialized;
 
 /** @brief Refreshes the protocol query context from coherent domain snapshots. */
@@ -57,6 +59,10 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
     motor_status = motor_runtime_init(&application_motor_runtime,
                                       arm_config_get_production());
     protocol_engine_init(&application_protocol_engine, boot_id);
+    memset(&application_emergency_disable_batch,
+           0,
+           sizeof(application_emergency_disable_batch));
+    application_emergency_disable_read_index = 0U;
     application_initialized =
         (uint8_t)(motor_status == MOTOR_RUNTIME_STATUS_OK);
 }
@@ -83,16 +89,20 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
 }
 
 /**
- * @brief Detects the first communication watchdog expiry for the session.
+ * @brief Pops one pending fail-safe motor disable frame.
  */
-uint8_t aethor_app_protocol_watchdog_expired(uint64_t timestamp_us)
+uint8_t aethor_app_pop_emergency_can_frame(CanFrame *frame)
 {
-    if (application_initialized == 0U)
+    if ((application_initialized == 0U) || (frame == NULL) ||
+        (application_emergency_disable_read_index >=
+         application_emergency_disable_batch.count))
     {
         return 0U;
     }
-    return protocol_engine_watchdog_expired(&application_protocol_engine,
-                                            timestamp_us);
+    *frame = application_emergency_disable_batch.frames[
+        application_emergency_disable_read_index];
+    ++application_emergency_disable_read_index;
+    return 1U;
 }
 
 /**
@@ -183,8 +193,29 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         }
         arm_controller_step(&application_controller, timestamp_us);
 
-        if (protocol_engine_pop_command(&application_protocol_engine,
-                                        &command) != 0U)
+        if (protocol_engine_watchdog_expired(&application_protocol_engine,
+                                             timestamp_us) != 0U)
+        {
+            ProtocolCommandResult timeout_result;
+
+            (void)arm_controller_force_stop_disable(&application_controller,
+                                                     timestamp_us);
+            protocol_engine_cancel_pending_commands(&application_protocol_engine);
+            application_emergency_disable_read_index = 0U;
+            (void)motor_runtime_build_emergency_disable(
+                &application_motor_runtime,
+                &application_emergency_disable_batch);
+            memset(&timeout_result, 0, sizeof(timeout_result));
+            timeout_result.session_id = application_protocol_engine.session_id;
+            timeout_result.type = PROTOCOL_COMMAND_LINK_TIMEOUT;
+            timeout_result.code = PROTOCOL_COMMAND_RESULT_STOPPED;
+            timeout_result.completed_at_us = timestamp_us;
+            result_generated = protocol_engine_submit_command_result(
+                &application_protocol_engine,
+                &timeout_result);
+        }
+        else if (protocol_engine_pop_command(&application_protocol_engine,
+                                             &command) != 0U)
         {
             ProtocolCommandResult result;
 

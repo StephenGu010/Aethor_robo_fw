@@ -92,7 +92,8 @@ typedef enum
     PROTOCOL_COMMAND_CLEAR_FAULT,
     PROTOCOL_COMMAND_MOVE_JOINTS,
     PROTOCOL_COMMAND_INIT_MOTORS,
-    PROTOCOL_COMMAND_MOVE_RELATIVE
+    PROTOCOL_COMMAND_MOVE_RELATIVE,
+    PROTOCOL_COMMAND_LINK_TIMEOUT
 } ProtocolCommandType;
 
 /** @brief Owns one validated fixed-size command transferred to ArmControlTask. */
@@ -181,6 +182,12 @@ void protocol_engine_update_query_context(
  */
 uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
                                     ProtocolCommand *command);
+
+/**
+ * @brief Cancels all accepted commands not yet taken by ArmControlTask.
+ * @param engine Initialized engine.
+ */
+void protocol_engine_cancel_pending_commands(ProtocolEngine *engine);
 
 /**
  * @brief Submits one terminal result from ArmControlTask without formatting.

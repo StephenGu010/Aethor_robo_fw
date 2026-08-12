@@ -295,3 +295,86 @@ MotorRuntimeStatus motor_runtime_get_snapshot(const MotorRuntime *runtime,
     }
     return MOTOR_RUNTIME_STATUS_OK;
 }
+
+/** @brief Appends one validated disable command to an emergency batch. */
+static MotorRuntimeStatus motor_runtime_append_disable(
+    MotorEmergencyFrameBatch *batch,
+    uint8_t esc_id,
+    S3519ControlMode mode)
+{
+    if ((batch->count >= MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES) ||
+        (s3519_pack_mode_command(esc_id,
+                                  mode,
+                                  S3519_MODE_COMMAND_DISABLE,
+                                  &batch->frames[batch->count]) !=
+         S3519_CODEC_STATUS_OK))
+    {
+        return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+    }
+    ++batch->count;
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
+ * @brief Builds fail-safe disable frames, covering both identifiers if mode is unknown.
+ */
+MotorRuntimeStatus motor_runtime_build_emergency_disable(
+    const MotorRuntime *runtime,
+    MotorEmergencyFrameBatch *batch)
+{
+    uint8_t joint_index;
+
+    if ((runtime == NULL) || (batch == NULL))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    memset(batch, 0, sizeof(*batch));
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t esc_id = (uint8_t)runtime->configuration->joints[joint_index].esc_id;
+        uint32_t observed_mode =
+            runtime->discovery.results[joint_index].observed_control_mode;
+
+        if (observed_mode == 1U)
+        {
+            if (motor_runtime_append_disable(batch,
+                                             esc_id,
+                                             S3519_CONTROL_MODE_MIT) !=
+                MOTOR_RUNTIME_STATUS_OK)
+            {
+                return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+            }
+        }
+        else if (observed_mode == 2U)
+        {
+            if (motor_runtime_append_disable(
+                    batch,
+                    esc_id,
+                    S3519_CONTROL_MODE_POSITION_VELOCITY) !=
+                MOTOR_RUNTIME_STATUS_OK)
+            {
+                return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+            }
+        }
+        else
+        {
+            if ((motor_runtime_append_disable(batch,
+                                              esc_id,
+                                              S3519_CONTROL_MODE_MIT) !=
+                 MOTOR_RUNTIME_STATUS_OK) ||
+                (motor_runtime_append_disable(
+                     batch,
+                     esc_id,
+                     S3519_CONTROL_MODE_POSITION_VELOCITY) !=
+                 MOTOR_RUNTIME_STATUS_OK))
+            {
+                return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+            }
+        }
+    }
+    return MOTOR_RUNTIME_STATUS_OK;
+}

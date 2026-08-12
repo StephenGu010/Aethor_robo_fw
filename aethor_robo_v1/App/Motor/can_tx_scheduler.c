@@ -53,6 +53,54 @@ static void can_tx_scheduler_append(CanTxScheduler *scheduler,
     }
 }
 
+/** @brief Removes one queued entry while preserving relative order. */
+static void can_tx_scheduler_remove(CanTxScheduler *scheduler,
+                                    uint8_t remove_index)
+{
+    uint8_t compact_index;
+
+    for (compact_index = remove_index;
+         compact_index < (uint8_t)(scheduler->count - 1U);
+         ++compact_index)
+    {
+        scheduler->entries[compact_index] = scheduler->entries[compact_index + 1U];
+    }
+    --scheduler->count;
+}
+
+/** @brief Evicts the newest lowest-priority non-emergency entry when possible. */
+static uint8_t can_tx_scheduler_make_emergency_room(CanTxScheduler *scheduler)
+{
+    uint8_t entry_index;
+    uint8_t selected_index = 0U;
+    uint8_t selected_valid = 0U;
+
+    for (entry_index = 0U; entry_index < scheduler->count; ++entry_index)
+    {
+        const CanTxSchedulerEntry *candidate = &scheduler->entries[entry_index];
+
+        if (candidate->priority == CAN_TX_PRIORITY_EMERGENCY)
+        {
+            continue;
+        }
+        if ((selected_valid == 0U) ||
+            (candidate->priority > scheduler->entries[selected_index].priority) ||
+            ((candidate->priority == scheduler->entries[selected_index].priority) &&
+             (candidate->sequence > scheduler->entries[selected_index].sequence)))
+        {
+            selected_index = entry_index;
+            selected_valid = 1U;
+        }
+    }
+    if (selected_valid == 0U)
+    {
+        return 0U;
+    }
+    can_tx_scheduler_remove(scheduler, selected_index);
+    ++scheduler->emergency_eviction_count;
+    return 1U;
+}
+
 /**
  * @brief Initializes an empty scheduler.
  * @param scheduler Scheduler storage.
@@ -90,8 +138,12 @@ CanTxSchedulerStatus can_tx_scheduler_submit(CanTxScheduler *scheduler,
     }
     if (scheduler->count >= CAN_TX_SCHEDULER_CAPACITY)
     {
-        ++scheduler->full_count;
-        return CAN_TX_SCHEDULER_STATUS_FULL;
+        if ((priority != CAN_TX_PRIORITY_EMERGENCY) ||
+            (can_tx_scheduler_make_emergency_room(scheduler) == 0U))
+        {
+            ++scheduler->full_count;
+            return CAN_TX_SCHEDULER_STATUS_FULL;
+        }
     }
 
     can_tx_scheduler_append(scheduler, priority, frame);
@@ -179,12 +231,7 @@ CanTxSchedulerStatus can_tx_scheduler_pop(CanTxScheduler *scheduler,
 
     *frame = scheduler->entries[selected_index].frame;
     *priority = scheduler->entries[selected_index].priority;
-    for (compact_index = selected_index;
-         compact_index < (uint8_t)(scheduler->count - 1U);
-         ++compact_index)
-    {
-        scheduler->entries[compact_index] = scheduler->entries[compact_index + 1U];
-    }
-    --scheduler->count;
+    (void)compact_index;
+    can_tx_scheduler_remove(scheduler, selected_index);
     return CAN_TX_SCHEDULER_STATUS_OK;
 }

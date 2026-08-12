@@ -12,6 +12,14 @@
 #include "motor_discovery.h"
 
 #define MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US (100000ULL)
+#define MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES (14U)
+
+/** @brief Owns the fail-safe disable frames for all seven configured motors. */
+typedef struct
+{
+    CanFrame frames[MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES];
+    uint8_t count;
+} MotorEmergencyFrameBatch;
 
 /**
  * @brief Reports deterministic discovery and receive-routing outcomes.
@@ -89,5 +97,15 @@ MotorRuntimeStatus motor_runtime_get_snapshot(const MotorRuntime *runtime,
                                               uint64_t timestamp_us,
                                               uint64_t stale_after_us,
                                               MotorFeedbackSnapshot *snapshot);
+
+/**
+ * @brief Builds fail-safe disable frames, covering both identifiers if mode is unknown.
+ * @param runtime Initialized seven-motor runtime.
+ * @param batch Destination bounded emergency batch.
+ * @return OK or an argument/codec error.
+ */
+MotorRuntimeStatus motor_runtime_build_emergency_disable(
+    const MotorRuntime *runtime,
+    MotorEmergencyFrameBatch *batch);
 
 #endif

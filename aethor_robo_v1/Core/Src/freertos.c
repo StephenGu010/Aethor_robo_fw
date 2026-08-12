@@ -190,6 +190,11 @@ void StartArmControlTask(void const * argument)
     {
       (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
     }
+    while (aethor_app_pop_emergency_can_frame(&pendingFrame) != 0U)
+    {
+      (void)stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY,
+                                      &pendingFrame);
+    }
     if (aethor_app_next_can_frame(timestampUs,
                                   &pendingFrame,
                                   &pendingPriority) ==
@@ -197,7 +202,6 @@ void StartArmControlTask(void const * argument)
     {
       (void)stm32_platform_can_submit(pendingPriority, &pendingFrame);
     }
-    (void)aethor_app_protocol_watchdog_expired(timestampUs);
     (void)stm32_platform_can_service_tx(ARM_JOINT_COUNT);
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(4U));
   }

@@ -31,6 +31,7 @@ function Invoke-Phase0HostTests {
     $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     $buildDirectory = Join-Path $PSScriptRoot 'build'
     $testExecutable = Join-Path $buildDirectory 'phase0_tests.exe'
+    $invalidProfileObject = Join-Path $buildDirectory 'invalid_profile_test.o'
     $compilerCommand = Get-Phase0Compiler
     $sourceFiles = @(
         'Tests\host\phase0_test_main.c',
@@ -73,6 +74,19 @@ function Invoke-Phase0HostTests {
         if ($LASTEXITCODE -ne 0)
         {
             throw "Phase 0 tests failed with exit code $LASTEXITCODE."
+        }
+
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        & $compilerCommand.Source '-std=c11' '-Wall' '-Wextra' '-Werror' `
+            '-DAETHOR_ACTIVE_PROFILE=AETHOR_UNSUPPORTED_PROFILE' '-IApp' '-IApp\Config' `
+            '-c' 'Tests\host\invalid_profile_compile_test.c' '-o' $invalidProfileObject 2>$null
+        $invalidProfileExitCode = $LASTEXITCODE
+        $ErrorActionPreference = $previousErrorActionPreference
+
+        if ($invalidProfileExitCode -eq 0)
+        {
+            throw 'An unsupported application profile was accepted by the compiler.'
         }
     }
     finally

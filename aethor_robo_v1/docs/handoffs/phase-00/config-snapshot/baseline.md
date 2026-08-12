@@ -19,7 +19,7 @@
 - FDCAN1：Classic CAN，标准帧，标称 1 Mbps；PD0 为 RX、PD1 为 TX。
 - FDCAN1 标称时序：Prescaler 1、TimeSeg1 59、TimeSeg2 20，标准过滤器数量 7。
 - USB_OTG_HS：Device Only FS，PA11/PA12，已生成 USB CDC 中间件。
-- 当前 `.ioc` 未启用 UART；USART1 仅作为后续正式上位机链路候选，不属于 Phase 0 已完成功能。
+- 正式上位机链路已冻结为现有 USB CDC；当前 `.ioc` 未启用 UART，USART1 不属于正式控制入口。
 
 ## 当前固件入口
 

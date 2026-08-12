@@ -8,6 +8,7 @@
 #include <stdio.h>
 
 #include "aethor_app.h"
+#include "app_profile.h"
 #include "arm_config.h"
 #include "arm_controller.h"
 #include "board_config.h"
@@ -33,7 +34,7 @@ static void test_production_config_has_seven_ordered_joints(void)
     {
         assert(configuration->joints[joint_index].joint_index == joint_index);
         assert(configuration->joints[joint_index].esc_id == (uint16_t)(joint_index + 1U));
-        assert(configuration->joints[joint_index].master_id == (uint16_t)(joint_index + 11U));
+        assert(configuration->joints[joint_index].master_id == (uint16_t)(joint_index + 0x11U));
     }
 }
 
@@ -135,8 +136,19 @@ static void test_build_and_board_identity_are_frozen(void)
     assert(build_information->arm_id[0] != '\0');
     assert(build_information->protocol_version[0] != '\0');
     assert(BOARD_FDCAN_NOMINAL_BITRATE == 1000000UL);
-    assert(BOARD_FORMAL_UART_BAUDRATE == 921600UL);
-    assert(BOARD_FORMAL_UART_VALIDATED == 0U);
+    assert(BOARD_FORMAL_SERIAL_TRANSPORT == BOARD_SERIAL_TRANSPORT_USB_CDC);
+    assert(BOARD_USB_CDC_VALIDATED == 0U);
+}
+
+/**
+ * @brief Verifies the default image is the bounded USB bench profile.
+ */
+static void test_default_application_profile_is_safe_bench_control(void)
+{
+    assert(AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE);
+    assert(AETHOR_BENCH_MAX_RELATIVE_DEGREES == 3.0F);
+    assert(AETHOR_BENCH_MAX_SPEED_DEGREES_S == 3.0F);
+    assert(AETHOR_PRODUCTION_REQUIRES_COMPLETE_CONFIGURATION == 1U);
 }
 
 /**
@@ -357,6 +369,7 @@ int main(void)
     test_verified_invalid_limits_are_rejected();
     test_null_configuration_is_rejected();
     test_build_and_board_identity_are_frozen();
+    test_default_application_profile_is_safe_bench_control();
     test_diagnostics_initialize_deterministically();
     test_diagnostics_ring_overwrites_oldest_event();
     test_arm_controller_latches_incomplete_config_fault();

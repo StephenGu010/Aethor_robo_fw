@@ -39,6 +39,8 @@ typedef struct
 {
     MotorJointFeedback joints[ARM_JOINT_COUNT];
     MotorBusState bus_state;
+    uint64_t published_at_us;
+    uint32_t generation;
     uint8_t valid_joint_mask;
 } MotorFeedbackSnapshot;
 

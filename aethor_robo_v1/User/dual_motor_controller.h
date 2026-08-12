@@ -80,6 +80,7 @@ void dual_motor_controller_step(uint32_t current_time_ms,
                                 uint8_t user_key_is_pressed);
 void dual_motor_controller_on_can_frame(const FdcanClassicFrame *frame,
                                         uint32_t current_time_ms);
+void dual_motor_controller_on_can_start_failure(void);
 void dual_motor_controller_on_bus_off(void);
 const DualMotorControllerState *dual_motor_controller_get_state(void);
 

@@ -942,6 +942,9 @@ static void test_usb_command_parser(void)
     expect_integer(usb_command_process_line("#PING", &command, response, sizeof(response)),
                    USB_COMMAND_STATUS_OK, "PING parses");
     expect_integer(command.type, USB_COMMAND_TYPE_PING, "PING command type");
+    expect_integer(usb_command_is_allowed_in_key_control(command.type),
+                   1,
+                   "PING is allowed in key-only mode");
     expect_integer(strcmp(response, "ok PONG"), 0, "PING response");
 
     expect_integer(usb_command_process_line("#ECHO hello motor", &command, response, sizeof(response)),
@@ -950,6 +953,9 @@ static void test_usb_command_parser(void)
 
     expect_integer(usb_command_process_line("#GETSTATE", &command, response, sizeof(response)),
                    USB_COMMAND_STATUS_OK, "GET_STATE parses");
+    expect_integer(usb_command_is_allowed_in_key_control(command.type),
+                   1,
+                   "GETSTATE is allowed in key-only mode");
 
     expect_integer(usb_command_process_line("#SELECT 7", &command, response, sizeof(response)),
                    USB_COMMAND_STATUS_OK, "SELECT parses");
@@ -980,6 +986,9 @@ static void test_usb_command_parser(void)
 
     expect_integer(usb_command_process_line("!START", &command, response, sizeof(response)),
                    USB_COMMAND_STATUS_OK, "START still parses for an explicit rejection");
+    expect_integer(usb_command_is_allowed_in_key_control(command.type),
+                   0,
+                   "START is rejected in key-only mode");
     expect_integer(usb_command_process_line("!HOME", &command, response, sizeof(response)),
                    USB_COMMAND_STATUS_OK, "HOME parses");
     expect_integer(command.type, USB_COMMAND_TYPE_HOME, "HOME command type");
@@ -989,6 +998,9 @@ static void test_usb_command_parser(void)
     expect_integer(usb_command_process_line("#GETCAPS", &command, response, sizeof(response)),
                    USB_COMMAND_STATUS_OK, "GETCAPS parses");
     expect_integer(command.type, USB_COMMAND_TYPE_GET_CAPABILITIES, "GETCAPS command type");
+    expect_integer(usb_command_is_allowed_in_key_control(command.type),
+                   0,
+                   "GETCAPS is outside the strict key-only query surface");
     expect_integer(usb_command_process_line("#GETDH 7", &command, response, sizeof(response)),
                    USB_COMMAND_STATUS_OK, "GETDH joint query parses");
     expect_integer(command.type, USB_COMMAND_TYPE_GET_DH, "GETDH command type");
@@ -1853,6 +1865,16 @@ static void test_dual_motor_startup_and_faults(void)
     expect_integer(dual_motor_controller_get_state()->fault_reason,
                    DUAL_MOTOR_FAULT_BUS_OFF,
                    "Bus-Off records the explicit fault reason");
+
+    test_dual_motor_reset_transport();
+    dual_motor_controller_init(test_dual_motor_send, 0U);
+    dual_motor_controller_on_can_start_failure();
+    expect_integer(dual_motor_controller_get_state()->stage,
+                   DUAL_MOTOR_STAGE_FAULT,
+                   "CAN startup failure enters the diagnostic fault stage");
+    expect_integer(dual_motor_controller_get_state()->fault_reason,
+                   DUAL_MOTOR_FAULT_CAN_TRANSMIT,
+                   "CAN startup failure reports a transmit fault");
 }
 
 /**

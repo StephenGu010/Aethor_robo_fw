@@ -634,6 +634,14 @@ void dual_motor_controller_on_bus_off(void)
 }
 
 /**
+ * @brief Latches an FDCAN initialization failure while leaving USB diagnostics active.
+ */
+void dual_motor_controller_on_can_start_failure(void)
+{
+    dual_motor_latch_fault(DUAL_MOTOR_FAULT_CAN_TRANSMIT, 0U);
+}
+
+/**
  * @brief Returns the read-only public dual-motor controller state.
  * @return Address of the static state structure.
  */

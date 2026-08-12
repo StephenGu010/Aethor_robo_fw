@@ -2,6 +2,15 @@
 
 ## 2026-08-12
 
+### PA15 双电机运行入口
+
+- 当前 `aethor_application` 已切换为 `dual_motor_controller`，每 5 ms 读取低有效 PA15。
+- 第一次有效按下使电机 1/2 从各自反馈位置增加 `2π rad`，速度上限为 `0.5 rad/s`。
+- FDCAN 接收和 Bus-Off 回调已切换到双电机状态机；七轴模块保留但当前不运行。
+- COM7 保留阶段、掩码、按键、起点、目标、位置、速度、反馈年龄和故障探针。
+- USB 仅允许查询和诊断；所有运动类命令返回 `err key-only-control`。
+- 新增 CAN 初始化失败的双电机诊断故障路径。
+
 ### 新增
 
 - 新增固定 7 轴 `RobotConfiguration`，集中保存 DH、CAN/Master ID、方向、零位、外部减速比、限位、速度/加速度和标定状态。

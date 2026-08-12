@@ -3,7 +3,7 @@
 Monitors STM32 firmware probes and state replies on the USB CDC virtual port.
 
 .DESCRIPTION
-Opens COM7 by default, timestamps every received line, sends one capability query,
+Opens COM7 by default, timestamps every received line, sends one connectivity query,
 and periodically requests controller state. The script uses only the Windows .NET
 serial-port implementation and always closes the port when stopped with Ctrl+C.
 #>
@@ -73,7 +73,7 @@ try {
     $serialPort.DiscardInBuffer()
     $serialPort.DiscardOutBuffer()
     Write-ProbeMonitorLine "monitor_open port=$PortName baud=$BaudRate"
-    Send-ProbeMonitorCommand -SerialPort $serialPort -Command '#GETCAPS'
+    Send-ProbeMonitorCommand -SerialPort $serialPort -Command '#PING'
 
     while ($true) {
         try {

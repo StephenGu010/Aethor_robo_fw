@@ -73,6 +73,7 @@ UsbCommandStatus usb_command_process_line(const char *line,
                                           UsbCommand *command,
                                           char *response,
                                           size_t response_capacity);
+uint8_t usb_command_is_allowed_in_key_control(UsbCommandType command_type);
 
 #ifdef __cplusplus
 }

@@ -368,3 +368,17 @@ UsbCommandStatus usb_command_process_line(const char *line,
 
     return USB_COMMAND_STATUS_UNKNOWN_COMMAND;
 }
+
+/**
+ * @brief Checks the strict read-only USB surface used while PA15 owns motion control.
+ * @param command_type Parsed command type.
+ * @return One only for PING, ECHO, and GETSTATE; otherwise zero.
+ */
+uint8_t usb_command_is_allowed_in_key_control(UsbCommandType command_type)
+{
+    return ((command_type == USB_COMMAND_TYPE_PING) ||
+            (command_type == USB_COMMAND_TYPE_ECHO) ||
+            (command_type == USB_COMMAND_TYPE_GET_STATE))
+               ? 1U
+               : 0U;
+}

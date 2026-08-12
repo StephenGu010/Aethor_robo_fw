@@ -61,6 +61,7 @@ class AethorHostSimulator:
         self.stream_rate_hz = 50
         self.stream_fields = "jpos,jvel,state,motor"
         self.next_telemetry_ms = 0
+        self.next_motor_telemetry_ms = 0
         self.telemetry_sequence = 0
         self.event_sequence = 0
         self.last_request_ms = 0
@@ -85,11 +86,17 @@ class AethorHostSimulator:
         self._replay.move_to_end(request_id)
         self._expire_replay_entries()
 
-    def _emit(self, body: str, *, replace_telemetry: bool = False) -> None:
-        """Queues one output, replacing the previous unsent telemetry when requested."""
+    def _emit(self, body: str, *, replace_telemetry: bool = False,
+              telemetry_kind: str = "") -> None:
+        """Queues output while replacing only the same pending telemetry kind."""
         if replace_telemetry:
             self._pending_outputs = [item for item in self._pending_outputs
-                                     if not item.startswith("TEL ")]
+                                     if not (item.startswith("TEL ") and
+                                             telemetry_kind in item)]
+            telemetry_indexes = [index for index, item in enumerate(self._pending_outputs)
+                                 if item.startswith("TEL ")]
+            if len(telemetry_indexes) >= 4:
+                self._pending_outputs.pop(telemetry_indexes[0])
         self._pending_outputs.append(body)
 
     def drain_outputs(self) -> list[str]:
@@ -186,19 +193,34 @@ class AethorHostSimulator:
             self._complete(action.request_id)
 
     def _publish_telemetry(self) -> None:
-        """Publishes at most the newest due telemetry sample."""
+        """Publishes bounded joint-rate and independent 10 Hz motor telemetry."""
         if self.session_id == 0 or self.stream_rate_hz == 0:
             return
         interval_ms = max(10, round(1000 / self.stream_rate_hz))
-        if self.now_ms < self.next_telemetry_ms:
-            return
-        self.telemetry_sequence += 1
-        q_text = ",".join(f"{value:.3f}" for value in self.joint_position_deg)
-        v_text = ",".join(f"{value:.3f}" for value in self.joint_velocity_deg_s)
-        self._emit(f"TEL {self.telemetry_sequence} JOINT_STATE timestamp_ms={self.now_ms} "
-                   f"q_deg={q_text} qd_deg_s={v_text} arm_state={self.arm_state}",
-                   replace_telemetry=True)
-        self.next_telemetry_ms = self.now_ms + interval_ms
+        if self.now_ms >= self.next_telemetry_ms:
+            self.telemetry_sequence += 1
+            q_text = ",".join(f"{value:.3f}" for value in self.joint_position_deg)
+            v_text = ",".join(f"{value:.3f}" for value in self.joint_velocity_deg_s)
+            self._emit(f"TEL {self.telemetry_sequence} JOINT_STATE "
+                       f"timestamp_ms={self.now_ms} q_deg={q_text} "
+                       f"qd_deg_s={v_text} arm_state={self.arm_state}",
+                       replace_telemetry=True,
+                       telemetry_kind="JOINT_STATE")
+            self.next_telemetry_ms = self.now_ms + interval_ms
+        if ("motor" in self.stream_fields.split(",") and
+                self.now_ms >= self.next_motor_telemetry_ms):
+            self.telemetry_sequence += 1
+            enabled_mask = sum(1 << index for index, enabled in
+                               enumerate(self.motor_enabled) if enabled)
+            fault_mask = sum(1 << index for index, fault in
+                              enumerate(self.motor_fault) if fault != "NONE")
+            self._emit(f"TEL {self.telemetry_sequence} MOTOR_STATE "
+                       f"timestamp_ms={self.now_ms} valid_mask=127 "
+                       f"enabled_mask={enabled_mask} fault_mask={fault_mask} "
+                       f"arm_state={self.arm_state}",
+                       replace_telemetry=True,
+                       telemetry_kind="MOTOR_STATE")
+            self.next_motor_telemetry_ms = self.now_ms + 100
 
     def advance(self, milliseconds: int) -> None:
         """Advances deterministic simulated time, motion, telemetry, and watchdog."""
@@ -288,6 +310,7 @@ class AethorHostSimulator:
             self.stream_rate_hz = rate
             self.stream_fields = fields.get("fields", self.stream_fields)
             self.next_telemetry_ms = self.now_ms
+            self.next_motor_telemetry_ms = self.now_ms
             return [f"RSP {request_id} ok rate_hz={rate} fields={self.stream_fields}"]
         if operation == "ALIGN_REFERENCE":
             target = self._parse_vector(fields["q_ref_deg"])

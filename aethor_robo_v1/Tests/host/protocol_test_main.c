@@ -316,6 +316,10 @@ static void test_protocol_engine_query_dispatch(void)
     query_context.joints.position_deg[0] = 12.345F;
     query_context.joints.valid_joint_mask = 0x01U;
     query_context.joints.aligned = 1U;
+    query_context.motor_identity_verified_mask = 0x01U;
+    query_context.motor_mode_verified_mask = 0x01U;
+    query_context.motor_ranges_verified_mask = 0x01U;
+    query_context.motor_version_verified_mask = 0x01U;
     query_context.joints.published_at_us = 9050U;
     protocol_engine_update_query_context(&engine, &query_context);
     request_length = build_request_frame("REQ 18 GET_JPOS",
@@ -335,6 +339,20 @@ static void test_protocol_engine_query_dispatch(void)
     assert(strstr(output_batch.messages[0].data, "status=1,0,0,0,0,0,0") != NULL);
     assert(strstr(output_batch.messages[0].data, "mos_c=42,0,0,0,0,0,0") != NULL);
     assert(strstr(output_batch.messages[0].data, "age_ms=") != NULL);
+    assert(strstr(output_batch.messages[0].data, "startup=1,1,1,1") != NULL);
+
+    request_length = build_request_frame("REQ 139 GET_STATE",
+                                         request_frame,
+                                         sizeof(request_frame));
+    request_frame[request_length - 3U] =
+        (request_frame[request_length - 3U] == '0') ? '1' : '0';
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2250U, &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(strstr(output_batch.messages[0].data, "BAD_CRC") != NULL);
+    assert(protocol_engine_process_line(&engine, "bad-frame\n", 10U,
+                                        2260U, &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
 
     request_length = build_request_frame("REQ 14 GET_DIAG",
                                          request_frame,
@@ -342,6 +360,7 @@ static void test_protocol_engine_query_dispatch(void)
     assert(protocol_engine_process_line(&engine, request_frame, request_length,
                                         2300U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output_batch.messages[0].data, "service_cycles=5") != NULL);
+    assert(strstr(output_batch.messages[0].data, "parse=1,1") != NULL);
 
     memset(&query_context.diagnostics, 0xFF, sizeof(query_context.diagnostics));
     protocol_engine_update_query_context(&engine, &query_context);
@@ -616,6 +635,14 @@ static void test_protocol_engine_move_joints_admission(void)
     assert(command.values[0] > 28.6478F);
     assert(command.values[0] < 28.6480F);
 
+    request_length = build_request_frame("REQ 20 GET_STATE",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2250U, &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "active_request=2") != NULL);
+
     request_length = build_request_frame(
         "REQ 3 MOVE_JOINTS q_deg=0,0,0,0,0,0,0 speed=0.5 mode=POS_VEL",
         request_frame,
@@ -647,9 +674,18 @@ static void test_protocol_engine_move_joints_admission(void)
         result.type = PROTOCOL_COMMAND_MOVE_JOINTS;
         result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
         result.completed_at_us = 3500U;
+        result.auxiliary_values[0] = 2.5F;
         assert(protocol_engine_submit_command_result(&engine, &result) == 1U);
         assert(protocol_engine_pop_result_output(&engine, &output_batch) == 1U);
     }
+    request_length = build_request_frame("REQ 21 GET_DIAG",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        3600U, &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data,
+                  "motion=0,1000,2,2500") != NULL);
     request_length = build_request_frame(
         "REQ 5 MOVE_JOINTS q_deg=0,0,0,0,0,0,0 speed=nan mode=POS_VEL",
         request_frame,

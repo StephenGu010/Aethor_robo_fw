@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import random
 import sys
 import unittest
 
@@ -89,9 +90,11 @@ class AethorHostSimulatorTests(unittest.TestCase):
         self.simulator.advance(100)
         outputs = self.simulator.drain_outputs()
         telemetry = [item for item in outputs if item.startswith("TEL ")]
-        self.assertGreaterEqual(len(telemetry), 1)
-        self.assertLessEqual(len(telemetry), 1)
-        self.assertIn("q_deg=", telemetry[0])
+        self.assertEqual(len(telemetry), 2)
+        self.assertTrue(any("JOINT_STATE" in item and "q_deg=" in item
+                            for item in telemetry))
+        self.assertTrue(any("MOTOR_STATE" in item and "valid_mask=" in item
+                            for item in telemetry))
 
     def test_replay_cache_is_bounded_and_expires(self) -> None:
         """Keeps replay state within 32 entries and expires it after 60 seconds."""
@@ -128,6 +131,42 @@ class AethorHostSimulatorTests(unittest.TestCase):
         bad_crc_outputs = stream_simulator.feed_bytes(
             vectors["byte_stream_cases"][2]["chunks_ascii"][0].encode("ascii"))
         self.assertEqual(bad_crc_outputs, ["ERR 42 BAD_CRC"])
+
+    def test_fragmentation_bad_crc_and_reconnect_stress_is_bounded(self) -> None:
+        """Feeds 2,000 variably fragmented requests across repeated sessions."""
+        random_generator = random.Random(3519)
+        simulator = AethorHostSimulator(boot_id=4321)
+        bad_crc_count = 0
+        response_count = 0
+
+        for request_id in range(1, 2001):
+            operation = (f"REQ {request_id} HELLO client=stress protocol=1"
+                         if request_id % 200 == 1
+                         else f"REQ {request_id} GET_STATE")
+            frame = bytearray(encode_frame(operation))
+            expect_bad_crc = request_id % 37 == 0
+            if expect_bad_crc:
+                frame[-3] = ord("0") if frame[-3] != ord("0") else ord("1")
+            offset = 0
+            outputs: list[str] = []
+            while offset < len(frame):
+                chunk_length = random_generator.randint(1, 17)
+                outputs.extend(simulator.feed_bytes(
+                    bytes(frame[offset:offset + chunk_length])))
+                offset += chunk_length
+            self.assertEqual(len(outputs), 1)
+            if expect_bad_crc:
+                self.assertIn("BAD_CRC", outputs[0])
+                bad_crc_count += 1
+            else:
+                self.assertTrue(outputs[0].startswith("RSP "))
+                response_count += 1
+
+        self.assertEqual(bad_crc_count, 54)
+        self.assertEqual(response_count, 1946)
+        self.assertEqual(simulator.session_id, 10)
+        self.assertEqual(len(simulator._rx_buffer), 0)
+        self.assertLessEqual(len(simulator._replay), 32)
 
 
 if __name__ == "__main__":

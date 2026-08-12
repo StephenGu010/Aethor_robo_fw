@@ -79,6 +79,10 @@ typedef struct
     MotorFeedbackSnapshot motors;
     DiagnosticCounters diagnostics;
     uint64_t timestamp_us;
+    uint8_t motor_identity_verified_mask;
+    uint8_t motor_mode_verified_mask;
+    uint8_t motor_ranges_verified_mask;
+    uint8_t motor_version_verified_mask;
 } ProtocolQueryContext;
 
 /** @brief Identifies one state-changing command accepted by the protocol task. */
@@ -147,12 +151,18 @@ typedef struct
     uint64_t last_valid_request_at_us;
     uint64_t next_telemetry_due_us;
     uint64_t next_motor_telemetry_due_us;
+    uint64_t active_motion_accepted_at_us;
+    uint64_t active_motion_planned_duration_us;
     uint32_t boot_id;
     uint32_t session_id;
     uint32_t next_session_nonce;
     uint32_t telemetry_sequence;
     uint32_t event_sequence;
     uint32_t active_motion_request_id;
+    uint32_t last_motion_actual_duration_ms;
+    uint32_t last_motion_max_following_error_mdeg;
+    uint32_t bad_frame_count;
+    uint32_t bad_crc_count;
     uint8_t recent_write_index;
     volatile uint8_t command_write_sequence;
     volatile uint8_t command_read_sequence;

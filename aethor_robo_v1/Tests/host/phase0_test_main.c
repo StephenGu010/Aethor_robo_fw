@@ -718,6 +718,29 @@ static void test_aethor_app_link_timeout_stops_and_disables(void)
 }
 
 /**
+ * @brief Verifies severe CAN/USB transport faults latch and schedule all-axis disable.
+ */
+static void test_aethor_app_transport_fault_stops_and_disables(void)
+{
+    ArmSnapshot arm_snapshot;
+    CanFrame emergency_frame;
+    uint8_t emergency_count = 0U;
+
+    aethor_app_init(1000U, 8888U);
+    assert(aethor_app_report_transport_fault(0x00000007U, 2000U) == 0U);
+    assert(aethor_app_get_snapshot(&arm_snapshot));
+    assert(arm_snapshot.state == ARM_STATE_FAULT);
+    assert(arm_snapshot.fault == ARM_FAULT_TRANSPORT);
+    assert(arm_snapshot.fault_detail == 0x00000007U);
+    while (aethor_app_pop_emergency_can_frame(&emergency_frame) != 0U)
+    {
+        assert(emergency_frame.data[7] == S3519_MODE_COMMAND_DISABLE);
+        ++emergency_count;
+    }
+    assert(emergency_count == MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES);
+}
+
+/**
  * @brief Runs the Phase 0 configuration and identity test suite.
  * @return Zero when every assertion passes.
  */
@@ -746,6 +769,7 @@ int main(void)
     test_aethor_app_latches_safe_phase0_fault();
     test_aethor_app_reinitializes_deterministically();
     test_aethor_app_link_timeout_stops_and_disables();
+    test_aethor_app_transport_fault_stops_and_disables();
 
     printf("PHASE0_TESTS_PASSED\n");
     return 0;

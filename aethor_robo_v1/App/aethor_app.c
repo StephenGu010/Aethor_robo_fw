@@ -5,6 +5,7 @@
 
 #include "aethor_app.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -43,6 +44,7 @@ typedef struct
     JointMotionCompletion motion_completion;
     CanFrame control_group[ARM_JOINT_COUNT];
     uint64_t deadline_us;
+    float maximum_following_error_deg;
     AethorAppActionState state;
     CanTxPriority priority;
     uint8_t frame_read_index;
@@ -82,10 +84,44 @@ static uint8_t aethor_app_complete_action(ProtocolCommandResultCode code,
     result.code = code;
     result.detail = detail;
     result.completed_at_us = timestamp_us;
+    if (application_action.command.type == PROTOCOL_COMMAND_MOVE_JOINTS)
+    {
+        result.auxiliary_values[0] =
+            application_action.maximum_following_error_deg;
+    }
     memset(&application_action, 0, sizeof(application_action));
     application_last_service_timestamp_us = 0U;
     return protocol_engine_submit_command_result(&application_protocol_engine,
                                                  &result);
+}
+
+/** @brief Accumulates the maximum absolute trajectory-following error in degrees. */
+static void aethor_app_update_following_error(
+    const float feedback_position_rad[ARM_JOINT_COUNT],
+    uint64_t timestamp_us)
+{
+    JointMotionSample desired_sample;
+    uint8_t joint_index;
+
+    if ((feedback_position_rad == NULL) ||
+        (joint_motion_sample(&application_action.motion_plan,
+                             timestamp_us,
+                             &desired_sample) != JOINT_MOTION_STATUS_OK))
+    {
+        return;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        float error_deg = fabsf(desired_sample.position_rad[joint_index] -
+                                feedback_position_rad[joint_index]) /
+                          AETHOR_APP_DEG_TO_RAD;
+
+        if (isfinite(error_deg) &&
+            (error_deg > application_action.maximum_following_error_deg))
+        {
+            application_action.maximum_following_error_deg = error_deg;
+        }
+    }
 }
 
 /** @brief Converts one coherent public joint snapshot back to SI radians. */
@@ -268,6 +304,7 @@ static uint8_t aethor_app_selected_motors_are_fault_free(
 static void aethor_app_update_protocol_context(uint64_t timestamp_us)
 {
     ProtocolQueryContext query_context;
+    uint8_t joint_index;
 
     memset(&query_context, 0, sizeof(query_context));
     (void)arm_controller_get_snapshot(&application_controller,
@@ -280,6 +317,34 @@ static void aethor_app_update_protocol_context(uint64_t timestamp_us)
                                      &query_context.motors);
     (void)diagnostics_get_counters(&application_diagnostics,
                                    &query_context.diagnostics);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+        uint16_t verified_fields = application_motor_runtime.discovery
+                                       .results[joint_index]
+                                       .verified_fields_mask;
+
+        if ((verified_fields & MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK) ==
+            MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK)
+        {
+            query_context.motor_identity_verified_mask |= joint_bit;
+        }
+        if ((verified_fields & MOTOR_DISCOVERY_MODE_FIELDS_MASK) ==
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK)
+        {
+            query_context.motor_mode_verified_mask |= joint_bit;
+        }
+        if ((verified_fields & MOTOR_DISCOVERY_RANGE_FIELDS_MASK) ==
+            MOTOR_DISCOVERY_RANGE_FIELDS_MASK)
+        {
+            query_context.motor_ranges_verified_mask |= joint_bit;
+        }
+        if ((verified_fields & MOTOR_DISCOVERY_VERSION_FIELDS_MASK) ==
+            MOTOR_DISCOVERY_VERSION_FIELDS_MASK)
+        {
+            query_context.motor_version_verified_mask |= joint_bit;
+        }
+    }
     query_context.timestamp_us = timestamp_us;
     protocol_engine_update_query_context(&application_protocol_engine,
                                          &query_context);
@@ -1061,6 +1126,8 @@ static uint8_t aethor_app_service_active_action(
                                                   feedback_position_rad,
                                                   feedback_velocity_rad_s) != 0U))
         {
+            aethor_app_update_following_error(feedback_position_rad,
+                                              timestamp_us);
             (void)joint_motion_update_completion(
                 &application_action.motion_plan,
                 arm_config_get_production(),

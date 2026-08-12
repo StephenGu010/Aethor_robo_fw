@@ -858,13 +858,14 @@ static ProtocolEngineStatus protocol_engine_handle_get_state(
     return protocol_engine_append_format(
         output_batch,
         PROTOCOL_OUTPUT_QUERY,
-        "RSP %lu ok state=%s aligned=%u enabled=%u moving=%u mode=%s active_request=0 fault=%s feedback_age_max_ms=%lu",
+        "RSP %lu ok state=%s aligned=%u enabled=%u moving=%u mode=%s active_request=%lu fault=%s feedback_age_max_ms=%lu",
         (unsigned long)request->request_id,
         protocol_engine_arm_state_text(engine->query_context.arm.state),
         engine->query_context.arm.aligned,
         engine->query_context.arm.enabled,
         engine->query_context.arm.moving,
         protocol_engine_control_mode_text(engine->query_context.arm.control_mode),
+        (unsigned long)engine->active_motion_request_id,
         protocol_engine_arm_fault_text(engine->query_context.arm.fault),
         (unsigned long)feedback_age_max_ms);
 }
@@ -1056,6 +1057,18 @@ static ProtocolEngineStatus protocol_engine_handle_get_motors(
             return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
         }
     }
+    if (protocol_engine_append_text(
+            body,
+            sizeof(body),
+            &body_length,
+            " startup=%u,%u,%u,%u",
+            engine->query_context.motor_identity_verified_mask,
+            engine->query_context.motor_mode_verified_mask,
+            engine->query_context.motor_ranges_verified_mask,
+            engine->query_context.motor_version_verified_mask) == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
     return protocol_engine_append_body(output_batch, PROTOCOL_OUTPUT_QUERY, body);
 }
 
@@ -1077,7 +1090,7 @@ static ProtocolEngineStatus protocol_engine_handle_get_diag(
     return protocol_engine_append_format(
         output_batch,
         PROTOCOL_OUTPUT_QUERY,
-        "RSP %lu ok control_hz=250 service_cycles=%lu p_us=%lu,%lu,%lu miss=%lu,%lu can=%lu,%lu,%lu,%lu,%lu,%lu,%lu skew_us=%lu usb=%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu event_ov=%lu config_fail=%lu stack=%lu heap=%lu",
+        "RSP %lu ok control_hz=250 service_cycles=%lu p_us=%lu,%lu,%lu miss=%lu,%lu can=%lu,%lu,%lu,%lu,%lu,%lu,%lu skew_us=%lu usb=%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu parse=%lu,%lu motion=%lu,%lu,%lu,%lu event_ov=%lu config_fail=%lu stack=%lu heap=%lu",
         (unsigned long)request->request_id,
         (unsigned long)diagnostics->service_cycles,
         (unsigned long)diagnostics->control_period_last_us,
@@ -1103,6 +1116,13 @@ static ProtocolEngineStatus protocol_engine_handle_get_diag(
         (unsigned long)diagnostics->usb_high_queue_full_count,
         (unsigned long)diagnostics->usb_transmit_busy_count,
         (unsigned long)diagnostics->usb_transmit_error_count,
+        (unsigned long)engine->bad_frame_count,
+        (unsigned long)engine->bad_crc_count,
+        (unsigned long)engine->active_motion_request_id,
+        (unsigned long)((engine->active_motion_planned_duration_us + 999ULL) /
+                        1000ULL),
+        (unsigned long)engine->last_motion_actual_duration_ms,
+        (unsigned long)engine->last_motion_max_following_error_mdeg,
         (unsigned long)diagnostics->event_overwrite_count,
         (unsigned long)diagnostics->config_validation_failures,
         (unsigned long)diagnostics->minimum_stack_words,
@@ -1715,6 +1735,8 @@ static ProtocolEngineStatus protocol_engine_handle_move_joints(
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
     engine->active_motion_request_id = request->request_id;
+    engine->active_motion_accepted_at_us = timestamp_us;
+    engine->active_motion_planned_duration_us = motion_plan.duration_us;
     return protocol_engine_append_format(
         output_batch,
         PROTOCOL_OUTPUT_HIGH_PRIORITY,
@@ -2012,6 +2034,21 @@ uint8_t protocol_engine_pop_result_output(
     if ((result.type == PROTOCOL_COMMAND_MOVE_JOINTS) &&
         (result.request_id == engine->active_motion_request_id))
     {
+        uint64_t actual_duration_us =
+            (result.completed_at_us >= engine->active_motion_accepted_at_us)
+                ? (result.completed_at_us - engine->active_motion_accepted_at_us)
+                : 0U;
+        float maximum_error_deg = result.auxiliary_values[0];
+
+        engine->last_motion_actual_duration_ms =
+            (actual_duration_us > ((uint64_t)UINT32_MAX * 1000ULL))
+                ? UINT32_MAX
+                : (uint32_t)((actual_duration_us + 999ULL) / 1000ULL);
+        engine->last_motion_max_following_error_mdeg =
+            ((maximum_error_deg >= 0.0F) &&
+             (maximum_error_deg < ((float)UINT32_MAX / 1000.0F)))
+                ? (uint32_t)(maximum_error_deg * 1000.0F + 0.5F)
+                : UINT32_MAX;
         engine->active_motion_request_id = 0U;
     }
 
@@ -2418,10 +2455,18 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
         if (parse_status == ASCII_PROTOCOL_STATUS_BAD_CRC)
         {
             error_code = "BAD_CRC";
+            if (engine->bad_crc_count < UINT32_MAX)
+            {
+                ++engine->bad_crc_count;
+            }
         }
         else if (parse_status == ASCII_PROTOCOL_STATUS_LINE_TOO_LONG)
         {
             error_code = "LINE_TOO_LONG";
+        }
+        else if (engine->bad_frame_count < UINT32_MAX)
+        {
+            ++engine->bad_frame_count;
         }
         (void)protocol_engine_append_format(output_batch,
                                             PROTOCOL_OUTPUT_HIGH_PRIORITY,

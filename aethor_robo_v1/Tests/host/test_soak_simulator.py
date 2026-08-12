@@ -45,8 +45,9 @@ class AethorSimulatorSoakTests(unittest.TestCase):
                 next_request_id += 1
 
         self.assertEqual(simulator.now_ms, 8 * 60 * 60 * 1000)
-        self.assertEqual(telemetry_samples, 8 * 60 * 60 * 50)
-        self.assertLessEqual(maximum_pending_outputs, 1)
+        self.assertEqual(telemetry_samples,
+                         8 * 60 * 60 * (50 + 10))
+        self.assertLessEqual(maximum_pending_outputs, 2)
         self.assertLessEqual(len(simulator._replay), 32)
         self.assertEqual(simulator.arm_state, "UNALIGNED")
         self.assertFalse(any(simulator.motor_enabled))

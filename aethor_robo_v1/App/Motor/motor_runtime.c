@@ -87,6 +87,15 @@ static MotorRuntimeStatus motor_runtime_accept_parameter_response(
 {
     S3519ParameterResponse response;
     MotorDiscoveryStatus discovery_status;
+    uint8_t response_joint_index = runtime->discovery.current_joint_index;
+    MotorObject *motor;
+
+    if (response_joint_index >= ARM_JOINT_COUNT)
+    {
+        ++runtime->rejected_parameter_response_count;
+        return MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR;
+    }
+    motor = &runtime->bank.motors[response_joint_index];
 
     if (s3519_decode_parameter_response(frame, &response) != S3519_CODEC_STATUS_OK)
     {
@@ -94,6 +103,7 @@ static MotorRuntimeStatus motor_runtime_accept_parameter_response(
         return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
     }
 
+    motor->state = MOTOR_LIFECYCLE_DISCOVERING;
     discovery_status = motor_discovery_accept_response(&runtime->discovery,
                                                         frame->identifier,
                                                         &response);
@@ -103,6 +113,14 @@ static MotorRuntimeStatus motor_runtime_accept_parameter_response(
         return motor_runtime_map_discovery_status(discovery_status);
     }
 
+    motor->parameter_valid_mask =
+        runtime->discovery.results[response_joint_index].verified_fields_mask;
+    motor->parameter_source = MOTOR_PARAMETER_SOURCE_DISCOVERED;
+    if (motor->parameter_valid_mask == MOTOR_DISCOVERY_ALL_FIELDS_MASK)
+    {
+        motor->configuration_consistent = 1U;
+        motor->state = MOTOR_LIFECYCLE_DISABLED;
+    }
     ++runtime->accepted_parameter_response_count;
     return MOTOR_RUNTIME_STATUS_OK;
 }
@@ -177,6 +195,10 @@ static MotorRuntimeStatus motor_runtime_accept_control_feedback(
         return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
     }
 
+    if (decoded_feedback.state != 0U)
+    {
+        runtime->bank.motors[joint_index].state = MOTOR_LIFECYCLE_FAULT;
+    }
     ++runtime->accepted_feedback_count;
     return MOTOR_RUNTIME_STATUS_OK;
 }

@@ -54,6 +54,8 @@ static void test_motor_bank_uses_frozen_seven_axis_mapping(void)
         assert(bank.motors[joint_index].esc_id == (uint16_t)(joint_index + 0x01U));
         assert(bank.motors[joint_index].master_id == (uint16_t)(joint_index + 0x11U));
         assert(bank.motors[joint_index].feedback_valid == 0U);
+        assert(bank.motors[joint_index].state == MOTOR_LIFECYCLE_ABSENT);
+        assert(bank.motors[joint_index].configuration_consistent == 0U);
     }
 }
 
@@ -507,6 +509,14 @@ static void test_motor_runtime_routes_discovery_and_feedback(void)
                                               timestamp_us,
                                               &(CanFrame){0}) ==
            MOTOR_RUNTIME_STATUS_DISCOVERY_COMPLETE);
+    for (response_index = 0U; response_index < ARM_JOINT_COUNT; ++response_index)
+    {
+        assert(runtime.bank.motors[response_index].state ==
+               MOTOR_LIFECYCLE_DISABLED);
+        assert(runtime.bank.motors[response_index].configuration_consistent != 0U);
+        assert(runtime.bank.motors[response_index].parameter_valid_mask ==
+               MOTOR_DISCOVERY_ALL_FIELDS_MASK);
+    }
 
     {
         static const uint8_t feedback_payload[8] = {

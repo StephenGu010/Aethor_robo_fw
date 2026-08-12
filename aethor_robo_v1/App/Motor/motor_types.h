@@ -21,6 +21,30 @@ typedef enum
 } MotorBusState;
 
 /**
+ * @brief Describes the independently tracked lifecycle of one motor axis.
+ */
+typedef enum
+{
+    MOTOR_LIFECYCLE_ABSENT = 0,
+    MOTOR_LIFECYCLE_DISCOVERING,
+    MOTOR_LIFECYCLE_DISABLED,
+    MOTOR_LIFECYCLE_ENABLED,
+    MOTOR_LIFECYCLE_MOVING,
+    MOTOR_LIFECYCLE_HOLDING,
+    MOTOR_LIFECYCLE_FAULT
+} MotorLifecycleState;
+
+/**
+ * @brief Identifies where the active motor parameters were obtained.
+ */
+typedef enum
+{
+    MOTOR_PARAMETER_SOURCE_UNKNOWN = 0,
+    MOTOR_PARAMETER_SOURCE_STATIC_CONFIG,
+    MOTOR_PARAMETER_SOURCE_DISCOVERED
+} MotorParameterSource;
+
+/**
  * @brief Stores one decoded motor feedback sample as a value object.
  */
 typedef struct

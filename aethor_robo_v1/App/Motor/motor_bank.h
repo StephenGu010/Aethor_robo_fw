@@ -31,10 +31,19 @@ typedef enum
 typedef struct
 {
     MotorJointFeedback feedback;
+    float target_position_rad;
+    float target_velocity_rad_s;
+    uint32_t active_request_id;
     uint16_t esc_id;
     uint16_t master_id;
+    uint16_t parameter_valid_mask;
+    MotorLifecycleState state;
+    MotorParameterSource parameter_source;
     uint8_t joint_index;
     uint8_t feedback_valid;
+    uint8_t target_valid;
+    uint8_t at_target;
+    uint8_t configuration_consistent;
 } MotorObject;
 
 /**

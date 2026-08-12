@@ -54,7 +54,7 @@ osThreadId CanRxTaskHandle;
 uint32_t canRxTaskBuffer[ 384 ];
 osStaticThreadDef_t canRxTaskControlBlock;
 osThreadId ProtocolTaskHandle;
-uint32_t protocolTaskBuffer[ 512 ];
+uint32_t protocolTaskBuffer[ 768 ];
 osStaticThreadDef_t protocolTaskControlBlock;
 osThreadId UsbTxTaskHandle;
 uint32_t usbTxTaskBuffer[ 384 ];
@@ -71,6 +71,7 @@ osStaticThreadDef_t diagnosticsTaskControlBlock;
 static void NotifyCanRxTaskFromIsr(void);
 static void NotifyProtocolTaskFromIsr(void);
 static void NotifyUsbTxTaskFromIsr(void);
+static void QueueProtocolOutputBatch(const ProtocolOutputBatch *outputBatch);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -136,7 +137,7 @@ void MX_FREERTOS_Init(void) {
   CanRxTaskHandle = osThreadCreate(osThread(CanRxTask), NULL);
 
   /* definition and creation of ProtocolTask */
-  osThreadStaticDef(ProtocolTask, StartProtocolTask, osPriorityAboveNormal, 0, 512, protocolTaskBuffer, &protocolTaskControlBlock);
+  osThreadStaticDef(ProtocolTask, StartProtocolTask, osPriorityAboveNormal, 0, 768, protocolTaskBuffer, &protocolTaskControlBlock);
   ProtocolTaskHandle = osThreadCreate(osThread(ProtocolTask), NULL);
 
   /* definition and creation of UsbTxTask */
@@ -192,6 +193,7 @@ void StartArmControlTask(void const * argument)
     {
       (void)stm32_platform_can_submit(pendingPriority, &pendingFrame);
     }
+    (void)aethor_app_protocol_watchdog_expired(timestampUs);
     (void)stm32_platform_can_service_tx(ARM_JOINT_COUNT);
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(4U));
   }
@@ -242,12 +244,34 @@ void StartCanRxTask(void const * argument)
 /* USER CODE END Header_StartProtocolTask */
 void StartProtocolTask(void const * argument)
 {
+  char protocolLine[USB_CDC_STREAM_LINE_CAPACITY];
+  ProtocolOutputBatch outputBatch;
+
   MX_USB_DEVICE_Init();
   (void)argument;
   for(;;)
   {
+    UsbCdcStreamStatus lineStatus;
+
     (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    /* Protocol dispatch is connected in the lifecycle slice. */
+    do
+    {
+      uint16_t lineLength = 0U;
+
+      lineStatus = stm32_platform_usb_next_line(protocolLine,
+                                                sizeof(protocolLine),
+                                                &lineLength);
+      if (lineStatus == USB_CDC_STREAM_STATUS_OK)
+      {
+        (void)aethor_app_process_protocol_line(
+            protocolLine,
+            lineLength,
+            (uint64_t)HAL_GetTick() * 1000ULL,
+            &outputBatch);
+        QueueProtocolOutputBatch(&outputBatch);
+      }
+    } while ((lineStatus == USB_CDC_STREAM_STATUS_OK) ||
+             (lineStatus == USB_CDC_STREAM_STATUS_LINE_TOO_LONG));
   }
 }
 
@@ -340,6 +364,40 @@ static void NotifyUsbTxTaskFromIsr(void)
   {
     vTaskNotifyGiveFromISR((TaskHandle_t)UsbTxTaskHandle, &higherPriorityTaskWoken);
     portYIELD_FROM_ISR(higherPriorityTaskWoken);
+  }
+}
+
+/** @brief Routes encoded protocol outputs into their bounded USB priority queues. */
+static void QueueProtocolOutputBatch(const ProtocolOutputBatch *outputBatch)
+{
+  uint8_t messageIndex;
+
+  configASSERT(outputBatch != NULL);
+  for (messageIndex = 0U; messageIndex < outputBatch->count; ++messageIndex)
+  {
+    const ProtocolOutputMessage *message = &outputBatch->messages[messageIndex];
+
+    if (message->priority == PROTOCOL_OUTPUT_HIGH_PRIORITY)
+    {
+      (void)stm32_platform_usb_queue_high_priority(
+          (const uint8_t *)message->data,
+          message->length);
+    }
+    else if (message->priority == PROTOCOL_OUTPUT_QUERY)
+    {
+      (void)stm32_platform_usb_queue_query((const uint8_t *)message->data,
+                                           message->length);
+    }
+    else
+    {
+      (void)stm32_platform_usb_queue_telemetry(
+          (const uint8_t *)message->data,
+          message->length);
+    }
+  }
+  if (UsbTxTaskHandle != NULL)
+  {
+    (void)xTaskNotifyGive((TaskHandle_t)UsbTxTaskHandle);
   }
 }
 

@@ -129,6 +129,12 @@ function Invoke-Phase0ArchitectureCheck {
         -Pattern 'aethor_app_receive_can_frame\s*\(' `
         -Message 'CanRxTask does not route received frames to the motor runtime.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'stm32_platform_usb_next_line\s*\(' `
+        -Message 'ProtocolTask does not drain complete USB lines in task context.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_process_protocol_line\s*\(' `
+        -Message 'ProtocolTask does not dispatch parsed requests to the protocol engine.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'pdMS_TO_TICKS\s*\(\s*4U\s*\)' `
         -Message 'ArmControlTask period is not 4 ms.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `

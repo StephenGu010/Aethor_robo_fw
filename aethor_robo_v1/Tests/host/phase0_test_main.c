@@ -327,7 +327,7 @@ static void test_aethor_app_latches_safe_phase0_fault(void)
                                      &discovery_priority) ==
            MOTOR_RUNTIME_STATUS_NOT_INITIALIZED);
 
-    aethor_app_init(1000ULL);
+    aethor_app_init(1000ULL, 1234U);
     assert(aethor_app_get_snapshot(&snapshot));
     assert(snapshot.state == ARM_STATE_BOOT);
     assert(aethor_app_next_can_frame(1000ULL,
@@ -362,7 +362,7 @@ static void test_aethor_app_reinitializes_deterministically(void)
     DiagnosticCounters counters;
 
     aethor_app_service(4000ULL);
-    aethor_app_init(5000ULL);
+    aethor_app_init(5000ULL, 5678U);
 
     assert(aethor_app_get_snapshot(&snapshot));
     assert(snapshot.state == ARM_STATE_BOOT);

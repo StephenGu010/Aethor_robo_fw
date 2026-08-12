@@ -1,0 +1,30 @@
+PRD Phase 0 memory map comparison
+Recorded: 2026-08-12 Asia/Shanghai
+
+Metric                         Baseline       Phase 0       Delta
+Total RO Size                  45,800 B       27,612 B     -18,188 B
+Total RW Size                  31,496 B       35,040 B      +3,544 B
+Total ROM Size                 46,004 B       27,816 B     -18,188 B
+FreeRTOS heap_4 ucHeap         15,360 B       15,360 B           0 B
+ARM startup Heap_Mem              512 B          512 B           0 B
+
+Phase 0 program-size line:
+Code=26,348 B; RO-data=1,264 B; RW-data=416 B; ZI-data=34,624 B.
+
+Verified static objects in the Phase 0 map:
+- defaultTaskBuffer: 2,048 B
+- defaultTaskControlBlock: 84 B
+- aethor_app.o .bss: 1,616 B
+  - application_diagnostics: 1,584 B
+  - application_controller: 32 B
+
+Interpretation:
+- The 3,544-byte net RW increase is bounded and is primarily explained by the
+  new static RTOS task storage and fixed-capacity application diagnostics/state,
+  offset by removal of legacy production-target objects.
+- The compiled FreeRTOS heap reservation did not grow. Retaining heap_4 for
+  middleware compatibility does not authorize App runtime allocation.
+- The 18,188-byte RO/ROM reduction is consistent with excluding the legacy
+  motor/control command chain from the Phase 0 Keil target.
+- The architecture guard independently scans App for dynamic allocation calls.
+- Map evidence describes the linked image only and is not hardware evidence.

@@ -1,0 +1,29 @@
+PRD Phase 0 Keil build evidence
+Recorded: 2026-08-12 Asia/Shanghai
+Tool: E:\keil\UV4\UV4.exe, uVision 5.43.1.0
+Compiler: ARMCC 5.05.0.106
+Project: MDK-ARM\CtrBoard-H7_FDCAN.uvprojx
+Log: MDK-ARM\phase00-final.log
+
+Build command form:
+E:\keil\UV4\UV4.exe -b .\MDK-ARM\CtrBoard-H7_FDCAN.uvprojx -j0 -o .\MDK-ARM\phase00-final.log
+
+Verified result:
+Program Size: Code=26348 RO-data=1264 RW-data=416 ZI-data=34624
+CtrBoard-H7_FDCAN.axf - 0 Error(s), 0 Warning(s).
+Build Time Elapsed: 00:00:27
+
+Artifacts:
+- MDK-ARM\CtrBoard-H7_FDCAN\CtrBoard-H7_FDCAN.axf
+  1,753,140 bytes; modified 2026-08-12 18:00:28
+- MDK-ARM\CtrBoard-H7_FDCAN\CtrBoard-H7_FDCAN.hex
+  78,290 bytes; modified 2026-08-12 18:00:28
+- MDK-ARM\CtrBoard-H7_FDCAN\CtrBoard-H7_FDCAN.map
+  420,926 bytes; modified 2026-08-12 18:00:28
+
+The map references aethor_app_init from main.o and aethor_app_service from
+freertos.o. It also contains aethor_app.o, arm_config.o, build_info.o,
+arm_controller.o, and diagnostics.o.
+
+Boundary: successful compilation and linking do not prove that this image has
+passed USB enumeration, CAN traffic, motor power, or mechanical commissioning.

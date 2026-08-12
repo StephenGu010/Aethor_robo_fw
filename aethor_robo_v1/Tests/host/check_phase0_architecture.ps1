@@ -146,6 +146,12 @@ function Invoke-Phase0ArchitectureCheck {
         exit 1
     }
 
+    Write-Host '[PASS] App sources contain no dynamic allocation calls.'
+    Write-Host '[PASS] App business layers do not include platform headers.'
+    Write-Host '[PASS] App sources expose no executable motor commands.'
+    Write-Host '[PASS] CubeMX retains the static default task and USER_KEY label.'
+    Write-Host '[PASS] main.c and freertos.c use the Phase 0 application entry.'
+    Write-Host '[PASS] Keil compiles one copy of each required source and no legacy controller.'
     Write-Host '[PASS] Phase 0 architecture contracts are satisfied.'
 }
 

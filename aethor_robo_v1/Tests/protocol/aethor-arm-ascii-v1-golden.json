@@ -1,0 +1,61 @@
+{
+  "protocol": "aethor-arm-ascii-v1",
+  "crc": "CRC-16/CCITT-FALSE",
+  "vectors": [
+    {
+      "name": "get_jpos",
+      "body": "REQ 42 GET_JPOS",
+      "crc16": "6B48",
+      "expected_status": "OK",
+      "request_id": 42,
+      "operation": "GET_JPOS",
+      "field_count": 0
+    },
+    {
+      "name": "set_stream",
+      "body": "REQ 43 SET_STREAM rate_hz=50 fields=jpos,jvel,state,motor",
+      "crc16": "847F",
+      "expected_status": "OK",
+      "request_id": 43,
+      "operation": "SET_STREAM",
+      "field_count": 2
+    },
+    {
+      "name": "move_joints",
+      "body": "REQ 44 MOVE_JOINTS q_deg=0.000,-15.000,30.000,0.000,20.000,0.000,5.000 speed=0.200 mode=MIT",
+      "crc16": "29A0",
+      "expected_status": "OK",
+      "request_id": 44,
+      "operation": "MOVE_JOINTS",
+      "field_count": 3
+    },
+    {
+      "name": "hello_crlf",
+      "body": "REQ 1 HELLO client=aethor-studio-v2 protocol=1",
+      "crc16": "1D7E",
+      "expected_status": "OK",
+      "request_id": 1,
+      "operation": "HELLO",
+      "field_count": 2,
+      "line_ending": "CRLF"
+    },
+    {
+      "name": "bad_crc",
+      "body": "REQ 42 GET_JPOS",
+      "crc16": "0000",
+      "expected_status": "BAD_CRC",
+      "request_id": 42,
+      "operation": "",
+      "field_count": 0
+    },
+    {
+      "name": "double_space",
+      "body": "REQ 8 GET_STATE  ",
+      "crc16": "E603",
+      "expected_status": "BAD_FRAME",
+      "request_id": 8,
+      "operation": "",
+      "field_count": 0
+    }
+  ]
+}

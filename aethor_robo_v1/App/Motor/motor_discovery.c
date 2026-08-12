@@ -13,6 +13,12 @@ static const S3519Register discovery_registers[MOTOR_DISCOVERY_REGISTER_COUNT] =
     S3519_REGISTER_MASTER_ID,
     S3519_REGISTER_ESC_ID,
     S3519_REGISTER_CONTROL_MODE,
+    S3519_REGISTER_ACCELERATION,
+    S3519_REGISTER_DECELERATION,
+    S3519_REGISTER_MAXIMUM_SPEED,
+    S3519_REGISTER_HARDWARE_VERSION,
+    S3519_REGISTER_SOFTWARE_VERSION,
+    S3519_REGISTER_SUB_VERSION,
     S3519_REGISTER_POSITION_RANGE,
     S3519_REGISTER_VELOCITY_RANGE,
     S3519_REGISTER_TORQUE_RANGE
@@ -56,10 +62,34 @@ static MotorDiscoveryStatus motor_discovery_store_response(
         motor_discovery_current_configuration(discovery);
     MotorDiscoveryResult *result = &discovery->results[discovery->current_joint_index];
     S3519Register register_address = discovery_registers[discovery->current_register_index];
-    uint8_t field_bit = (uint8_t)(1U << discovery->current_register_index);
+    uint16_t field_bit = (uint16_t)(1U << discovery->current_register_index);
 
     switch (register_address)
     {
+        case S3519_REGISTER_ACCELERATION:
+            if (!isfinite(response->float_value) || (response->float_value <= 0.0F))
+            {
+                return motor_discovery_fail(discovery, MOTOR_DISCOVERY_STATUS_BAD_VALUE);
+            }
+            result->acceleration_rad_s2 = response->float_value;
+            break;
+
+        case S3519_REGISTER_DECELERATION:
+            if (!isfinite(response->float_value) || (response->float_value <= 0.0F))
+            {
+                return motor_discovery_fail(discovery, MOTOR_DISCOVERY_STATUS_BAD_VALUE);
+            }
+            result->deceleration_rad_s2 = response->float_value;
+            break;
+
+        case S3519_REGISTER_MAXIMUM_SPEED:
+            if (!isfinite(response->float_value) || (response->float_value <= 0.0F))
+            {
+                return motor_discovery_fail(discovery, MOTOR_DISCOVERY_STATUS_BAD_VALUE);
+            }
+            result->maximum_speed_rad_s = response->float_value;
+            break;
+
         case S3519_REGISTER_MASTER_ID:
             result->observed_master_id = response->raw_value;
             if (response->raw_value != joint_configuration->master_id)
@@ -67,6 +97,18 @@ static MotorDiscoveryStatus motor_discovery_store_response(
                 return motor_discovery_fail(discovery,
                                             MOTOR_DISCOVERY_STATUS_CONFIG_MISMATCH);
             }
+            break;
+
+        case S3519_REGISTER_HARDWARE_VERSION:
+            result->hardware_version = response->raw_value;
+            break;
+
+        case S3519_REGISTER_SOFTWARE_VERSION:
+            result->software_version = response->raw_value;
+            break;
+
+        case S3519_REGISTER_SUB_VERSION:
+            result->sub_version = response->raw_value;
             break;
 
         case S3519_REGISTER_ESC_ID:

@@ -233,7 +233,7 @@ static uint32_t float_to_raw_register(float value)
 }
 
 /**
- * @brief Verifies discovery reads six volatile fields for each of seven motors.
+ * @brief Verifies discovery reads identity, tuning, ranges, and versions for seven motors.
  */
 static void test_motor_discovery_verifies_every_joint(void)
 {
@@ -241,6 +241,12 @@ static void test_motor_discovery_verifies_every_joint(void)
         S3519_REGISTER_MASTER_ID,
         S3519_REGISTER_ESC_ID,
         S3519_REGISTER_CONTROL_MODE,
+        S3519_REGISTER_ACCELERATION,
+        S3519_REGISTER_DECELERATION,
+        S3519_REGISTER_MAXIMUM_SPEED,
+        S3519_REGISTER_HARDWARE_VERSION,
+        S3519_REGISTER_SOFTWARE_VERSION,
+        S3519_REGISTER_SUB_VERSION,
         S3519_REGISTER_POSITION_RANGE,
         S3519_REGISTER_VELOCITY_RANGE,
         S3519_REGISTER_TORQUE_RANGE
@@ -273,6 +279,18 @@ static void test_motor_discovery_verifies_every_joint(void)
             response.register_address = (uint8_t)expected_registers[register_index];
             switch (expected_registers[register_index])
             {
+                case S3519_REGISTER_ACCELERATION:
+                    response.raw_value = float_to_raw_register(30.0F);
+                    response.float_value = 30.0F;
+                    break;
+                case S3519_REGISTER_DECELERATION:
+                    response.raw_value = float_to_raw_register(25.0F);
+                    response.float_value = 25.0F;
+                    break;
+                case S3519_REGISTER_MAXIMUM_SPEED:
+                    response.raw_value = float_to_raw_register(20.0F);
+                    response.float_value = 20.0F;
+                    break;
                 case S3519_REGISTER_MASTER_ID:
                     response.raw_value = (uint32_t)(joint_index + 0x11U);
                     break;
@@ -281,6 +299,15 @@ static void test_motor_discovery_verifies_every_joint(void)
                     break;
                 case S3519_REGISTER_CONTROL_MODE:
                     response.raw_value = 2U;
+                    break;
+                case S3519_REGISTER_HARDWARE_VERSION:
+                    response.raw_value = 0x00010002U;
+                    break;
+                case S3519_REGISTER_SOFTWARE_VERSION:
+                    response.raw_value = 0x00030004U;
+                    break;
+                case S3519_REGISTER_SUB_VERSION:
+                    response.raw_value = 0x00000005U;
                     break;
                 case S3519_REGISTER_POSITION_RANGE:
                     response.raw_value = float_to_raw_register(12.5F);
@@ -304,6 +331,13 @@ static void test_motor_discovery_verifies_every_joint(void)
                                                     &response) == MOTOR_DISCOVERY_STATUS_OK);
             timestamp_us += 1000U;
         }
+
+        assert(discovery.results[joint_index].acceleration_rad_s2 == 30.0F);
+        assert(discovery.results[joint_index].deceleration_rad_s2 == 25.0F);
+        assert(discovery.results[joint_index].maximum_speed_rad_s == 20.0F);
+        assert(discovery.results[joint_index].hardware_version == 0x00010002U);
+        assert(discovery.results[joint_index].software_version == 0x00030004U);
+        assert(discovery.results[joint_index].sub_version == 0x00000005U);
     }
 
     assert(discovery.state == MOTOR_DISCOVERY_STATE_COMPLETE);

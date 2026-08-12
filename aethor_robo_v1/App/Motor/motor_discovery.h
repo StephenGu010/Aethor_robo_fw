@@ -11,10 +11,10 @@
 #include "arm_config.h"
 #include "s3519_codec.h"
 
-#define MOTOR_DISCOVERY_REGISTER_COUNT (6U)
+#define MOTOR_DISCOVERY_REGISTER_COUNT (12U)
 #define MOTOR_DISCOVERY_REQUEST_TIMEOUT_US (20000ULL)
 #define MOTOR_DISCOVERY_MAX_ATTEMPTS (4U)
-#define MOTOR_DISCOVERY_ALL_FIELDS_MASK (0x3FU)
+#define MOTOR_DISCOVERY_ALL_FIELDS_MASK (0x0FFFU)
 
 /**
  * @brief Identifies the progress of the read-only discovery process.
@@ -51,10 +51,16 @@ typedef enum
 typedef struct
 {
     S3519Ranges ranges;
+    float acceleration_rad_s2;
+    float deceleration_rad_s2;
+    float maximum_speed_rad_s;
     uint32_t observed_master_id;
     uint32_t observed_esc_id;
     uint32_t observed_control_mode;
-    uint8_t verified_fields_mask;
+    uint32_t hardware_version;
+    uint32_t software_version;
+    uint32_t sub_version;
+    uint16_t verified_fields_mask;
 } MotorDiscoveryResult;
 
 /**

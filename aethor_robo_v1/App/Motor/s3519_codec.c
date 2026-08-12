@@ -51,12 +51,18 @@ static uint8_t s3519_mode_command_is_valid(S3519ModeCommand command)
  */
 static uint8_t s3519_register_is_valid(S3519Register register_address)
 {
-    return (uint8_t)((register_address == S3519_REGISTER_MASTER_ID) ||
+    return (uint8_t)((register_address == S3519_REGISTER_ACCELERATION) ||
+                     (register_address == S3519_REGISTER_DECELERATION) ||
+                     (register_address == S3519_REGISTER_MAXIMUM_SPEED) ||
+                     (register_address == S3519_REGISTER_MASTER_ID) ||
                      (register_address == S3519_REGISTER_ESC_ID) ||
                      (register_address == S3519_REGISTER_CONTROL_MODE) ||
+                     (register_address == S3519_REGISTER_HARDWARE_VERSION) ||
+                     (register_address == S3519_REGISTER_SOFTWARE_VERSION) ||
                      (register_address == S3519_REGISTER_POSITION_RANGE) ||
                      (register_address == S3519_REGISTER_VELOCITY_RANGE) ||
-                     (register_address == S3519_REGISTER_TORQUE_RANGE));
+                     (register_address == S3519_REGISTER_TORQUE_RANGE) ||
+                     (register_address == S3519_REGISTER_SUB_VERSION));
 }
 
 /**

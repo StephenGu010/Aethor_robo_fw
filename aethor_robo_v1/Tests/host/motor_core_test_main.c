@@ -209,6 +209,7 @@ static void test_motor_runtime_switches_mode_with_readback(void)
     assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
            MOTOR_RUNTIME_STATUS_OK);
     runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+    runtime.discovery.verified_joint_mask = 0x7FU;
     assert(motor_runtime_begin_control_mode_switch(
                &runtime,
                S3519_CONTROL_MODE_POSITION_VELOCITY) == MOTOR_RUNTIME_STATUS_OK);
@@ -538,6 +539,56 @@ static void test_motor_discovery_verifies_every_joint(void)
 }
 
 /**
+ * @brief Verifies bench discovery skips every motor outside an explicit mask.
+ */
+static void test_motor_discovery_targets_selected_subset(void)
+{
+    MotorDiscovery discovery;
+    uint64_t timestamp_us = 1000U;
+    uint8_t response_count = 0U;
+
+    assert(motor_discovery_init(&discovery, arm_config_get_production()) ==
+           MOTOR_DISCOVERY_STATUS_OK);
+    assert(motor_discovery_begin(&discovery, 0x05U) ==
+           MOTOR_DISCOVERY_STATUS_OK);
+    while (discovery.state != MOTOR_DISCOVERY_STATE_COMPLETE)
+    {
+        CanFrame request_frame;
+        S3519ParameterResponse response = {0};
+        uint8_t esc_id;
+        S3519Register register_address;
+
+        assert(motor_discovery_next_request(&discovery,
+                                            timestamp_us,
+                                            &request_frame) ==
+               MOTOR_DISCOVERY_STATUS_FRAME_READY);
+        esc_id = request_frame.data[0];
+        register_address = (S3519Register)request_frame.data[3];
+        assert((esc_id == 1U) || (esc_id == 3U));
+        response.esc_id = esc_id;
+        response.register_address = (uint8_t)register_address;
+        response.raw_value = make_discovery_raw_value(register_address, esc_id);
+        memcpy(&response.float_value,
+               &response.raw_value,
+               sizeof(response.float_value));
+        assert(motor_discovery_accept_response(
+                   &discovery,
+                   (uint16_t)(esc_id + 0x10U),
+                   &response) == MOTOR_DISCOVERY_STATUS_OK);
+        ++response_count;
+        timestamp_us += 1000U;
+    }
+    assert(response_count == (2U * MOTOR_DISCOVERY_REGISTER_COUNT));
+    assert(discovery.target_joint_mask == 0x05U);
+    assert(discovery.verified_joint_mask == 0x05U);
+    assert(discovery.results[0].verified_fields_mask ==
+           MOTOR_DISCOVERY_ALL_FIELDS_MASK);
+    assert(discovery.results[1].verified_fields_mask == 0U);
+    assert(discovery.results[2].verified_fields_mask ==
+           MOTOR_DISCOVERY_ALL_FIELDS_MASK);
+}
+
+/**
  * @brief Verifies identity mismatches latch discovery failure before enable.
  */
 static void test_motor_discovery_rejects_mapping_mismatch(void)
@@ -727,6 +778,7 @@ int main(void)
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();
+    test_motor_discovery_targets_selected_subset();
     test_motor_discovery_rejects_mapping_mismatch();
     test_motor_discovery_times_out_without_response();
     test_motor_runtime_routes_discovery_and_feedback();

@@ -13,6 +13,7 @@
 
 #include "build_info.h"
 #include "arm_config.h"
+#include "app_profile.h"
 #include "joint_motion.h"
 
 #define PROTOCOL_ENGINE_RAD_TO_DEG (57.29577951308232F)
@@ -47,6 +48,18 @@ static uint8_t protocol_engine_span_equals(const AsciiProtocolSpan *span,
                      (span->length == expected_length) &&
                      (strncmp(span->data, expected, expected_length) == 0));
 }
+
+#if (AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE)
+/** @brief Reports whether a parsed request contains one named field. */
+static uint8_t protocol_engine_request_has_field(
+    const AsciiProtocolRequest *request,
+    const char *key)
+{
+    AsciiProtocolSpan ignored_value;
+
+    return ascii_protocol_find_field(request, key, &ignored_value);
+}
+#endif
 
 /**
  * @brief Parses one nonzero or zero uint32 field without signs or suffixes.
@@ -166,6 +179,110 @@ static uint8_t protocol_engine_parse_float(const AsciiProtocolSpan *span,
     *value = (float)parsed_value;
     return 1U;
 }
+
+#if (AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE)
+/** @brief Parses a unique ascending comma list of motor numbers. */
+static uint8_t protocol_engine_parse_motor_mask(const AsciiProtocolSpan *span,
+                                                uint8_t *motor_mask)
+{
+    uint16_t token_start = 0U;
+    uint16_t character_index;
+    uint8_t parsed_mask = 0U;
+    uint32_t previous_motor_number = 0U;
+
+    if ((span == NULL) || (motor_mask == NULL) || (span->length == 0U))
+    {
+        return 0U;
+    }
+    for (character_index = 0U; character_index <= span->length; ++character_index)
+    {
+        if ((character_index == span->length) ||
+            (span->data[character_index] == ','))
+        {
+            AsciiProtocolSpan token;
+            uint32_t motor_number;
+            uint8_t motor_bit;
+
+            token.data = &span->data[token_start];
+            token.length = (uint16_t)(character_index - token_start);
+            if ((protocol_engine_parse_u32(&token, &motor_number) == 0U) ||
+                (motor_number < 1U) || (motor_number > ARM_JOINT_COUNT) ||
+                (motor_number <= previous_motor_number))
+            {
+                return 0U;
+            }
+            motor_bit = (uint8_t)(1U << (motor_number - 1U));
+            if ((parsed_mask & motor_bit) != 0U)
+            {
+                return 0U;
+            }
+            parsed_mask |= motor_bit;
+            previous_motor_number = motor_number;
+            token_start = (uint16_t)(character_index + 1U);
+        }
+    }
+    *motor_mask = parsed_mask;
+    return (uint8_t)(parsed_mask != 0U);
+}
+
+/** @brief Parses one float per selected motor into joint-indexed storage. */
+static uint8_t protocol_engine_parse_selected_motor_values(
+    const AsciiProtocolSpan *span,
+    uint8_t motor_mask,
+    float values[ARM_JOINT_COUNT])
+{
+    uint16_t token_start = 0U;
+    uint16_t character_index;
+    uint8_t next_joint_index = 0U;
+    uint8_t parsed_count = 0U;
+
+    if ((span == NULL) || (values == NULL) || (motor_mask == 0U) ||
+        (span->length == 0U))
+    {
+        return 0U;
+    }
+    memset(values, 0, sizeof(float) * ARM_JOINT_COUNT);
+    for (character_index = 0U; character_index <= span->length; ++character_index)
+    {
+        if ((character_index == span->length) ||
+            (span->data[character_index] == ','))
+        {
+            AsciiProtocolSpan token;
+            float parsed_value;
+
+            while ((next_joint_index < ARM_JOINT_COUNT) &&
+                   ((motor_mask & (uint8_t)(1U << next_joint_index)) == 0U))
+            {
+                ++next_joint_index;
+            }
+            if (next_joint_index >= ARM_JOINT_COUNT)
+            {
+                return 0U;
+            }
+            token.data = &span->data[token_start];
+            token.length = (uint16_t)(character_index - token_start);
+            if (protocol_engine_parse_float(&token, &parsed_value) == 0U)
+            {
+                return 0U;
+            }
+            values[next_joint_index] = parsed_value;
+            ++next_joint_index;
+            ++parsed_count;
+            token_start = (uint16_t)(character_index + 1U);
+        }
+    }
+    for (next_joint_index = 0U;
+         next_joint_index < ARM_JOINT_COUNT;
+         ++next_joint_index)
+    {
+        if ((motor_mask & (uint8_t)(1U << next_joint_index)) != 0U)
+        {
+            --parsed_count;
+        }
+    }
+    return (uint8_t)(parsed_count == 0U);
+}
+#endif
 
 /** @brief Enqueues one normal business command into the bounded SPSC ring. */
 static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
@@ -1584,6 +1701,106 @@ static ProtocolEngineStatus protocol_engine_handle_move_joints(
         (command.control_mode == ARM_CONTROL_MODE_MIT) ? "MIT" : "POS_VEL");
 }
 
+#if (AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE)
+/** @brief Validates one explicit-motor bench command without implicit selection. */
+static ProtocolEngineStatus protocol_engine_handle_bench_action(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    ProtocolCommandType command_type,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    AsciiProtocolSpan motors_span;
+    ProtocolCommand command;
+    uint8_t joint_index;
+
+    memset(&command, 0, sizeof(command));
+    if ((ascii_protocol_find_field(request, "motors", &motors_span) == 0U) ||
+        (protocol_engine_parse_motor_mask(&motors_span, &command.motor_mask) == 0U))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BAD_VALUE field=motors",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE)
+    {
+        AsciiProtocolSpan delta_span;
+        AsciiProtocolSpan speed_span;
+
+        if ((ascii_protocol_find_field(request, "delta_deg", &delta_span) == 0U) ||
+            (protocol_engine_parse_selected_motor_values(&delta_span,
+                                                         command.motor_mask,
+                                                         command.values) == 0U))
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu BAD_VALUE field=delta_deg",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if ((ascii_protocol_find_field(request, "speed_deg_s", &speed_span) == 0U) ||
+            (protocol_engine_parse_selected_motor_values(&speed_span,
+                                                         command.motor_mask,
+                                                         command.speeds) == 0U))
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu BAD_VALUE field=speed_deg_s",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+        {
+            if ((command.motor_mask & (uint8_t)(1U << joint_index)) == 0U)
+            {
+                continue;
+            }
+            if ((command.values[joint_index] < -3.0F) ||
+                (command.values[joint_index] > 3.0F))
+            {
+                (void)protocol_engine_append_format(
+                    output_batch,
+                    PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                    "ERR %lu BAD_VALUE field=delta_deg",
+                    (unsigned long)request->request_id);
+                return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+            }
+            if ((command.speeds[joint_index] <= 0.0F) ||
+                (command.speeds[joint_index] > 3.0F))
+            {
+                (void)protocol_engine_append_format(
+                    output_batch,
+                    PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                    "ERR %lu BAD_VALUE field=speed_deg_s",
+                    (unsigned long)request->request_id);
+                return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+            }
+        }
+    }
+    command.type = command_type;
+    command.request_id = request->request_id;
+    command.session_id = engine->session_id;
+    command.accepted_at_us = timestamp_us;
+    command.control_mode = ARM_CONTROL_MODE_POSITION_VELOCITY;
+    command.bench_relative_scope = 1U;
+    if (protocol_engine_enqueue_command(engine, &command) == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BUSY queue=command",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    return protocol_engine_append_format(output_batch,
+                                         PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                         "ACK %lu accepted motors=%u",
+                                         (unsigned long)request->request_id,
+                                         (unsigned int)command.motor_mask);
+}
+#endif
+
 /**
  * @brief Initializes one protocol engine for the current firmware boot.
  */
@@ -2187,6 +2404,48 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
                                                                timestamp_us,
                                                                output_batch);
     }
+#if (AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE)
+    else if (ascii_protocol_request_operation_equals(&request, "INIT_MOTORS") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_bench_action(
+            engine, &request, PROTOCOL_COMMAND_INIT_MOTORS, timestamp_us, output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "MOVE_REL") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_bench_action(
+            engine, &request, PROTOCOL_COMMAND_MOVE_RELATIVE, timestamp_us, output_batch);
+    }
+    else if ((protocol_engine_request_has_field(&request, "motors") != 0U) &&
+             (ascii_protocol_request_operation_equals(&request, "ENABLE") != 0U))
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_bench_action(
+            engine, &request, PROTOCOL_COMMAND_ENABLE, timestamp_us, output_batch);
+    }
+    else if ((protocol_engine_request_has_field(&request, "motors") != 0U) &&
+             (ascii_protocol_request_operation_equals(&request, "STOP") != 0U))
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_bench_action(
+            engine, &request, PROTOCOL_COMMAND_STOP, timestamp_us, output_batch);
+    }
+    else if ((protocol_engine_request_has_field(&request, "motors") != 0U) &&
+             (ascii_protocol_request_operation_equals(&request, "DISABLE") != 0U))
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_bench_action(
+            engine, &request, PROTOCOL_COMMAND_DISABLE, timestamp_us, output_batch);
+    }
+    else if ((protocol_engine_request_has_field(&request, "motors") != 0U) &&
+             (ascii_protocol_request_operation_equals(&request, "CLEAR_FAULT") != 0U))
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_bench_action(
+            engine, &request, PROTOCOL_COMMAND_CLEAR_FAULT, timestamp_us, output_batch);
+    }
+#endif
     else if (ascii_protocol_request_operation_equals(&request, "SET_MODE") != 0U)
     {
         engine->last_valid_request_at_us = timestamp_us;

@@ -48,6 +48,17 @@ static MotorDiscoveryStatus motor_discovery_fail(MotorDiscovery *discovery,
     return status;
 }
 
+/** @brief Advances the joint cursor to the next member of the target mask. */
+static void motor_discovery_skip_unselected_joints(MotorDiscovery *discovery)
+{
+    while ((discovery->current_joint_index < ARM_JOINT_COUNT) &&
+           ((discovery->target_joint_mask &
+             (uint8_t)(1U << discovery->current_joint_index)) == 0U))
+    {
+        ++discovery->current_joint_index;
+    }
+}
+
 /**
  * @brief Stores one validated response in the current joint result.
  * @param discovery Discovery state and results.
@@ -184,6 +195,7 @@ static void motor_discovery_advance(MotorDiscovery *discovery)
 
     ++discovery->current_joint_index;
     discovery->current_register_index = 0U;
+    motor_discovery_skip_unselected_joints(discovery);
     if (discovery->current_joint_index >= ARM_JOINT_COUNT)
     {
         discovery->state = MOTOR_DISCOVERY_STATE_COMPLETE;
@@ -218,8 +230,45 @@ MotorDiscoveryStatus motor_discovery_init(MotorDiscovery *discovery,
     }
 
     discovery->configuration = configuration;
+    discovery->target_joint_mask = (uint8_t)0x7FU;
     discovery->state = MOTOR_DISCOVERY_STATE_READY;
     discovery->initialized = 1U;
+    return MOTOR_DISCOVERY_STATUS_OK;
+}
+
+/**
+ * @brief Starts a fresh bounded discovery pass for an explicit motor subset.
+ */
+MotorDiscoveryStatus motor_discovery_begin(MotorDiscovery *discovery,
+                                           uint8_t target_joint_mask)
+{
+    uint8_t joint_index;
+
+    if ((discovery == NULL) || (discovery->initialized == 0U) ||
+        (target_joint_mask == 0U) ||
+        ((target_joint_mask & (uint8_t)~0x7FU) != 0U))
+    {
+        return MOTOR_DISCOVERY_STATUS_INVALID_ARGUMENT;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+
+        if ((target_joint_mask & joint_bit) != 0U)
+        {
+            memset(&discovery->results[joint_index],
+                   0,
+                   sizeof(discovery->results[joint_index]));
+            discovery->verified_joint_mask &= (uint8_t)~joint_bit;
+        }
+    }
+    discovery->target_joint_mask = target_joint_mask;
+    discovery->current_joint_index = 0U;
+    discovery->current_register_index = 0U;
+    discovery->attempt_count = 0U;
+    discovery->request_sent_at_us = 0U;
+    motor_discovery_skip_unselected_joints(discovery);
+    discovery->state = MOTOR_DISCOVERY_STATE_READY;
     return MOTOR_DISCOVERY_STATUS_OK;
 }
 

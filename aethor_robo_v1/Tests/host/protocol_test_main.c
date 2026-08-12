@@ -652,6 +652,77 @@ static void test_protocol_engine_move_joints_admission(void)
 }
 
 /**
+ * @brief Verifies the bench profile parses explicit single/multi-motor commands atomically.
+ */
+static void test_protocol_engine_bench_subset_commands(void)
+{
+    ProtocolEngine engine;
+    ProtocolQueryContext query_context = {0};
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    char request_frame[256];
+    size_t request_length;
+
+    query_context.arm.state = ARM_STATE_UNALIGNED;
+    protocol_engine_init(&engine, 6789U);
+    request_length = build_request_frame("REQ 1 HELLO client=bench protocol=1",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        1000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    protocol_engine_update_query_context(&engine, &query_context);
+
+    request_length = build_request_frame("REQ 2 INIT_MOTORS motors=1,3",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_INIT_MOTORS);
+    assert(command.motor_mask == 0x05U);
+
+    request_length = build_request_frame("REQ 3 ENABLE motors=1,3",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        3000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_ENABLE);
+    assert(command.motor_mask == 0x05U);
+
+    request_length = build_request_frame(
+        "REQ 4 MOVE_REL motors=1,3 delta_deg=3.0,-2.0 speed_deg_s=3.0,2.0",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        4000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_RELATIVE);
+    assert(command.motor_mask == 0x05U);
+    assert(command.values[0] == 3.0F);
+    assert(command.values[2] == -2.0F);
+    assert(command.speeds[0] == 3.0F);
+    assert(command.speeds[2] == 2.0F);
+
+    request_length = build_request_frame(
+        "REQ 5 MOVE_REL motors=1,3 delta_deg=3.1,-2.0 speed_deg_s=3.0,2.0",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        5000U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(strstr(output_batch.messages[0].data,
+                  "ERR 5 BAD_VALUE field=delta_deg") != NULL);
+
+    request_length = build_request_frame("REQ 6 DISABLE motors=1,1",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        6000U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(strstr(output_batch.messages[0].data,
+                  "ERR 6 BAD_VALUE field=motors") != NULL);
+}
+
+/**
  * @brief Runs all protocol contract tests.
  * @return Zero when every assertion passes.
  */
@@ -668,6 +739,7 @@ int main(void)
     test_protocol_engine_stream_generation();
     test_protocol_engine_lifecycle_command_admission();
     test_protocol_engine_move_joints_admission();
+    test_protocol_engine_bench_subset_commands();
     puts("PROTOCOL_TESTS_PASSED");
     return 0;
 }

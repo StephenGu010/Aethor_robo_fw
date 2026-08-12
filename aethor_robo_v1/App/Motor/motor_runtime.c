@@ -37,6 +37,17 @@ static uint8_t motor_runtime_find_joint(const MotorRuntime *runtime,
     return 0U;
 }
 
+/** @brief Advances the mode-switch cursor past every unselected motor. */
+static void motor_runtime_skip_unselected_mode_joints(MotorRuntime *runtime)
+{
+    while ((runtime->mode_switch_joint_index < ARM_JOINT_COUNT) &&
+           ((runtime->mode_switch_joint_mask &
+             (uint8_t)(1U << runtime->mode_switch_joint_index)) == 0U))
+    {
+        ++runtime->mode_switch_joint_index;
+    }
+}
+
 /**
  * @brief Maps a discovery state-machine result to the public runtime result.
  * @param discovery_status Discovery result to map.
@@ -112,6 +123,7 @@ static MotorRuntimeStatus motor_runtime_accept_mode_readback(
 
     runtime->discovery.results[joint_index].observed_control_mode = expected_mode;
     ++runtime->mode_switch_joint_index;
+    motor_runtime_skip_unselected_mode_joints(runtime);
     runtime->mode_switch_attempt_count = 0U;
     runtime->mode_switch_state =
         (runtime->mode_switch_joint_index >= ARM_JOINT_COUNT)
@@ -282,6 +294,47 @@ MotorRuntimeStatus motor_runtime_init(MotorRuntime *runtime,
 
     runtime->configuration = configuration;
     runtime->initialized = 1U;
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
+ * @brief Starts a fresh discovery pass for an explicit bench motor subset.
+ */
+MotorRuntimeStatus motor_runtime_begin_discovery(MotorRuntime *runtime,
+                                                 uint8_t target_joint_mask)
+{
+    uint8_t joint_index;
+
+    if ((runtime == NULL) || (target_joint_mask == 0U) ||
+        ((target_joint_mask & (uint8_t)~0x7FU) != 0U))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    if (motor_discovery_begin(&runtime->discovery, target_joint_mask) !=
+        MOTOR_DISCOVERY_STATUS_OK)
+    {
+        return MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+
+        if ((target_joint_mask & joint_bit) != 0U)
+        {
+            MotorObject *motor = &runtime->bank.motors[joint_index];
+
+            motor->state = MOTOR_LIFECYCLE_DISCOVERING;
+            motor->parameter_valid_mask = 0U;
+            motor->parameter_source = MOTOR_PARAMETER_SOURCE_UNKNOWN;
+            motor->configuration_consistent = 0U;
+            motor->target_valid = 0U;
+            motor->at_target = 0U;
+        }
+    }
     return MOTOR_RUNTIME_STATUS_OK;
 }
 
@@ -510,11 +563,67 @@ MotorRuntimeStatus motor_runtime_build_control_group(
 }
 
 /**
+ * @brief Encodes selected POS_VEL targets without altering unselected motors.
+ */
+MotorRuntimeStatus motor_runtime_build_position_velocity_subset(
+    const MotorRuntime *runtime,
+    uint8_t motor_mask,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_velocity_rad_s[ARM_JOINT_COUNT],
+    MotorEmergencyFrameBatch *batch)
+{
+    uint8_t joint_index;
+
+    if ((runtime == NULL) || (motor_position_rad == NULL) ||
+        (motor_velocity_rad_s == NULL) || (batch == NULL) ||
+        (motor_mask == 0U) || ((motor_mask & (uint8_t)~0x7FU) != 0U))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    memset(batch, 0, sizeof(*batch));
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if ((motor_mask & (uint8_t)(1U << joint_index)) == 0U)
+        {
+            continue;
+        }
+        if (s3519_pack_position_velocity(
+                (uint8_t)runtime->configuration->joints[joint_index].esc_id,
+                motor_position_rad[joint_index],
+                fabsf(motor_velocity_rad_s[joint_index]),
+                &batch->frames[batch->count]) != S3519_CODEC_STATUS_OK)
+        {
+            memset(batch, 0, sizeof(*batch));
+            return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+        }
+        ++batch->count;
+    }
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
  * @brief Starts a seven-motor volatile control-mode write/readback operation.
  */
 MotorRuntimeStatus motor_runtime_begin_control_mode_switch(
     MotorRuntime *runtime,
     S3519ControlMode control_mode)
+{
+    return motor_runtime_begin_control_mode_switch_mask(runtime,
+                                                        control_mode,
+                                                        (uint8_t)0x7FU);
+}
+
+/**
+ * @brief Starts a volatile control-mode write/readback for a selected subset.
+ */
+MotorRuntimeStatus motor_runtime_begin_control_mode_switch_mask(
+    MotorRuntime *runtime,
+    S3519ControlMode control_mode,
+    uint8_t motor_mask)
 {
     if (runtime == NULL)
     {
@@ -529,7 +638,12 @@ MotorRuntimeStatus motor_runtime_begin_control_mode_switch(
     {
         return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
-    if (runtime->discovery.state != MOTOR_DISCOVERY_STATE_COMPLETE)
+    if ((motor_mask == 0U) || ((motor_mask & (uint8_t)~0x7FU) != 0U))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if ((runtime->discovery.state != MOTOR_DISCOVERY_STATE_COMPLETE) ||
+        ((runtime->discovery.verified_joint_mask & motor_mask) != motor_mask))
     {
         return MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR;
     }
@@ -540,7 +654,9 @@ MotorRuntimeStatus motor_runtime_begin_control_mode_switch(
         return MOTOR_RUNTIME_STATUS_WAITING;
     }
     runtime->requested_control_mode = control_mode;
+    runtime->mode_switch_joint_mask = motor_mask;
     runtime->mode_switch_joint_index = 0U;
+    motor_runtime_skip_unselected_mode_joints(runtime);
     runtime->mode_switch_attempt_count = 0U;
     runtime->mode_request_sent_at_us = 0U;
     runtime->mode_switch_state = MOTOR_MODE_SWITCH_WRITING;
@@ -604,9 +720,11 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
             return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
         }
         ++runtime->mode_switch_joint_index;
+        motor_runtime_skip_unselected_mode_joints(runtime);
         if (runtime->mode_switch_joint_index >= ARM_JOINT_COUNT)
         {
             runtime->mode_switch_joint_index = 0U;
+            motor_runtime_skip_unselected_mode_joints(runtime);
             runtime->mode_switch_state = MOTOR_MODE_SWITCH_READ_READY;
         }
         return MOTOR_RUNTIME_STATUS_FRAME_READY;

@@ -73,6 +73,7 @@ typedef struct
     MotorDiscoveryState state;
     uint64_t request_sent_at_us;
     uint8_t verified_joint_mask;
+    uint8_t target_joint_mask;
     uint8_t current_joint_index;
     uint8_t current_register_index;
     uint8_t attempt_count;
@@ -84,6 +85,15 @@ typedef struct
  */
 MotorDiscoveryStatus motor_discovery_init(MotorDiscovery *discovery,
                                           const ArmConfig *configuration);
+
+/**
+ * @brief Starts a fresh bounded discovery pass for an explicit motor subset.
+ * @param discovery Initialized discovery domain.
+ * @param target_joint_mask Nonzero J1-J7 bit mask.
+ * @return OK or an argument/state error.
+ */
+MotorDiscoveryStatus motor_discovery_begin(MotorDiscovery *discovery,
+                                           uint8_t target_joint_mask);
 
 /**
  * @brief Emits the next read request or reports a bounded wait/terminal state.

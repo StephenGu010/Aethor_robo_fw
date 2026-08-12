@@ -12,6 +12,7 @@
 #include "joint_motion_can.h"
 
 #define AETHOR_APP_ACTION_TIMEOUT_US (500000ULL)
+#define AETHOR_APP_DISCOVERY_TIMEOUT_US (8000000ULL)
 #define AETHOR_APP_MOTION_SETTLE_US (200000ULL)
 #define AETHOR_APP_MOTION_TIMEOUT_MARGIN_US (2000000ULL)
 #define AETHOR_APP_ALL_JOINTS_MASK ((uint8_t)0x7FU)
@@ -22,7 +23,10 @@ typedef enum
 {
     AETHOR_APP_ACTION_IDLE = 0,
     AETHOR_APP_ACTION_MODE_SWITCH,
+    AETHOR_APP_ACTION_DISCOVERY,
+    AETHOR_APP_ACTION_BENCH_MODE_SWITCH,
     AETHOR_APP_ACTION_ENABLE_WAIT,
+    AETHOR_APP_ACTION_BENCH_MOVE_WAIT,
     AETHOR_APP_ACTION_DISABLE_WAIT,
     AETHOR_APP_ACTION_CLEAR_FAULT_WAIT,
     AETHOR_APP_ACTION_MOTION,
@@ -387,7 +391,8 @@ MotorRuntimeStatus aethor_app_next_can_frame(uint64_t timestamp_us,
         *priority = application_action.priority;
         return MOTOR_RUNTIME_STATUS_FRAME_READY;
     }
-    if (application_action.state == AETHOR_APP_ACTION_MODE_SWITCH)
+    if ((application_action.state == AETHOR_APP_ACTION_MODE_SWITCH) ||
+        (application_action.state == AETHOR_APP_ACTION_BENCH_MODE_SWITCH))
     {
         runtime_status = motor_runtime_next_control_mode_frame(
             &application_motor_runtime,
@@ -487,7 +492,22 @@ static uint8_t aethor_app_start_lifecycle_action(
         return protocol_engine_submit_command_result(&application_protocol_engine,
                                                      &result);
     }
-    if (command->type == PROTOCOL_COMMAND_SET_MODE)
+    if (command->type == PROTOCOL_COMMAND_INIT_MOTORS)
+    {
+        runtime_status = motor_runtime_begin_discovery(
+            &application_motor_runtime,
+            command->motor_mask);
+        if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
+        {
+            memset(&application_action, 0, sizeof(application_action));
+            application_action.command = *command;
+            application_action.state = AETHOR_APP_ACTION_DISCOVERY;
+            application_action.deadline_us = timestamp_us +
+                                             AETHOR_APP_DISCOVERY_TIMEOUT_US;
+            return 0U;
+        }
+    }
+    else if (command->type == PROTOCOL_COMMAND_SET_MODE)
     {
         vendor_mode = aethor_app_vendor_mode(command->control_mode);
         runtime_status = motor_runtime_begin_control_mode_switch(
@@ -498,6 +518,30 @@ static uint8_t aethor_app_start_lifecycle_action(
             memset(&application_action, 0, sizeof(application_action));
             application_action.command = *command;
             application_action.state = AETHOR_APP_ACTION_MODE_SWITCH;
+            application_action.deadline_us = timestamp_us +
+                                             AETHOR_APP_ACTION_TIMEOUT_US;
+            return 0U;
+        }
+    }
+    else if ((command->type == PROTOCOL_COMMAND_ENABLE) &&
+             (command->bench_relative_scope != 0U))
+    {
+        runtime_status =
+            ((application_motor_runtime.discovery.verified_joint_mask &
+              command->motor_mask) == command->motor_mask)
+                ? motor_runtime_build_mode_command_batch(
+                      &application_motor_runtime,
+                      S3519_CONTROL_MODE_POSITION_VELOCITY,
+                      S3519_MODE_COMMAND_ENABLE,
+                      command->motor_mask,
+                      &application_action.frames)
+                : MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR;
+        if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
+        {
+            application_action.command = *command;
+            application_action.state = AETHOR_APP_ACTION_ENABLE_WAIT;
+            application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
+            application_action.frame_read_index = 0U;
             application_action.deadline_us = timestamp_us +
                                              AETHOR_APP_ACTION_TIMEOUT_US;
             return 0U;
@@ -519,6 +563,69 @@ static uint8_t aethor_app_start_lifecycle_action(
             application_action.command = *command;
             application_action.state = AETHOR_APP_ACTION_ENABLE_WAIT;
             application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
+            application_action.frame_read_index = 0U;
+            application_action.deadline_us = timestamp_us +
+                                             AETHOR_APP_ACTION_TIMEOUT_US;
+            return 0U;
+        }
+    }
+    else if ((command->type == PROTOCOL_COMMAND_STOP) &&
+             (command->bench_relative_scope != 0U))
+    {
+        float hold_position_rad[ARM_JOINT_COUNT] = {0};
+        float zero_velocity_rad_s[ARM_JOINT_COUNT] = {0};
+        uint8_t joint_index;
+        uint8_t selected_feedback_valid = 1U;
+
+        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+        {
+            uint8_t joint_bit = (uint8_t)(1U << joint_index);
+
+            if ((command->motor_mask & joint_bit) == 0U)
+            {
+                continue;
+            }
+            if ((motor_snapshot->valid_joint_mask & joint_bit) == 0U)
+            {
+                selected_feedback_valid = 0U;
+                break;
+            }
+            hold_position_rad[joint_index] =
+                motor_snapshot->joints[joint_index].position_rad;
+        }
+        if (selected_feedback_valid != 0U)
+        {
+            runtime_status = motor_runtime_build_position_velocity_subset(
+                &application_motor_runtime,
+                command->motor_mask,
+                hold_position_rad,
+                zero_velocity_rad_s,
+                &application_action.frames);
+            if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
+            {
+                application_action.command = *command;
+                application_action.state = AETHOR_APP_ACTION_BENCH_MOVE_WAIT;
+                application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
+                application_action.frame_read_index = 0U;
+                memcpy(application_action.motion_plan.target_position_rad,
+                       hold_position_rad,
+                       sizeof(hold_position_rad));
+                application_action.deadline_us = timestamp_us +
+                                                 AETHOR_APP_ACTION_TIMEOUT_US;
+                return 0U;
+            }
+        }
+        runtime_status = motor_runtime_build_mode_command_batch(
+            &application_motor_runtime,
+            S3519_CONTROL_MODE_POSITION_VELOCITY,
+            S3519_MODE_COMMAND_DISABLE,
+            command->motor_mask,
+            &application_action.frames);
+        if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
+        {
+            application_action.command = *command;
+            application_action.state = AETHOR_APP_ACTION_DISABLE_WAIT;
+            application_action.priority = CAN_TX_PRIORITY_EMERGENCY;
             application_action.frame_read_index = 0U;
             application_action.deadline_us = timestamp_us +
                                              AETHOR_APP_ACTION_TIMEOUT_US;
@@ -594,6 +701,26 @@ static uint8_t aethor_app_start_lifecycle_action(
             return 0U;
         }
     }
+    else if ((command->type == PROTOCOL_COMMAND_DISABLE) &&
+             (command->bench_relative_scope != 0U))
+    {
+        runtime_status = motor_runtime_build_mode_command_batch(
+            &application_motor_runtime,
+            S3519_CONTROL_MODE_POSITION_VELOCITY,
+            S3519_MODE_COMMAND_DISABLE,
+            command->motor_mask,
+            &application_action.frames);
+        if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
+        {
+            application_action.command = *command;
+            application_action.state = AETHOR_APP_ACTION_DISABLE_WAIT;
+            application_action.priority = CAN_TX_PRIORITY_EMERGENCY;
+            application_action.frame_read_index = 0U;
+            application_action.deadline_us = timestamp_us +
+                                             AETHOR_APP_ACTION_TIMEOUT_US;
+            return 0U;
+        }
+    }
     else if (command->type == PROTOCOL_COMMAND_DISABLE)
     {
         runtime_status = motor_runtime_build_emergency_disable(
@@ -603,6 +730,26 @@ static uint8_t aethor_app_start_lifecycle_action(
         {
             application_action.command = *command;
             application_action.state = AETHOR_APP_ACTION_DISABLE_WAIT;
+            application_action.priority = CAN_TX_PRIORITY_EMERGENCY;
+            application_action.frame_read_index = 0U;
+            application_action.deadline_us = timestamp_us +
+                                             AETHOR_APP_ACTION_TIMEOUT_US;
+            return 0U;
+        }
+    }
+    else if ((command->type == PROTOCOL_COMMAND_CLEAR_FAULT) &&
+             (command->bench_relative_scope != 0U))
+    {
+        runtime_status = motor_runtime_build_mode_command_batch(
+            &application_motor_runtime,
+            S3519_CONTROL_MODE_POSITION_VELOCITY,
+            S3519_MODE_COMMAND_CLEAR_ERROR,
+            command->motor_mask,
+            &application_action.frames);
+        if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
+        {
+            application_action.command = *command;
+            application_action.state = AETHOR_APP_ACTION_CLEAR_FAULT_WAIT;
             application_action.priority = CAN_TX_PRIORITY_EMERGENCY;
             application_action.frame_read_index = 0U;
             application_action.deadline_us = timestamp_us +
@@ -631,6 +778,74 @@ static uint8_t aethor_app_start_lifecycle_action(
                 return 0U;
             }
         }
+    }
+    else if (command->type == PROTOCOL_COMMAND_MOVE_RELATIVE)
+    {
+        float motor_position_rad[ARM_JOINT_COUNT];
+        float motor_velocity_rad_s[ARM_JOINT_COUNT];
+        uint8_t joint_index;
+        uint8_t selected_feedback_valid = 1U;
+        float maximum_duration_seconds = 0.0F;
+
+        memset(motor_position_rad, 0, sizeof(motor_position_rad));
+        memset(motor_velocity_rad_s, 0, sizeof(motor_velocity_rad_s));
+        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+        {
+            uint8_t joint_bit = (uint8_t)(1U << joint_index);
+
+            if ((command->motor_mask & joint_bit) == 0U)
+            {
+                continue;
+            }
+            if (((motor_snapshot->valid_joint_mask & joint_bit) == 0U) ||
+                (motor_snapshot->joints[joint_index].fault_flags != 0U) ||
+                (motor_snapshot->joints[joint_index].driver_state !=
+                 S3519_DRIVER_STATE_ENABLED))
+            {
+                selected_feedback_valid = 0U;
+                break;
+            }
+            motor_position_rad[joint_index] =
+                motor_snapshot->joints[joint_index].position_rad +
+                (command->values[joint_index] * AETHOR_APP_DEG_TO_RAD);
+            motor_velocity_rad_s[joint_index] =
+                command->speeds[joint_index] * AETHOR_APP_DEG_TO_RAD;
+            if ((command->values[joint_index] < 0.0F
+                     ? -command->values[joint_index]
+                     : command->values[joint_index]) /
+                    command->speeds[joint_index] > maximum_duration_seconds)
+            {
+                maximum_duration_seconds =
+                    (command->values[joint_index] < 0.0F
+                         ? -command->values[joint_index]
+                         : command->values[joint_index]) /
+                    command->speeds[joint_index];
+            }
+        }
+        if (selected_feedback_valid != 0U)
+        {
+            runtime_status = motor_runtime_build_position_velocity_subset(
+                &application_motor_runtime,
+                command->motor_mask,
+                motor_position_rad,
+                motor_velocity_rad_s,
+                &application_action.frames);
+            if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
+            {
+                application_action.command = *command;
+                application_action.state = AETHOR_APP_ACTION_BENCH_MOVE_WAIT;
+                application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
+                application_action.frame_read_index = 0U;
+                memcpy(application_action.motion_plan.target_position_rad,
+                       motor_position_rad,
+                       sizeof(motor_position_rad));
+                application_action.deadline_us = timestamp_us +
+                    (uint64_t)(maximum_duration_seconds * 1000000.0F) +
+                    AETHOR_APP_ACTION_TIMEOUT_US;
+                return 0U;
+            }
+        }
+        runtime_status = MOTOR_RUNTIME_STATUS_STALE_FEEDBACK;
     }
     else if (command->type == PROTOCOL_COMMAND_MOVE_JOINTS)
     {
@@ -735,14 +950,71 @@ static uint8_t aethor_app_service_active_action(
                                               timestamp_us);
         }
     }
+    else if (application_action.state == AETHOR_APP_ACTION_DISCOVERY)
+    {
+        if ((application_motor_runtime.discovery.state ==
+             MOTOR_DISCOVERY_STATE_COMPLETE) &&
+            ((application_motor_runtime.discovery.verified_joint_mask &
+              application_action.command.motor_mask) ==
+             application_action.command.motor_mask))
+        {
+            if (motor_runtime_begin_control_mode_switch_mask(
+                    &application_motor_runtime,
+                    S3519_CONTROL_MODE_POSITION_VELOCITY,
+                    application_action.command.motor_mask) ==
+                MOTOR_RUNTIME_STATUS_OK)
+            {
+                application_action.state =
+                    AETHOR_APP_ACTION_BENCH_MODE_SWITCH;
+                application_action.deadline_us = timestamp_us +
+                                                 AETHOR_APP_ACTION_TIMEOUT_US;
+                return 0U;
+            }
+            return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_FAILED,
+                                              2U,
+                                              timestamp_us);
+        }
+        if (application_motor_runtime.discovery.state ==
+            MOTOR_DISCOVERY_STATE_FAILED)
+        {
+            return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_FAILED,
+                                              1U,
+                                              timestamp_us);
+        }
+    }
+    else if (application_action.state == AETHOR_APP_ACTION_BENCH_MODE_SWITCH)
+    {
+        if (application_motor_runtime.mode_switch_state ==
+            MOTOR_MODE_SWITCH_COMPLETE)
+        {
+            return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_COMPLETED,
+                                              0U,
+                                              timestamp_us);
+        }
+        if (application_motor_runtime.mode_switch_state ==
+            MOTOR_MODE_SWITCH_FAILED)
+        {
+            return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_FAILED,
+                                              3U,
+                                              timestamp_us);
+        }
+    }
     else if ((application_action.frame_read_index >=
               application_action.frames.count) &&
              (application_action.state == AETHOR_APP_ACTION_ENABLE_WAIT) &&
              (aethor_app_selected_motors_have_state(
                   motor_snapshot,
-                  AETHOR_APP_ALL_JOINTS_MASK,
+                  (application_action.command.bench_relative_scope != 0U)
+                      ? application_action.command.motor_mask
+                      : AETHOR_APP_ALL_JOINTS_MASK,
                   S3519_DRIVER_STATE_ENABLED) != 0U))
     {
+        if (application_action.command.bench_relative_scope != 0U)
+        {
+            return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_COMPLETED,
+                                              0U,
+                                              timestamp_us);
+        }
         if (arm_controller_confirm_enabled(&application_controller,
                                            timestamp_us) ==
             ARM_TRANSITION_STATUS_OK)
@@ -853,14 +1125,64 @@ static uint8_t aethor_app_service_active_action(
     }
     else if ((application_action.frame_read_index >=
               application_action.frames.count) &&
+             (application_action.state == AETHOR_APP_ACTION_BENCH_MOVE_WAIT))
+    {
+        uint8_t joint_index;
+        uint8_t all_selected_at_target = 1U;
+
+        if ((motor_snapshot->valid_joint_mask &
+             application_action.command.motor_mask) !=
+            application_action.command.motor_mask)
+        {
+            all_selected_at_target = 0U;
+        }
+        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+        {
+            uint8_t joint_bit = (uint8_t)(1U << joint_index);
+            float position_error;
+
+            if ((application_action.command.motor_mask & joint_bit) == 0U)
+            {
+                continue;
+            }
+            position_error = motor_snapshot->joints[joint_index].position_rad -
+                             application_action.motion_plan
+                                 .target_position_rad[joint_index];
+            if (position_error < 0.0F)
+            {
+                position_error = -position_error;
+            }
+            if ((position_error > (0.5F * AETHOR_APP_DEG_TO_RAD)) ||
+                (motor_snapshot->joints[joint_index].fault_flags != 0U))
+            {
+                all_selected_at_target = 0U;
+            }
+        }
+        if (all_selected_at_target != 0U)
+        {
+            return aethor_app_complete_action(
+                (application_action.command.type == PROTOCOL_COMMAND_STOP)
+                    ? PROTOCOL_COMMAND_RESULT_STOPPED
+                    : PROTOCOL_COMMAND_RESULT_COMPLETED,
+                0U,
+                timestamp_us);
+        }
+    }
+    else if ((application_action.frame_read_index >=
+              application_action.frames.count) &&
              (application_action.state == AETHOR_APP_ACTION_DISABLE_WAIT) &&
              (aethor_app_selected_motors_have_state(
                   motor_snapshot,
-                  AETHOR_APP_ALL_JOINTS_MASK,
+                  (application_action.command.bench_relative_scope != 0U)
+                      ? application_action.command.motor_mask
+                      : AETHOR_APP_ALL_JOINTS_MASK,
                   S3519_DRIVER_STATE_DISABLED) != 0U))
     {
-        (void)arm_controller_confirm_disabled(&application_controller,
-                                              timestamp_us);
+        if (application_action.command.bench_relative_scope == 0U)
+        {
+            (void)arm_controller_confirm_disabled(&application_controller,
+                                                  timestamp_us);
+        }
         return aethor_app_complete_action(
             (application_action.command.type == PROTOCOL_COMMAND_STOP)
                 ? PROTOCOL_COMMAND_RESULT_STOPPED
@@ -878,6 +1200,12 @@ static uint8_t aethor_app_service_active_action(
         if (arm_controller_clear_fault(&application_controller,
                                        timestamp_us) ==
             ARM_TRANSITION_STATUS_OK)
+        {
+            return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_COMPLETED,
+                                              0U,
+                                              timestamp_us);
+        }
+        if (application_action.command.bench_relative_scope != 0U)
         {
             return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_COMPLETED,
                                               0U,

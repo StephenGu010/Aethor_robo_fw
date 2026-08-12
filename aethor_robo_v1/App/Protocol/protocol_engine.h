@@ -109,6 +109,7 @@ typedef struct
     uint8_t motor_mask;
     ArmControlMode control_mode;
     uint8_t scope_joint;
+    uint8_t bench_relative_scope;
 } ProtocolCommand;
 
 /** @brief Identifies one terminal action result produced by ArmControlTask. */

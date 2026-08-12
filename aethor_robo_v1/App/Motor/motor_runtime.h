@@ -67,6 +67,7 @@ typedef struct
     MotorModeSwitchState mode_switch_state;
     uint64_t mode_request_sent_at_us;
     S3519ControlMode requested_control_mode;
+    uint8_t mode_switch_joint_mask;
     uint8_t mode_switch_joint_index;
     uint8_t mode_switch_attempt_count;
     uint8_t initialized;
@@ -80,6 +81,15 @@ typedef struct
  */
 MotorRuntimeStatus motor_runtime_init(MotorRuntime *runtime,
                                       const ArmConfig *configuration);
+
+/**
+ * @brief Starts a fresh discovery pass for an explicit bench motor subset.
+ * @param runtime Initialized motor runtime.
+ * @param target_joint_mask Nonzero J1-J7 bit mask.
+ * @return OK or an argument/discovery error.
+ */
+MotorRuntimeStatus motor_runtime_begin_discovery(MotorRuntime *runtime,
+                                                 uint8_t target_joint_mask);
 
 /**
  * @brief Produces at most one bounded read-only discovery frame.
@@ -143,6 +153,22 @@ MotorRuntimeStatus motor_runtime_build_control_group(
     CanFrame frames[ARM_JOINT_COUNT]);
 
 /**
+ * @brief Encodes selected POS_VEL targets without altering unselected motors.
+ * @param runtime Initialized runtime owning identities.
+ * @param motor_mask Nonzero J1-J7 selection mask.
+ * @param motor_position_rad Joint-indexed motor targets.
+ * @param motor_velocity_rad_s Joint-indexed nonnegative speed limits.
+ * @param batch Destination bounded selected-motor frame batch.
+ * @return OK or an argument/range/codec error.
+ */
+MotorRuntimeStatus motor_runtime_build_position_velocity_subset(
+    const MotorRuntime *runtime,
+    uint8_t motor_mask,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_velocity_rad_s[ARM_JOINT_COUNT],
+    MotorEmergencyFrameBatch *batch);
+
+/**
  * @brief Starts a seven-motor volatile control-mode write/readback operation.
  * @param runtime Initialized runtime with completed discovery.
  * @param control_mode Requested MIT or POS_VEL mode.
@@ -151,6 +177,18 @@ MotorRuntimeStatus motor_runtime_build_control_group(
 MotorRuntimeStatus motor_runtime_begin_control_mode_switch(
     MotorRuntime *runtime,
     S3519ControlMode control_mode);
+
+/**
+ * @brief Starts a volatile control-mode write/readback for a selected subset.
+ * @param runtime Initialized runtime with selected discovery complete.
+ * @param control_mode Requested MIT or POS_VEL mode.
+ * @param motor_mask Nonzero J1-J7 mask.
+ * @return OK or an argument/discovery/state error.
+ */
+MotorRuntimeStatus motor_runtime_begin_control_mode_switch_mask(
+    MotorRuntime *runtime,
+    S3519ControlMode control_mode,
+    uint8_t motor_mask);
 
 /**
  * @brief Produces the next mode write or readback request frame.

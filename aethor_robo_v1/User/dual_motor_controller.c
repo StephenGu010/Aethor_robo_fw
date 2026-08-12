@@ -16,6 +16,8 @@
 #define DUAL_MOTOR_TWO_PI_RAD 6.2831853071795864769F
 #define DUAL_MOTOR_ARRIVAL_POSITION_RAD 0.0087266462599716479F
 #define DUAL_MOTOR_ARRIVAL_VELOCITY_RAD_S 0.0174532925199432958F
+#define DUAL_MOTOR_VELOCITY_FEEDBACK_MAX_CODE 4095.0F
+#define DUAL_MOTOR_VELOCITY_QUANTIZATION_MARGIN_RAD_S 0.001F
 #define DUAL_MOTOR_ARRIVAL_CYCLES 3U
 #define DUAL_MOTOR_CONFIGURATION_ITEM_COUNT 10U
 #define DUAL_MOTOR_CONTROL_MODE_VALUE 2U
@@ -69,6 +71,27 @@ static uint8_t dual_motor_key_press_armed;
 static uint32_t dual_motor_key_candidate_since_ms;
 
 static uint8_t dual_motor_feedback_is_recent(uint32_t current_time_ms);
+
+/**
+ * @brief Calculates a stopped-speed threshold that includes 12-bit feedback zero quantization.
+ * @param motor_index Zero-based motor index with a confirmed VMAX parameter.
+ * @return Positive velocity threshold in radians per second.
+ */
+static float dual_motor_arrival_velocity_limit(uint8_t motor_index)
+{
+    float quantized_zero_velocity_rad_s;
+
+    assert(motor_index < DUAL_MOTOR_COUNT);
+    assert(isfinite(dual_motor_state.velocity_max_rad_s[motor_index]));
+    assert(dual_motor_state.velocity_max_rad_s[motor_index] > 0.0F);
+
+    quantized_zero_velocity_rad_s =
+        (dual_motor_state.velocity_max_rad_s[motor_index] /
+         DUAL_MOTOR_VELOCITY_FEEDBACK_MAX_CODE) +
+        DUAL_MOTOR_VELOCITY_QUANTIZATION_MARGIN_RAD_S;
+    return fmaxf(DUAL_MOTOR_ARRIVAL_VELOCITY_RAD_S,
+                 quantized_zero_velocity_rad_s);
+}
 
 /**
  * @brief Sends one already validated CAN frame through the injected transport.
@@ -656,7 +679,8 @@ void dual_motor_controller_on_can_frame(const FdcanClassicFrame *frame,
         {
             if ((fabsf(feedback.position_rad - dual_motor_state.target_position_rad[motor_index]) <=
                  DUAL_MOTOR_ARRIVAL_POSITION_RAD) &&
-                (fabsf(feedback.velocity_rad_s) <= DUAL_MOTOR_ARRIVAL_VELOCITY_RAD_S))
+                (fabsf(feedback.velocity_rad_s) <=
+                 dual_motor_arrival_velocity_limit(motor_index)))
             {
                 if (dual_motor_arrival_cycle_count[motor_index] < DUAL_MOTOR_ARRIVAL_CYCLES)
                 {

@@ -31,6 +31,7 @@ static uint32_t dual_motor_sent_times_ms[512];
 static uint32_t dual_motor_send_count = 0U;
 static uint32_t dual_motor_current_time_ms = 0U;
 static int32_t dual_motor_fail_at_send_index = -1;
+static float dual_motor_test_velocity_max_rad_s = 30.0F;
 static char firmware_probe_capture[512];
 static size_t firmware_probe_capture_length = 0U;
 
@@ -347,6 +348,7 @@ static void test_dual_motor_reset_transport(void)
     dual_motor_send_count = 0U;
     dual_motor_current_time_ms = 0U;
     dual_motor_fail_at_send_index = -1;
+    dual_motor_test_velocity_max_rad_s = 30.0F;
 }
 
 /**
@@ -419,7 +421,9 @@ static void test_dual_motor_inject_feedback_on_master(uint16_t master_identifier
                                                       uint32_t time_ms)
 {
     uint32_t encoded_position = test_encode_symmetric(position_rad, 12.5f, 16U);
-    uint32_t encoded_velocity = test_encode_symmetric(velocity_rad_s, 30.0f, 12U);
+    uint32_t encoded_velocity = test_encode_symmetric(velocity_rad_s,
+                                                      dual_motor_test_velocity_max_rad_s,
+                                                      12U);
     uint32_t encoded_torque = test_encode_symmetric(0.0f, 10.0f, 12U);
     FdcanClassicFrame frame = {
         master_identifier,
@@ -500,7 +504,7 @@ static void test_dual_motor_respond_to_frames(uint32_t first_frame_index,
                 }
                 else if (register_address == DM_MOTOR_REGISTER_VELOCITY_RANGE)
                 {
-                    float_value = 30.0f;
+                    float_value = dual_motor_test_velocity_max_rad_s;
                 }
                 memcpy(&raw_value, &float_value, sizeof(raw_value));
             }
@@ -1607,6 +1611,7 @@ static void test_dual_motor_key_motion(void)
     float second_target_rad;
 
     test_dual_motor_reset_transport();
+    dual_motor_test_velocity_max_rad_s = 200.0F;
     dual_motor_controller_init(test_dual_motor_send, 0U);
     time_ms = test_dual_motor_complete_startup(first_start_position_rad,
                                                second_start_position_rad);

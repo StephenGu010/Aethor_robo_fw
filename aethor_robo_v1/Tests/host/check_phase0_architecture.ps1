@@ -80,9 +80,20 @@ function Invoke-Phase0ArchitectureCheck {
     }
 
     $iocText = Get-Content -LiteralPath (Join-Path $projectRoot 'CtrBoard-H7_FDCAN.ioc') -Raw
-    Assert-TextContains -FailureList $failureList -Text $iocText `
-        -Pattern 'FREERTOS\.Tasks01=defaultTask,0,512,StartDefaultTask,Default,NULL,Static,defaultTaskBuffer,defaultTaskControlBlock' `
-        -Message 'CubeMX defaultTask is not configured for static allocation.'
+    $requiredStaticTasks = @(
+        'ArmControlTask',
+        'CanRxTask',
+        'ProtocolTask',
+        'UsbTxTask',
+        'TelemetryTask',
+        'DiagnosticsTask'
+    )
+    foreach ($requiredStaticTask in $requiredStaticTasks)
+    {
+        Assert-TextContains -FailureList $failureList -Text $iocText `
+            -Pattern "FREERTOS\.Tasks01=[^\r\n]*\b$requiredStaticTask,[^;]+,Static,[^;]+" `
+            -Message "CubeMX does not preserve static task $requiredStaticTask."
+    }
     Assert-TextContains -FailureList $failureList -Text $iocText `
         -Pattern 'PA15\(JTDI\)\.GPIO_Label=USER_KEY' `
         -Message 'CubeMX USER_KEY label is missing from PA15.'
@@ -92,15 +103,31 @@ function Invoke-Phase0ArchitectureCheck {
     Assert-TextContains -FailureList $failureList -Text $mainText `
         -Pattern 'aethor_app_init\s*\(' `
         -Message 'main.c does not initialize the Phase 0 application facade.'
-    Assert-TextContains -FailureList $failureList -Text $freertosText `
-        -Pattern 'osThreadStaticDef\s*\(' `
-        -Message 'freertos.c does not create defaultTask statically.'
+    foreach ($requiredStaticTask in $requiredStaticTasks)
+    {
+        Assert-TextContains -FailureList $failureList -Text $freertosText `
+            -Pattern "osThreadStaticDef\s*\(\s*$requiredStaticTask\s*," `
+            -Message "freertos.c does not create $requiredStaticTask statically."
+    }
+    if (([regex]::Matches($freertosText, 'osThreadStaticDef\s*\(')).Count -ne $requiredStaticTasks.Count)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'freertos.c must create exactly six static application tasks.'
+    }
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'aethor_app_service\s*\(' `
         -Message 'freertos.c does not service the Phase 0 application facade.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'pdMS_TO_TICKS\s*\(\s*4U\s*\)' `
-        -Message 'defaultTask period is not 4 ms.'
+        -Message 'ArmControlTask period is not 4 ms.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'pdMS_TO_TICKS\s*\(\s*20U\s*\)' `
+        -Message 'TelemetryTask default period is not 20 ms.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'pdMS_TO_TICKS\s*\(\s*100U\s*\)' `
+        -Message 'DiagnosticsTask period is not 100 ms.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'ulTaskNotifyTake\s*\(' `
+        -Message 'RX-driven tasks do not wait on bounded task notifications.'
     if (($mainText -match 'aethor_application') -or ($freertosText -match 'aethor_application'))
     {
         Add-ArchitectureFailure -FailureList $failureList -Message 'Legacy aethor_application entry point is still referenced.'
@@ -166,7 +193,7 @@ function Invoke-Phase0ArchitectureCheck {
     Write-Host '[PASS] App sources contain no dynamic allocation calls.'
     Write-Host '[PASS] App business layers do not include platform headers.'
     Write-Host '[PASS] Executable motor frame generation is confined to App/Motor.'
-    Write-Host '[PASS] CubeMX retains the static default task and USER_KEY label.'
+    Write-Host '[PASS] CubeMX retains six static application tasks and the USER_KEY label.'
     Write-Host '[PASS] main.c and freertos.c use the Phase 0 application entry.'
     Write-Host '[PASS] Keil compiles one copy of each required source and no legacy controller.'
     Write-Host '[PASS] Phase 0 architecture contracts are satisfied.'

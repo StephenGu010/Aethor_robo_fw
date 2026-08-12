@@ -17,6 +17,9 @@ static CanRxInbox platform_can_rx_inbox;
 static CanTxScheduler platform_can_tx_scheduler;
 static UsbCdcStream platform_usb_stream;
 static Stm32PlatformDiagnostics platform_diagnostics;
+static Stm32PlatformIsrNotifier platform_can_rx_notifier;
+static Stm32PlatformIsrNotifier platform_usb_rx_notifier;
+static Stm32PlatformIsrNotifier platform_usb_tx_notifier;
 
 /**
  * @brief Maps a Classic CAN byte length to the HAL DLC constant.
@@ -186,17 +189,42 @@ Stm32PlatformStatus stm32_platform_init(const ArmConfig *configuration)
     return STM32_PLATFORM_STATUS_OK;
 }
 
+/**
+ * @brief Registers task notification hooks invoked by STM32 peripheral callbacks.
+ */
+void stm32_platform_set_isr_notifiers(
+    Stm32PlatformIsrNotifier can_rx_notifier,
+    Stm32PlatformIsrNotifier usb_rx_notifier,
+    Stm32PlatformIsrNotifier usb_tx_notifier)
+{
+    platform_can_rx_notifier = can_rx_notifier;
+    platform_usb_rx_notifier = usb_rx_notifier;
+    platform_usb_tx_notifier = usb_tx_notifier;
+}
+
 /** @brief Copies one USB receive packet into the static ISR ring. */
 UsbCdcStreamStatus stm32_platform_usb_receive_isr(const uint8_t *data,
                                                   uint32_t length)
 {
-    return usb_cdc_stream_receive_isr(&platform_usb_stream, data, length);
+    UsbCdcStreamStatus receive_status =
+        usb_cdc_stream_receive_isr(&platform_usb_stream, data, length);
+
+    if ((receive_status == USB_CDC_STREAM_STATUS_OK) &&
+        (platform_usb_rx_notifier != NULL))
+    {
+        platform_usb_rx_notifier();
+    }
+    return receive_status;
 }
 
 /** @brief Releases the USB in-flight buffer after endpoint completion. */
 void stm32_platform_usb_tx_complete_isr(void)
 {
     usb_cdc_stream_on_tx_complete_isr(&platform_usb_stream);
+    if (platform_usb_tx_notifier != NULL)
+    {
+        platform_usb_tx_notifier();
+    }
 }
 
 /** @brief Extracts one complete USB protocol line in task context. */
@@ -334,6 +362,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *fdcan_handle,
                                uint32_t receive_interrupts)
 {
     uint8_t processed_count;
+    uint8_t accepted_frame_count = 0U;
 
     if ((fdcan_handle != &hfdcan1) ||
         ((receive_interrupts & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0U))
@@ -378,6 +407,14 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *fdcan_handle,
         {
             ++platform_diagnostics.can_rx_overflow_count;
         }
+        else
+        {
+            ++accepted_frame_count;
+        }
+    }
+    if ((accepted_frame_count != 0U) && (platform_can_rx_notifier != NULL))
+    {
+        platform_can_rx_notifier();
     }
 }
 

@@ -745,6 +745,7 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     engine->watchdog_timeout_reported = 0U;
     engine->last_valid_request_at_us = timestamp_us;
     engine->next_telemetry_due_us = timestamp_us;
+    engine->next_motor_telemetry_due_us = timestamp_us;
     engine->telemetry_sequence = 0U;
     engine->event_sequence = 0U;
     engine->last_published_state_valid = 0U;
@@ -1260,6 +1261,7 @@ static ProtocolEngineStatus protocol_engine_handle_set_stream(
     memcpy(engine->stream_fields, fields_span.data, fields_span.length);
     engine->stream_fields[fields_span.length] = '\0';
     engine->next_telemetry_due_us = 0U;
+    engine->next_motor_telemetry_due_us = 0U;
     return protocol_engine_append_format(output_batch,
                                          PROTOCOL_OUTPUT_QUERY,
                                          "RSP %lu ok rate_hz=%lu fields=%s",
@@ -2084,6 +2086,95 @@ uint8_t protocol_engine_pop_result_output(
 }
 
 /**
+ * @brief Appends one compact 10 Hz motor-state snapshot from the query context.
+ */
+static uint8_t protocol_engine_append_motor_telemetry(
+    ProtocolEngine *engine,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    char body[PROTOCOL_MAX_LINE_LENGTH + 1U];
+    size_t body_length = 0U;
+    uint8_t fault_mask = 0U;
+    uint8_t joint_index;
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (engine->query_context.motors.joints[joint_index].fault_flags != 0U)
+        {
+            fault_mask |= (uint8_t)(1U << joint_index);
+        }
+    }
+    if (protocol_engine_append_text(
+            body,
+            sizeof(body),
+            &body_length,
+            "TEL %lu MOTOR_STATE t_us=%lu valid_mask=%u fault_mask=%u driver=",
+            (unsigned long)engine->telemetry_sequence,
+            (unsigned long)timestamp_us,
+            engine->query_context.motors.valid_joint_mask,
+            fault_mask) == 0U)
+    {
+        return 0U;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (protocol_engine_append_text(
+                body,
+                sizeof(body),
+                &body_length,
+                "%s%u",
+                (joint_index == 0U) ? "" : ",",
+                engine->query_context.motors.joints[joint_index].driver_state) == 0U)
+        {
+            return 0U;
+        }
+    }
+    if (protocol_engine_append_text(body,
+                                    sizeof(body),
+                                    &body_length,
+                                    " age_ms=") == 0U)
+    {
+        return 0U;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const MotorJointFeedback *feedback =
+            &engine->query_context.motors.joints[joint_index];
+        uint32_t age_ms = UINT32_MAX;
+
+        if ((feedback->timestamp_us != 0U) &&
+            (timestamp_us >= feedback->timestamp_us))
+        {
+            uint64_t age_value = (timestamp_us - feedback->timestamp_us) / 1000U;
+            age_ms = (age_value > UINT32_MAX) ? UINT32_MAX : (uint32_t)age_value;
+        }
+        if (protocol_engine_append_text(body,
+                                        sizeof(body),
+                                        &body_length,
+                                        "%s%lu",
+                                        (joint_index == 0U) ? "" : ",",
+                                        (unsigned long)age_ms) == 0U)
+        {
+            return 0U;
+        }
+    }
+    if (protocol_engine_append_text(
+            body,
+            sizeof(body),
+            &body_length,
+            " arm_state=%s",
+            protocol_engine_arm_state_text(engine->query_context.arm.state)) == 0U)
+    {
+        return 0U;
+    }
+    return (uint8_t)(protocol_engine_append_body(output_batch,
+                                                  PROTOCOL_OUTPUT_TELEMETRY,
+                                                  body) ==
+                     PROTOCOL_ENGINE_STATUS_OK);
+}
+
+/**
  * @brief Generates due telemetry and immediate state-change events.
  */
 uint8_t protocol_engine_generate_stream_output(
@@ -2094,6 +2185,9 @@ uint8_t protocol_engine_generate_stream_output(
     char body[PROTOCOL_MAX_LINE_LENGTH + 1U];
     size_t body_length = 0U;
     uint64_t interval_us;
+    uint8_t joint_telemetry_due;
+    uint8_t motor_telemetry_due;
+    uint8_t state_changed = 0U;
     uint8_t joint_index;
 
     if ((engine == NULL) || (output_batch == NULL))
@@ -2128,6 +2222,7 @@ uint8_t protocol_engine_generate_stream_output(
             return 0U;
         }
         engine->last_published_state = engine->query_context.arm.state;
+        state_changed = 1U;
     }
 
     if (engine->stream_rate_hz == 0U)
@@ -2135,13 +2230,20 @@ uint8_t protocol_engine_generate_stream_output(
         return output_batch->count;
     }
     interval_us = 1000000ULL / engine->stream_rate_hz;
-    if ((engine->next_telemetry_due_us != 0U) &&
-        (timestamp_us < engine->next_telemetry_due_us))
+    joint_telemetry_due = (uint8_t)((engine->next_telemetry_due_us == 0U) ||
+                                    (timestamp_us >= engine->next_telemetry_due_us));
+    motor_telemetry_due = (uint8_t)(
+        (protocol_engine_csv_contains(engine->stream_fields, "motor") != 0U) &&
+        ((state_changed != 0U) || (engine->next_motor_telemetry_due_us == 0U) ||
+         (timestamp_us >= engine->next_motor_telemetry_due_us)));
+    if ((joint_telemetry_due == 0U) && (motor_telemetry_due == 0U))
     {
         return output_batch->count;
     }
-    engine->next_telemetry_due_us = timestamp_us + interval_us;
-    ++engine->telemetry_sequence;
+    if (joint_telemetry_due != 0U)
+    {
+        engine->next_telemetry_due_us = timestamp_us + interval_us;
+        ++engine->telemetry_sequence;
 
     if (protocol_engine_append_text(body,
                                     sizeof(body),
@@ -2256,9 +2358,19 @@ uint8_t protocol_engine_generate_stream_output(
     {
         return output_batch->count;
     }
-    (void)protocol_engine_append_body(output_batch,
-                                      PROTOCOL_OUTPUT_TELEMETRY,
-                                      body);
+        (void)protocol_engine_append_body(output_batch,
+                                          PROTOCOL_OUTPUT_TELEMETRY,
+                                          body);
+    }
+    if ((motor_telemetry_due != 0U) &&
+        (output_batch->count < PROTOCOL_ENGINE_MAX_OUTPUT_COUNT))
+    {
+        engine->next_motor_telemetry_due_us = timestamp_us + 100000ULL;
+        ++engine->telemetry_sequence;
+        (void)protocol_engine_append_motor_telemetry(engine,
+                                                     timestamp_us,
+                                                     output_batch);
+    }
     return output_batch->count;
 }
 

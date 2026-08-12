@@ -146,6 +146,7 @@ typedef struct
     char stream_fields[64];
     uint64_t last_valid_request_at_us;
     uint64_t next_telemetry_due_us;
+    uint64_t next_motor_telemetry_due_us;
     uint32_t boot_id;
     uint32_t session_id;
     uint32_t next_session_nonce;

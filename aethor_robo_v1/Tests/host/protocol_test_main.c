@@ -462,6 +462,7 @@ static void test_protocol_engine_stream_generation(void)
     query_context.joints.position_deg[0] = 1.25F;
     query_context.joints.valid_joint_mask = 0x01U;
     query_context.joints.published_at_us = 1000U;
+    query_context.motors.valid_joint_mask = 0x01U;
     protocol_engine_init(&engine, 3456U);
     request_length = build_request_frame(
         "REQ 1 HELLO client=test protocol=1",
@@ -471,17 +472,22 @@ static void test_protocol_engine_stream_generation(void)
                                         1000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
     protocol_engine_update_query_context(&engine, &query_context);
 
-    assert(protocol_engine_generate_stream_output(&engine, 1000U, &output_batch) == 1U);
+    assert(protocol_engine_generate_stream_output(&engine, 1000U, &output_batch) == 2U);
     assert(strstr(output_batch.messages[0].data, "TEL 1 JOINT_STATE") != NULL);
     assert(strstr(output_batch.messages[0].data, "q_deg=1.250") != NULL);
     assert(output_batch.messages[0].priority == PROTOCOL_OUTPUT_TELEMETRY);
+    assert(strstr(output_batch.messages[1].data, "TEL 2 MOTOR_STATE") != NULL);
+    assert(strstr(output_batch.messages[1].data, "valid_mask=1") != NULL);
+    assert(output_batch.messages[1].priority == PROTOCOL_OUTPUT_TELEMETRY);
     assert(protocol_engine_generate_stream_output(&engine, 1001U, &output_batch) == 0U);
 
     query_context.arm.state = ARM_STATE_DISABLED;
     protocol_engine_update_query_context(&engine, &query_context);
-    assert(protocol_engine_generate_stream_output(&engine, 2000U, &output_batch) == 1U);
+    assert(protocol_engine_generate_stream_output(&engine, 2000U, &output_batch) == 2U);
     assert(strstr(output_batch.messages[0].data, "EVT 1 STATE_CHANGED") != NULL);
     assert(output_batch.messages[0].priority == PROTOCOL_OUTPUT_HIGH_PRIORITY);
+    assert(strstr(output_batch.messages[1].data, "MOTOR_STATE") != NULL);
+    assert(strstr(output_batch.messages[1].data, "arm_state=DISABLED") != NULL);
 
     request_length = build_request_frame(
         "REQ 2 SET_STREAM rate_hz=100 fields=jpos",

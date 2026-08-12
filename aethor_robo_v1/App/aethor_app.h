@@ -10,7 +10,9 @@
 #include <stdint.h>
 
 #include "arm_controller.h"
+#include "can_tx_scheduler.h"
 #include "diagnostics.h"
+#include "motor_runtime.h"
 
 /**
  * @brief Initializes all static Phase 0 application state.
@@ -23,6 +25,35 @@ void aethor_app_init(uint64_t timestamp_us);
  * @param timestamp_us Current monotonic time in microseconds.
  */
 void aethor_app_service(uint64_t timestamp_us);
+
+/**
+ * @brief Produces the next bounded CAN service frame for the platform scheduler.
+ * @param timestamp_us Current monotonic time in microseconds.
+ * @param frame Destination frame.
+ * @param priority Destination scheduler priority.
+ * @return FRAME_READY, WAITING, DISCOVERY_COMPLETE, or an error.
+ */
+MotorRuntimeStatus aethor_app_next_can_frame(uint64_t timestamp_us,
+                                             CanFrame *frame,
+                                             CanTxPriority *priority);
+
+/**
+ * @brief Routes one received CAN frame through discovery or feedback decode.
+ * @param frame Frame copied from the platform RX inbox.
+ * @param timestamp_us Receive timestamp in microseconds.
+ * @return Detailed motor runtime result.
+ */
+MotorRuntimeStatus aethor_app_receive_can_frame(const CanFrame *frame,
+                                                uint64_t timestamp_us);
+
+/**
+ * @brief Copies the current coherent seven-motor feedback snapshot.
+ * @param timestamp_us Snapshot publication timestamp.
+ * @param snapshot Destination snapshot.
+ * @return true after initialization when snapshot is non-null.
+ */
+bool aethor_app_get_motor_snapshot(uint64_t timestamp_us,
+                                  MotorFeedbackSnapshot *snapshot);
 
 /**
  * @brief Copies the current arm state snapshot.

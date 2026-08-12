@@ -39,7 +39,13 @@ function Invoke-Phase0HostTests {
         'App\Config\arm_config.c',
         'App\Config\build_info.c',
         'App\Telemetry\diagnostics.c',
-        'App\Arm\arm_controller.c'
+        'App\Arm\arm_controller.c',
+        'App\Motor\can_frame.c',
+        'App\Motor\can_tx_scheduler.c',
+        'App\Motor\motor_bank.c',
+        'App\Motor\motor_discovery.c',
+        'App\Motor\motor_runtime.c',
+        'App\Motor\s3519_codec.c'
     )
     $compilerArguments = @(
         '-std=c11',

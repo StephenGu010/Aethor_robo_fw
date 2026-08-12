@@ -757,6 +757,11 @@
               <FilePath>..\App\Motor\motor_discovery.c</FilePath>
             </File>
             <File>
+              <FileName>motor_runtime.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Motor\motor_runtime.c</FilePath>
+            </File>
+            <File>
               <FileName>s3519_codec.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\Motor\s3519_codec.c</FilePath>

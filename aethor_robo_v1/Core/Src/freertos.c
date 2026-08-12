@@ -180,7 +180,18 @@ void StartArmControlTask(void const * argument)
   (void)argument;
   for(;;)
   {
-    aethor_app_service((uint64_t)HAL_GetTick() * 1000ULL);
+    uint64_t timestampUs = (uint64_t)HAL_GetTick() * 1000ULL;
+    CanFrame pendingFrame;
+    CanTxPriority pendingPriority;
+
+    aethor_app_service(timestampUs);
+    if (aethor_app_next_can_frame(timestampUs,
+                                  &pendingFrame,
+                                  &pendingPriority) ==
+        MOTOR_RUNTIME_STATUS_FRAME_READY)
+    {
+      (void)stm32_platform_can_submit(pendingPriority, &pendingFrame);
+    }
     (void)stm32_platform_can_service_tx(ARM_JOINT_COUNT);
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(4U));
   }
@@ -199,8 +210,26 @@ void StartCanRxTask(void const * argument)
   (void)argument;
   for(;;)
   {
-    (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    /* CAN decoding is connected in the seven-motor runtime slice. */
+    uint8_t processedFrameCount = 0U;
+    CanFrame receivedFrame;
+
+    while ((processedFrameCount < CAN_RX_INBOX_CAPACITY) &&
+           (stm32_platform_can_pop_received(&receivedFrame) ==
+            CAN_RX_INBOX_STATUS_OK))
+    {
+      (void)aethor_app_receive_can_frame(
+          &receivedFrame,
+          (uint64_t)HAL_GetTick() * 1000ULL);
+      ++processedFrameCount;
+    }
+    if (processedFrameCount < CAN_RX_INBOX_CAPACITY)
+    {
+      (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    }
+    else
+    {
+      taskYIELD();
+    }
   }
 }
 

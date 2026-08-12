@@ -39,6 +39,7 @@ function Invoke-MotorCoreTests {
         'App\Motor\can_tx_scheduler.c',
         'App\Motor\motor_bank.c',
         'App\Motor\motor_discovery.c',
+        'App\Motor\motor_runtime.c',
         'App\Motor\s3519_codec.c'
     )
 

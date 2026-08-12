@@ -117,6 +117,18 @@ function Invoke-Phase0ArchitectureCheck {
         -Pattern 'aethor_app_service\s*\(' `
         -Message 'freertos.c does not service the Phase 0 application facade.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_next_can_frame\s*\(' `
+        -Message 'ArmControlTask does not produce bounded discovery traffic.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'stm32_platform_can_submit\s*\(' `
+        -Message 'ArmControlTask does not submit application CAN traffic.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'stm32_platform_can_pop_received\s*\(' `
+        -Message 'CanRxTask does not drain the bounded ISR inbox.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_receive_can_frame\s*\(' `
+        -Message 'CanRxTask does not route received frames to the motor runtime.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'pdMS_TO_TICKS\s*\(\s*4U\s*\)' `
         -Message 'ArmControlTask period is not 4 ms.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
@@ -147,6 +159,7 @@ function Invoke-Phase0ArchitectureCheck {
         'can_tx_scheduler.c',
         'motor_bank.c',
         'motor_discovery.c',
+        'motor_runtime.c',
         's3519_codec.c',
         'can_rx_inbox.c',
         'usb_cdc_stream.c',

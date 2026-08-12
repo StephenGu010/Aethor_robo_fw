@@ -28,8 +28,11 @@ typedef struct
     float position_rad;
     float velocity_rad_s;
     float torque_nm;
+    float mos_temperature_c;
+    float rotor_temperature_c;
     uint32_t fault_flags;
     uint64_t timestamp_us;
+    uint8_t driver_state;
 } MotorJointFeedback;
 
 /**

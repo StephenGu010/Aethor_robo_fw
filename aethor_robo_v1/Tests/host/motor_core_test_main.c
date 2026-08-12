@@ -13,6 +13,7 @@
 #include "can_tx_scheduler.h"
 #include "motor_bank.h"
 #include "motor_discovery.h"
+#include "motor_runtime.h"
 #include "s3519_codec.h"
 
 /**
@@ -233,6 +234,47 @@ static uint32_t float_to_raw_register(float value)
 }
 
 /**
+ * @brief Supplies a deterministic valid raw value for one discovery register.
+ * @param register_address Requested vendor register.
+ * @param esc_id One-based motor identifier.
+ * @return Raw uint32 payload value.
+ */
+static uint32_t make_discovery_raw_value(S3519Register register_address,
+                                         uint8_t esc_id)
+{
+    switch (register_address)
+    {
+        case S3519_REGISTER_ACCELERATION:
+            return float_to_raw_register(30.0F);
+        case S3519_REGISTER_DECELERATION:
+            return float_to_raw_register(25.0F);
+        case S3519_REGISTER_MAXIMUM_SPEED:
+            return float_to_raw_register(20.0F);
+        case S3519_REGISTER_MASTER_ID:
+            return (uint32_t)(esc_id + 0x10U);
+        case S3519_REGISTER_ESC_ID:
+            return esc_id;
+        case S3519_REGISTER_CONTROL_MODE:
+            return 2U;
+        case S3519_REGISTER_HARDWARE_VERSION:
+            return 0x00010002U;
+        case S3519_REGISTER_SOFTWARE_VERSION:
+            return 0x00030004U;
+        case S3519_REGISTER_SUB_VERSION:
+            return 0x00000005U;
+        case S3519_REGISTER_POSITION_RANGE:
+            return float_to_raw_register(12.5F);
+        case S3519_REGISTER_VELOCITY_RANGE:
+            return float_to_raw_register(45.0F);
+        case S3519_REGISTER_TORQUE_RANGE:
+            return float_to_raw_register(18.0F);
+        default:
+            assert(0);
+            return 0U;
+    }
+}
+
+/**
  * @brief Verifies discovery reads identity, tuning, ranges, and versions for seven motors.
  */
 static void test_motor_discovery_verifies_every_joint(void)
@@ -396,6 +438,85 @@ static void test_motor_discovery_times_out_without_response(void)
 }
 
 /**
+ * @brief Verifies task-facing runtime discovery and feedback decoding end to end.
+ */
+static void test_motor_runtime_routes_discovery_and_feedback(void)
+{
+    MotorRuntime runtime;
+    MotorFeedbackSnapshot snapshot;
+    uint64_t timestamp_us = 1000U;
+    uint16_t response_index;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    for (response_index = 0U;
+         response_index < (uint16_t)(ARM_JOINT_COUNT * MOTOR_DISCOVERY_REGISTER_COUNT);
+         ++response_index)
+    {
+        CanFrame request_frame;
+        CanFrame response_frame;
+        uint8_t response_payload[8] = {0U};
+        uint8_t esc_id;
+        uint32_t raw_value;
+
+        assert(motor_runtime_next_discovery_frame(&runtime,
+                                                  timestamp_us,
+                                                  &request_frame) ==
+               MOTOR_RUNTIME_STATUS_FRAME_READY);
+        esc_id = request_frame.data[0];
+        raw_value = make_discovery_raw_value(
+            (S3519Register)request_frame.data[3],
+            esc_id);
+        response_payload[0] = esc_id;
+        response_payload[2] = 0x33U;
+        response_payload[3] = request_frame.data[3];
+        response_payload[4] = (uint8_t)(raw_value & 0xFFU);
+        response_payload[5] = (uint8_t)((raw_value >> 8U) & 0xFFU);
+        response_payload[6] = (uint8_t)((raw_value >> 16U) & 0xFFU);
+        response_payload[7] = (uint8_t)((raw_value >> 24U) & 0xFFU);
+        assert(can_frame_init(&response_frame,
+                              (uint16_t)(esc_id + 0x10U),
+                              response_payload,
+                              sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+        assert(motor_runtime_accept_frame(&runtime,
+                                          &response_frame,
+                                          timestamp_us + 100U) ==
+               MOTOR_RUNTIME_STATUS_OK);
+        timestamp_us += 1000U;
+    }
+    assert(motor_runtime_next_discovery_frame(&runtime,
+                                              timestamp_us,
+                                              &(CanFrame){0}) ==
+           MOTOR_RUNTIME_STATUS_DISCOVERY_COMPLETE);
+
+    {
+        static const uint8_t feedback_payload[8] = {
+            0x01U, 0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 42U, 40U
+        };
+        CanFrame feedback_frame;
+
+        assert(can_frame_init(&feedback_frame,
+                              0x11U,
+                              feedback_payload,
+                              sizeof(feedback_payload)) == CAN_FRAME_STATUS_OK);
+        assert(motor_runtime_accept_frame(&runtime,
+                                          &feedback_frame,
+                                          timestamp_us) ==
+               MOTOR_RUNTIME_STATUS_OK);
+    }
+    assert(motor_runtime_get_snapshot(&runtime,
+                                      timestamp_us,
+                                      MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
+                                      &snapshot) == MOTOR_RUNTIME_STATUS_OK);
+    assert(snapshot.valid_joint_mask == 0x01U);
+    assert(snapshot.joints[0].mos_temperature_c == 42.0F);
+    assert(snapshot.joints[0].rotor_temperature_c == 40.0F);
+    assert(runtime.accepted_feedback_count == 1U);
+    assert(runtime.accepted_parameter_response_count ==
+           (uint32_t)(ARM_JOINT_COUNT * MOTOR_DISCOVERY_REGISTER_COUNT));
+}
+
+/**
  * @brief Runs all seven-motor core tests.
  * @return Zero when every assertion passes.
  */
@@ -409,6 +530,7 @@ int main(void)
     test_motor_discovery_verifies_every_joint();
     test_motor_discovery_rejects_mapping_mismatch();
     test_motor_discovery_times_out_without_response();
+    test_motor_runtime_routes_discovery_and_feedback();
     puts("MOTOR_CORE_TESTS_PASSED");
     return 0;
 }

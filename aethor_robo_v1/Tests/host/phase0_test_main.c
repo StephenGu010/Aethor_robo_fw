@@ -313,6 +313,8 @@ static void test_layer_contracts_are_frozen(void)
 static void test_aethor_app_latches_safe_phase0_fault(void)
 {
     ArmSnapshot snapshot;
+    CanFrame discovery_frame;
+    CanTxPriority discovery_priority;
     DiagnosticEvent event;
     DiagnosticCounters counters;
 
@@ -320,10 +322,22 @@ static void test_aethor_app_latches_safe_phase0_fault(void)
     assert(!aethor_app_get_snapshot(NULL));
     assert(!aethor_app_get_diagnostic(0U, &event));
     assert(!aethor_app_get_diagnostic_counters(&counters));
+    assert(aethor_app_next_can_frame(500ULL,
+                                     &discovery_frame,
+                                     &discovery_priority) ==
+           MOTOR_RUNTIME_STATUS_NOT_INITIALIZED);
 
     aethor_app_init(1000ULL);
     assert(aethor_app_get_snapshot(&snapshot));
     assert(snapshot.state == ARM_STATE_BOOT);
+    assert(aethor_app_next_can_frame(1000ULL,
+                                     &discovery_frame,
+                                     &discovery_priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(discovery_priority == CAN_TX_PRIORITY_PARAMETER);
+    assert(discovery_frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER);
+    assert(discovery_frame.data[0] == 0x01U);
+    assert(discovery_frame.data[3] == S3519_REGISTER_MASTER_ID);
 
     aethor_app_service(2000ULL);
     aethor_app_service(3000ULL);

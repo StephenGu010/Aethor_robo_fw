@@ -5,10 +5,13 @@
 
 #include "aethor_app.h"
 
+#include <stddef.h>
+
 #include "arm_config.h"
 
 static Diagnostics application_diagnostics;
 static ArmController application_controller;
+static MotorRuntime application_motor_runtime;
 static uint8_t application_initialized;
 
 /**
@@ -17,12 +20,77 @@ static uint8_t application_initialized;
  */
 void aethor_app_init(uint64_t timestamp_us)
 {
+    MotorRuntimeStatus motor_status;
+
     diagnostics_init(&application_diagnostics);
     arm_controller_init(&application_controller,
                         arm_config_get_production(),
                         &application_diagnostics,
                         timestamp_us);
-    application_initialized = 1U;
+    motor_status = motor_runtime_init(&application_motor_runtime,
+                                      arm_config_get_production());
+    application_initialized =
+        (uint8_t)(motor_status == MOTOR_RUNTIME_STATUS_OK);
+}
+
+/**
+ * @brief Produces the next bounded CAN service frame for the platform scheduler.
+ */
+MotorRuntimeStatus aethor_app_next_can_frame(uint64_t timestamp_us,
+                                             CanFrame *frame,
+                                             CanTxPriority *priority)
+{
+    MotorRuntimeStatus runtime_status;
+
+    if (application_initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    if ((frame == NULL) || (priority == NULL))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+
+    runtime_status = motor_runtime_next_discovery_frame(
+        &application_motor_runtime,
+        timestamp_us,
+        frame);
+    if (runtime_status == MOTOR_RUNTIME_STATUS_FRAME_READY)
+    {
+        *priority = CAN_TX_PRIORITY_PARAMETER;
+    }
+    return runtime_status;
+}
+
+/**
+ * @brief Routes one received CAN frame through discovery or feedback decode.
+ */
+MotorRuntimeStatus aethor_app_receive_can_frame(const CanFrame *frame,
+                                                uint64_t timestamp_us)
+{
+    if (application_initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    return motor_runtime_accept_frame(&application_motor_runtime,
+                                      frame,
+                                      timestamp_us);
+}
+
+/**
+ * @brief Copies the current coherent seven-motor feedback snapshot.
+ */
+bool aethor_app_get_motor_snapshot(uint64_t timestamp_us,
+                                  MotorFeedbackSnapshot *snapshot)
+{
+    if (application_initialized == 0U)
+    {
+        return false;
+    }
+    return motor_runtime_get_snapshot(&application_motor_runtime,
+                                      timestamp_us,
+                                      MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
+                                      snapshot) == MOTOR_RUNTIME_STATUS_OK;
 }
 
 /**

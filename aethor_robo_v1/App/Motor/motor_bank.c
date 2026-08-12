@@ -18,7 +18,9 @@ static uint8_t motor_bank_feedback_is_finite(const MotorJointFeedback *feedback)
 {
     return (uint8_t)(isfinite(feedback->position_rad) &&
                      isfinite(feedback->velocity_rad_s) &&
-                     isfinite(feedback->torque_nm));
+                     isfinite(feedback->torque_nm) &&
+                     isfinite(feedback->mos_temperature_c) &&
+                     isfinite(feedback->rotor_temperature_c));
 }
 
 /**

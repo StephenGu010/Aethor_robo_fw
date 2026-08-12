@@ -12,6 +12,8 @@
 #include "can_frame.h"
 #include "can_tx_scheduler.h"
 #include "motor_bank.h"
+#include "motor_discovery.h"
+#include "s3519_codec.h"
 
 /**
  * @brief Creates one deterministic eight-byte Classic CAN frame.
@@ -151,6 +153,193 @@ static void test_can_scheduler_is_bounded_and_fair(void)
 }
 
 /**
+ * @brief Verifies POS_VEL, mode, parameter-read, and MIT frames against vendor layout.
+ */
+static void test_s3519_command_encoding(void)
+{
+    static const uint8_t expected_midpoint_mit[8] = {
+        0x7FU, 0xFFU, 0x7FU, 0xF7U, 0xFFU, 0x7FU, 0xF7U, 0xFFU
+    };
+    CanFrame frame;
+    S3519Ranges ranges = {12.5F, 45.0F, 18.0F};
+
+    assert(s3519_pack_position_velocity(3U, 1.25F, 0.5F, &frame) ==
+           S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x103U);
+    assert(frame.length == 8U);
+    assert(memcmp(&frame.data[0], &(float){1.25F}, sizeof(float)) == 0);
+    assert(memcmp(&frame.data[4], &(float){0.5F}, sizeof(float)) == 0);
+
+    assert(s3519_pack_mode_command(3U,
+                                    S3519_CONTROL_MODE_POSITION_VELOCITY,
+                                    S3519_MODE_COMMAND_ENABLE,
+                                    &frame) ==
+           S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x103U);
+    assert(frame.data[7] == 0xFCU);
+
+    assert(s3519_pack_parameter_read(3U, S3519_REGISTER_MASTER_ID, &frame) ==
+           S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x7FFU);
+    assert(frame.data[0] == 3U);
+    assert(frame.data[2] == 0x33U);
+    assert(frame.data[3] == 0x07U);
+
+    assert(s3519_pack_mit(3U,
+                          &ranges,
+                          0.0F,
+                          0.0F,
+                          250.0F,
+                          2.5F,
+                          0.0F,
+                          &frame) == S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x003U);
+    assert(memcmp(frame.data, expected_midpoint_mit, sizeof(expected_midpoint_mit)) == 0);
+}
+
+/**
+ * @brief Reinterprets one float as the raw little-endian register value.
+ * @param value Floating-point register value.
+ * @return Bit-identical uint32 value.
+ */
+static uint32_t float_to_raw_register(float value)
+{
+    uint32_t raw_value;
+
+    memcpy(&raw_value, &value, sizeof(raw_value));
+    return raw_value;
+}
+
+/**
+ * @brief Verifies discovery reads six volatile fields for each of seven motors.
+ */
+static void test_motor_discovery_verifies_every_joint(void)
+{
+    static const S3519Register expected_registers[MOTOR_DISCOVERY_REGISTER_COUNT] = {
+        S3519_REGISTER_MASTER_ID,
+        S3519_REGISTER_ESC_ID,
+        S3519_REGISTER_CONTROL_MODE,
+        S3519_REGISTER_POSITION_RANGE,
+        S3519_REGISTER_VELOCITY_RANGE,
+        S3519_REGISTER_TORQUE_RANGE
+    };
+    const ArmConfig *configuration = arm_config_get_production();
+    MotorDiscovery discovery;
+    uint64_t timestamp_us = 1000U;
+    uint8_t joint_index;
+
+    assert(motor_discovery_init(&discovery, configuration) == MOTOR_DISCOVERY_STATUS_OK);
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t register_index;
+
+        for (register_index = 0U;
+             register_index < MOTOR_DISCOVERY_REGISTER_COUNT;
+             ++register_index)
+        {
+            CanFrame request_frame;
+            S3519ParameterResponse response = {0};
+
+            assert(motor_discovery_next_request(&discovery, timestamp_us, &request_frame) ==
+                   MOTOR_DISCOVERY_STATUS_FRAME_READY);
+            assert(request_frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER);
+            assert(request_frame.data[0] == (uint8_t)(joint_index + 1U));
+            assert(request_frame.data[3] == (uint8_t)expected_registers[register_index]);
+
+            response.esc_id = (uint16_t)(joint_index + 1U);
+            response.register_address = (uint8_t)expected_registers[register_index];
+            switch (expected_registers[register_index])
+            {
+                case S3519_REGISTER_MASTER_ID:
+                    response.raw_value = (uint32_t)(joint_index + 0x11U);
+                    break;
+                case S3519_REGISTER_ESC_ID:
+                    response.raw_value = (uint32_t)(joint_index + 1U);
+                    break;
+                case S3519_REGISTER_CONTROL_MODE:
+                    response.raw_value = 2U;
+                    break;
+                case S3519_REGISTER_POSITION_RANGE:
+                    response.raw_value = float_to_raw_register(12.5F);
+                    response.float_value = 12.5F;
+                    break;
+                case S3519_REGISTER_VELOCITY_RANGE:
+                    response.raw_value = float_to_raw_register(45.0F);
+                    response.float_value = 45.0F;
+                    break;
+                case S3519_REGISTER_TORQUE_RANGE:
+                    response.raw_value = float_to_raw_register(18.0F);
+                    response.float_value = 18.0F;
+                    break;
+                default:
+                    assert(0);
+                    break;
+            }
+
+            assert(motor_discovery_accept_response(&discovery,
+                                                    (uint16_t)(joint_index + 0x11U),
+                                                    &response) == MOTOR_DISCOVERY_STATUS_OK);
+            timestamp_us += 1000U;
+        }
+    }
+
+    assert(discovery.state == MOTOR_DISCOVERY_STATE_COMPLETE);
+    assert(discovery.verified_joint_mask == 0x7FU);
+    assert(motor_discovery_next_request(&discovery, timestamp_us, &(CanFrame){0}) ==
+           MOTOR_DISCOVERY_STATUS_COMPLETE);
+}
+
+/**
+ * @brief Verifies identity mismatches latch discovery failure before enable.
+ */
+static void test_motor_discovery_rejects_mapping_mismatch(void)
+{
+    MotorDiscovery discovery;
+    CanFrame request_frame;
+    S3519ParameterResponse response = {0};
+
+    assert(motor_discovery_init(&discovery, arm_config_get_production()) ==
+           MOTOR_DISCOVERY_STATUS_OK);
+    assert(motor_discovery_next_request(&discovery, 1000U, &request_frame) ==
+           MOTOR_DISCOVERY_STATUS_FRAME_READY);
+    response.esc_id = 1U;
+    response.register_address = S3519_REGISTER_MASTER_ID;
+    response.raw_value = 0x21U;
+    assert(motor_discovery_accept_response(&discovery, 0x11U, &response) ==
+           MOTOR_DISCOVERY_STATUS_CONFIG_MISMATCH);
+    assert(discovery.state == MOTOR_DISCOVERY_STATE_FAILED);
+}
+
+/**
+ * @brief Verifies an absent motor exhausts a finite retry budget and fails closed.
+ */
+static void test_motor_discovery_times_out_without_response(void)
+{
+    MotorDiscovery discovery;
+    CanFrame request_frame;
+    uint8_t attempt_index;
+
+    assert(motor_discovery_init(&discovery, arm_config_get_production()) ==
+           MOTOR_DISCOVERY_STATUS_OK);
+    for (attempt_index = 0U; attempt_index < MOTOR_DISCOVERY_MAX_ATTEMPTS; ++attempt_index)
+    {
+        uint64_t timestamp_us =
+            (uint64_t)attempt_index * MOTOR_DISCOVERY_REQUEST_TIMEOUT_US;
+
+        assert(motor_discovery_next_request(&discovery, timestamp_us, &request_frame) ==
+               MOTOR_DISCOVERY_STATUS_FRAME_READY);
+    }
+
+    assert(motor_discovery_next_request(
+               &discovery,
+               (uint64_t)MOTOR_DISCOVERY_MAX_ATTEMPTS *
+                   MOTOR_DISCOVERY_REQUEST_TIMEOUT_US,
+               &request_frame) == MOTOR_DISCOVERY_STATUS_TIMEOUT);
+    assert(discovery.state == MOTOR_DISCOVERY_STATE_FAILED);
+}
+
+/**
  * @brief Runs all seven-motor core tests.
  * @return Zero when every assertion passes.
  */
@@ -160,6 +349,10 @@ int main(void)
     test_motor_bank_publishes_coherent_feedback_snapshots();
     test_can_scheduler_prioritizes_emergency_frames();
     test_can_scheduler_is_bounded_and_fair();
+    test_s3519_command_encoding();
+    test_motor_discovery_verifies_every_joint();
+    test_motor_discovery_rejects_mapping_mismatch();
+    test_motor_discovery_times_out_without_response();
     puts("MOTOR_CORE_TESTS_PASSED");
     return 0;
 }

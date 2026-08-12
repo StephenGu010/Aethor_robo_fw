@@ -65,12 +65,13 @@ function Invoke-Phase0ArchitectureCheck {
             Add-ArchitectureFailure -FailureList $failureList -Message "Dynamic allocation call found in $($applicationFile.FullName)."
         }
 
-        if ($applicationText -match $motorCommandPattern)
+        $relativeApplicationPath = $applicationFile.FullName.Substring($applicationPathPrefixLength)
+        if (($relativeApplicationPath -notlike 'Motor\*') -and
+            ($applicationText -match $motorCommandPattern))
         {
-            Add-ArchitectureFailure -FailureList $failureList -Message "Executable motor command found in $($applicationFile.FullName)."
+            Add-ArchitectureFailure -FailureList $failureList -Message "Motor command escaped App/Motor in $($applicationFile.FullName)."
         }
 
-        $relativeApplicationPath = $applicationFile.FullName.Substring($applicationPathPrefixLength)
         if (($relativeApplicationPath -notlike 'Platform\*') -and
             ($applicationText -match "(?m)$platformIncludePattern"))
         {
@@ -148,7 +149,7 @@ function Invoke-Phase0ArchitectureCheck {
 
     Write-Host '[PASS] App sources contain no dynamic allocation calls.'
     Write-Host '[PASS] App business layers do not include platform headers.'
-    Write-Host '[PASS] App sources expose no executable motor commands.'
+    Write-Host '[PASS] Executable motor frame generation is confined to App/Motor.'
     Write-Host '[PASS] CubeMX retains the static default task and USER_KEY label.'
     Write-Host '[PASS] main.c and freertos.c use the Phase 0 application entry.'
     Write-Host '[PASS] Keil compiles one copy of each required source and no legacy controller.'

@@ -37,7 +37,9 @@ function Invoke-MotorCoreTests {
         'App\Config\arm_config.c',
         'App\Motor\can_frame.c',
         'App\Motor\can_tx_scheduler.c',
-        'App\Motor\motor_bank.c'
+        'App\Motor\motor_bank.c',
+        'App\Motor\motor_discovery.c',
+        'App\Motor\s3519_codec.c'
     )
 
     if (-not (Test-Path -LiteralPath $buildDirectory))

@@ -25,8 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "fdcan.h"
-#include "bsp_fdcan.h"
+#include "aethor_application.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,7 +45,6 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-static uint8_t canTransmitData[8] = {0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U};
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
 
@@ -103,7 +101,7 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 512);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -122,17 +120,14 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
+  TickType_t lastWakeTime = xTaskGetTickCount();
+
+  (void)argument;
   /* Infinite loop */
   for(;;)
   {
-    fdcanx_send_data(&hfdcan1, 0x520U, canTransmitData, 8U);
-    osDelay(100U);
-
-    fdcanx_send_data(&hfdcan2, 0x520U, canTransmitData, 8U);
-    osDelay(100U);
-
-    fdcanx_send_data(&hfdcan3, 0x520U, canTransmitData, 8U);
-    osDelay(100U);
+    aethor_application_service();
+    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(5U));
   }
   /* USER CODE END StartDefaultTask */
 }

@@ -2,6 +2,15 @@
 
 ## Unreleased — PRD Phase 0
 
+### 2026-08-13 首组七轴固件软件闭环
+
+- 正式传输切换为 Type-C USB CDC，完成 `aethor-arm-ascii-v1` 的 CRC、分包/粘包、会话、重放缓存、心跳看门狗、查询、动作 `ACK/DONE` 和优先级发送。
+- 完成六个静态 FreeRTOS 任务、FDCAN1 适配、七电机 S3519 发现/反馈/模式回读、整组原子 CAN 调度和安全失能。
+- 完成启动状态机、RAM 参考位、七轴一致性快照、POS_VEL 共同到达、MIT 五次时间标度、受控停止和台架显式电机子集控制。
+- 完成 50 Hz `JOINT_STATE`、10 Hz/状态变化 `MOTOR_STATE`、运行诊断、Bus-Off/overflow/驱动/反馈/实时性/断线故障处理。
+- 新增确定性七电机主机模拟器、脚本化参考客户端、Schema、Golden Frames、分包/坏帧向量、外部 Aethor Studio V2 验收模板，以及 8 小时/2 小时逻辑时钟长稳。
+- 生产配置仍因方向、参考位、限位、速度、加速度、驱动量程、减速比和 MIT 增益未实测而禁止使能；USB/CAN/电机/机械臂硬件与 Aethor Studio V2 外部验收未计为完成。
+
 ### 新增
 
 - 建立 `App/Config`、`Protocol`、`Arm`、`Motion`、`Motor`、`Telemetry`、`Platform` 分层契约和统一 `aethor_app` 入口。

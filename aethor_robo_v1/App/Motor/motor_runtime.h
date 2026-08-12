@@ -36,8 +36,21 @@ typedef enum
     MOTOR_RUNTIME_STATUS_CODEC_ERROR,
     MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE,
     MOTOR_RUNTIME_STATUS_ID_MISMATCH,
-    MOTOR_RUNTIME_STATUS_STALE_FEEDBACK
+    MOTOR_RUNTIME_STATUS_STALE_FEEDBACK,
+    MOTOR_RUNTIME_STATUS_ACTION_COMPLETE,
+    MOTOR_RUNTIME_STATUS_ACTION_FAILED
 } MotorRuntimeStatus;
+
+/** @brief Describes the bounded seven-motor control-mode write/readback cycle. */
+typedef enum
+{
+    MOTOR_MODE_SWITCH_IDLE = 0,
+    MOTOR_MODE_SWITCH_WRITING,
+    MOTOR_MODE_SWITCH_READ_READY,
+    MOTOR_MODE_SWITCH_READ_WAITING,
+    MOTOR_MODE_SWITCH_COMPLETE,
+    MOTOR_MODE_SWITCH_FAILED
+} MotorModeSwitchState;
 
 /**
  * @brief Owns all static receive-side state for the first seven-axis arm.
@@ -51,6 +64,11 @@ typedef struct
     uint32_t rejected_parameter_response_count;
     uint32_t accepted_feedback_count;
     uint32_t rejected_feedback_count;
+    MotorModeSwitchState mode_switch_state;
+    uint64_t mode_request_sent_at_us;
+    S3519ControlMode requested_control_mode;
+    uint8_t mode_switch_joint_index;
+    uint8_t mode_switch_attempt_count;
     uint8_t initialized;
 } MotorRuntime;
 
@@ -106,6 +124,44 @@ MotorRuntimeStatus motor_runtime_get_snapshot(const MotorRuntime *runtime,
  */
 MotorRuntimeStatus motor_runtime_build_emergency_disable(
     const MotorRuntime *runtime,
+    MotorEmergencyFrameBatch *batch);
+
+/**
+ * @brief Starts a seven-motor volatile control-mode write/readback operation.
+ * @param runtime Initialized runtime with completed discovery.
+ * @param control_mode Requested MIT or POS_VEL mode.
+ * @return OK or an initialization/state error.
+ */
+MotorRuntimeStatus motor_runtime_begin_control_mode_switch(
+    MotorRuntime *runtime,
+    S3519ControlMode control_mode);
+
+/**
+ * @brief Produces the next mode write or readback request frame.
+ * @param runtime Runtime owning the transition.
+ * @param timestamp_us Current monotonic timestamp.
+ * @param frame Destination frame.
+ * @return FRAME_READY, WAITING, ACTION_COMPLETE, or an error.
+ */
+MotorRuntimeStatus motor_runtime_next_control_mode_frame(
+    MotorRuntime *runtime,
+    uint64_t timestamp_us,
+    CanFrame *frame);
+
+/**
+ * @brief Builds one enable/disable/clear command for each selected motor.
+ * @param runtime Initialized runtime.
+ * @param control_mode Confirmed motor control mode.
+ * @param command Vendor special command.
+ * @param motor_mask Selected zero-based joint mask.
+ * @param batch Destination bounded batch.
+ * @return OK or an argument/codec error.
+ */
+MotorRuntimeStatus motor_runtime_build_mode_command_batch(
+    const MotorRuntime *runtime,
+    S3519ControlMode control_mode,
+    S3519ModeCommand command,
+    uint8_t motor_mask,
     MotorEmergencyFrameBatch *batch);
 
 #endif

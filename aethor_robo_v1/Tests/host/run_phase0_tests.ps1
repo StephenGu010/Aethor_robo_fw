@@ -32,6 +32,7 @@ function Invoke-Phase0HostTests {
     $buildDirectory = Join-Path $PSScriptRoot 'build'
     $testExecutable = Join-Path $buildDirectory 'phase0_tests.exe'
     $invalidProfileObject = Join-Path $buildDirectory 'invalid_profile_test.o'
+    $productionProfileExecutable = Join-Path $buildDirectory 'production_profile_test.exe'
     $compilerCommand = Get-Phase0Compiler
     $sourceFiles = @(
         'Tests\host\phase0_test_main.c',
@@ -83,6 +84,30 @@ function Invoke-Phase0HostTests {
         if ($LASTEXITCODE -ne 0)
         {
             throw "Phase 0 tests failed with exit code $LASTEXITCODE."
+        }
+
+        & $compilerCommand.Source `
+            '-std=c11' `
+            '-Wall' `
+            '-Wextra' `
+            '-Werror' `
+            '-DAETHOR_ACTIVE_PROFILE=AETHOR_PROFILE_ARM_PRODUCTION' `
+            '-IApp\Config' `
+            '-IApp\Telemetry' `
+            '-IApp\Arm' `
+            'Tests\host\production_profile_test_main.c' `
+            'App\Config\arm_config.c' `
+            'App\Telemetry\diagnostics.c' `
+            'App\Arm\arm_controller.c' `
+            '-o' $productionProfileExecutable
+        if ($LASTEXITCODE -ne 0)
+        {
+            throw "Production profile compilation failed with exit code $LASTEXITCODE."
+        }
+        & $productionProfileExecutable
+        if ($LASTEXITCODE -ne 0)
+        {
+            throw "Production profile test failed with exit code $LASTEXITCODE."
         }
 
         $previousErrorActionPreference = $ErrorActionPreference

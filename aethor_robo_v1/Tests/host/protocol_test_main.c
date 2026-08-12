@@ -461,6 +461,67 @@ static void test_protocol_engine_stream_generation(void)
 }
 
 /**
+ * @brief Verifies lifecycle commands enforce states and STOP bypasses a full queue.
+ */
+static void test_protocol_engine_lifecycle_command_admission(void)
+{
+    ProtocolEngine engine;
+    ProtocolQueryContext query_context;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    char request_frame[256];
+    size_t request_length;
+    uint32_t request_id;
+
+    memset(&query_context, 0, sizeof(query_context));
+    query_context.arm.state = ARM_STATE_DISABLED;
+    query_context.arm.aligned = 1U;
+    query_context.motors.valid_joint_mask = 0x7FU;
+    protocol_engine_init(&engine, 4567U);
+    request_length = build_request_frame("REQ 1 HELLO client=test protocol=1",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        1000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    protocol_engine_update_query_context(&engine, &query_context);
+
+    request_length = build_request_frame("REQ 2 SET_MODE mode=POS_VEL",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_SET_MODE);
+    assert(command.control_mode == ARM_CONTROL_MODE_POSITION_VELOCITY);
+
+    query_context.arm.control_mode = ARM_CONTROL_MODE_POSITION_VELOCITY;
+    query_context.arm.state = ARM_STATE_READY;
+    query_context.arm.enabled = 1U;
+    protocol_engine_update_query_context(&engine, &query_context);
+    for (request_id = 10U;
+         request_id < (10U + PROTOCOL_ENGINE_COMMAND_CAPACITY);
+         ++request_id)
+    {
+        char body[64];
+
+        (void)snprintf(body, sizeof(body), "REQ %lu DISABLE", (unsigned long)request_id);
+        request_length = build_request_frame(body, request_frame, sizeof(request_frame));
+        assert(protocol_engine_process_line(&engine,
+                                            request_frame,
+                                            request_length,
+                                            3000U + request_id,
+                                            &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    }
+    request_length = build_request_frame("REQ 30 STOP behavior=controlled",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        4000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_STOP);
+}
+
+/**
  * @brief Runs all protocol contract tests.
  * @return Zero when every assertion passes.
  */
@@ -475,6 +536,7 @@ int main(void)
     test_protocol_engine_query_dispatch();
     test_protocol_engine_align_reference_lifecycle();
     test_protocol_engine_stream_generation();
+    test_protocol_engine_lifecycle_command_admission();
     puts("PROTOCOL_TESTS_PASSED");
     return 0;
 }

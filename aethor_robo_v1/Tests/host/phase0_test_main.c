@@ -238,7 +238,7 @@ static void test_diagnostics_ring_overwrites_oldest_event(void)
 /**
  * @brief Verifies the production controller safely latches incomplete config.
  */
-static void test_arm_controller_latches_incomplete_config_fault(void)
+static void test_arm_controller_bench_profile_keeps_enable_locked_without_fault(void)
 {
     Diagnostics diagnostics;
     DiagnosticCounters counters;
@@ -261,22 +261,22 @@ static void test_arm_controller_latches_incomplete_config_fault(void)
 
     arm_controller_step(&controller, 3000ULL);
     assert(arm_controller_get_snapshot(&controller, &snapshot));
-    assert(snapshot.state == ARM_STATE_FAULT);
-    assert(snapshot.fault == ARM_FAULT_CONFIG_INCOMPLETE);
+    assert(snapshot.state == ARM_STATE_UNALIGNED);
+    assert(snapshot.fault == ARM_FAULT_NONE);
     assert(snapshot.joint_count == ARM_JOINT_COUNT);
     assert(snapshot.fault_detail == ARM_JOINT_REQUIRED_ENABLE_FIELDS);
 
     assert(diagnostics_get_counters(&diagnostics, &counters));
     assert(counters.service_cycles == 2U);
-    assert(counters.config_validation_failures == 1U);
+    assert(counters.config_validation_failures == 0U);
 
     arm_controller_step(&controller, 4000ULL);
     assert(arm_controller_get_snapshot(&controller, &snapshot));
-    assert(snapshot.state == ARM_STATE_FAULT);
-    assert(snapshot.fault == ARM_FAULT_CONFIG_INCOMPLETE);
+    assert(snapshot.state == ARM_STATE_UNALIGNED);
+    assert(snapshot.fault == ARM_FAULT_NONE);
     assert(diagnostics_get_counters(&diagnostics, &counters));
     assert(counters.service_cycles == 3U);
-    assert(counters.config_validation_failures == 1U);
+    assert(counters.config_validation_failures == 0U);
 }
 
 /**
@@ -455,8 +455,8 @@ static void test_aethor_app_latches_safe_phase0_fault(void)
     aethor_app_service(2000ULL);
     aethor_app_service(3000ULL);
     assert(aethor_app_get_snapshot(&snapshot));
-    assert(snapshot.state == ARM_STATE_FAULT);
-    assert(snapshot.fault == ARM_FAULT_CONFIG_INCOMPLETE);
+    assert(snapshot.state == ARM_STATE_UNALIGNED);
+    assert(snapshot.fault == ARM_FAULT_NONE);
 
     assert(aethor_app_get_diagnostic(0U, &event));
     assert(event.code == DIAGNOSTIC_CODE_BOOT);
@@ -543,7 +543,7 @@ int main(void)
     test_default_application_profile_is_safe_bench_control();
     test_diagnostics_initialize_deterministically();
     test_diagnostics_ring_overwrites_oldest_event();
-    test_arm_controller_latches_incomplete_config_fault();
+    test_arm_controller_bench_profile_keeps_enable_locked_without_fault();
     test_arm_controller_latches_invalid_config_fault();
     test_arm_controller_enters_unaligned_after_self_test();
     test_joint_reference_alignment_and_reboot_invalidation();

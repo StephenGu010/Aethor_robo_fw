@@ -106,6 +106,8 @@ typedef struct
     uint32_t session_id;
     ProtocolCommandType type;
     uint8_t motor_mask;
+    ArmControlMode control_mode;
+    uint8_t scope_joint;
 } ProtocolCommand;
 
 /** @brief Identifies one terminal action result produced by ArmControlTask. */
@@ -135,6 +137,7 @@ typedef struct
 {
     ProtocolRecentResult recent_results[PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY];
     ProtocolCommand commands[PROTOCOL_ENGINE_COMMAND_CAPACITY];
+    ProtocolCommand stop_command;
     ProtocolCommandResult results[PROTOCOL_ENGINE_RESULT_CAPACITY];
     ProtocolQueryContext query_context;
     char stream_fields[64];
@@ -148,6 +151,8 @@ typedef struct
     uint8_t recent_write_index;
     volatile uint8_t command_write_sequence;
     volatile uint8_t command_read_sequence;
+    volatile uint8_t stop_write_sequence;
+    volatile uint8_t stop_read_sequence;
     volatile uint8_t result_write_sequence;
     volatile uint8_t result_read_sequence;
     uint8_t stream_rate_hz;
@@ -182,6 +187,15 @@ void protocol_engine_update_query_context(
  */
 uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
                                     ProtocolCommand *command);
+
+/**
+ * @brief Pops only the independent highest-priority STOP slot.
+ * @param engine Initialized engine.
+ * @param command Destination STOP command.
+ * @return One when copied, otherwise zero.
+ */
+uint8_t protocol_engine_pop_stop_command(ProtocolEngine *engine,
+                                         ProtocolCommand *command);
 
 /**
  * @brief Cancels all accepted commands not yet taken by ArmControlTask.

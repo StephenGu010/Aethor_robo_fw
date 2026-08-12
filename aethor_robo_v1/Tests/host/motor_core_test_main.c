@@ -186,6 +186,7 @@ static void test_motor_runtime_builds_fail_safe_disable_batch(void)
 
     assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
            MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
     assert(motor_runtime_build_emergency_disable(&runtime, &batch) ==
            MOTOR_RUNTIME_STATUS_OK);
     assert(batch.count == 14U);
@@ -193,6 +194,67 @@ static void test_motor_runtime_builds_fail_safe_disable_batch(void)
     assert(batch.frames[1].identifier == 0x101U);
     assert(batch.frames[0].data[7] == 0xFDU);
     assert(batch.frames[1].data[7] == 0xFDU);
+}
+
+/**
+ * @brief Verifies seven mode writes are followed by exact register readbacks.
+ */
+static void test_motor_runtime_switches_mode_with_readback(void)
+{
+    MotorRuntime runtime;
+    CanFrame frame;
+    uint8_t joint_index;
+    uint64_t timestamp_us = 1000U;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+    assert(motor_runtime_begin_control_mode_switch(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY) == MOTOR_RUNTIME_STATUS_OK);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                     timestamp_us,
+                                                     &frame) ==
+               MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(frame.identifier == 0x7FFU);
+        assert(frame.data[2] == 0x55U);
+        assert(frame.data[3] == S3519_REGISTER_CONTROL_MODE);
+        assert(frame.data[4] == 2U);
+        timestamp_us += 1000U;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t response_payload[8] = {0U};
+        CanFrame response;
+
+        assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                     timestamp_us,
+                                                     &frame) ==
+               MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(frame.data[2] == 0x33U);
+        assert(frame.data[3] == S3519_REGISTER_CONTROL_MODE);
+        response_payload[0] = (uint8_t)(joint_index + 1U);
+        response_payload[2] = 0x33U;
+        response_payload[3] = S3519_REGISTER_CONTROL_MODE;
+        response_payload[4] = 2U;
+        assert(can_frame_init(&response,
+                              (uint16_t)(0x11U + joint_index),
+                              response_payload,
+                              sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+        assert(motor_runtime_accept_frame(&runtime,
+                                          &response,
+                                          timestamp_us + 100U) ==
+               ((joint_index == (ARM_JOINT_COUNT - 1U))
+                    ? MOTOR_RUNTIME_STATUS_ACTION_COMPLETE
+                    : MOTOR_RUNTIME_STATUS_OK));
+        timestamp_us += 1000U;
+    }
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 timestamp_us,
+                                                 &frame) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
 }
 
 /**
@@ -661,6 +723,7 @@ int main(void)
     test_can_scheduler_prioritizes_emergency_frames();
     test_can_scheduler_reserves_progress_for_emergency_frames();
     test_motor_runtime_builds_fail_safe_disable_batch();
+    test_motor_runtime_switches_mode_with_readback();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();

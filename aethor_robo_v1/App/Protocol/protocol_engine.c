@@ -146,6 +146,17 @@ static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
                                    engine->command_read_sequence);
     uint8_t slot_index;
 
+    if (command->type == PROTOCOL_COMMAND_STOP)
+    {
+        if (engine->stop_write_sequence != engine->stop_read_sequence)
+        {
+            return 0U;
+        }
+        engine->stop_command = *command;
+        protocol_engine_compiler_barrier();
+        ++engine->stop_write_sequence;
+        return 1U;
+    }
     if (used_count >= PROTOCOL_ENGINE_COMMAND_CAPACITY)
     {
         return 0U;
@@ -376,6 +387,21 @@ static const char *protocol_engine_arm_fault_text(ArmFault fault)
     }
 }
 
+/** @brief Returns stable public text for one confirmed control mode. */
+static const char *protocol_engine_control_mode_text(ArmControlMode mode)
+{
+    switch (mode)
+    {
+        case ARM_CONTROL_MODE_POSITION_VELOCITY:
+            return "POS_VEL";
+        case ARM_CONTROL_MODE_MIT:
+            return "MIT";
+        case ARM_CONTROL_MODE_UNKNOWN:
+        default:
+            return "UNKNOWN";
+    }
+}
+
 /**
  * @brief Validates the SET_STREAM comma-separated capability list.
  */
@@ -564,6 +590,7 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     memset(engine->recent_results, 0, sizeof(engine->recent_results));
     engine->recent_write_index = 0U;
     engine->command_read_sequence = engine->command_write_sequence;
+    engine->stop_read_sequence = engine->stop_write_sequence;
     engine->result_read_sequence = engine->result_write_sequence;
     engine->session_id = protocol_engine_create_session(engine,
                                                         request->request_id,
@@ -684,12 +711,13 @@ static ProtocolEngineStatus protocol_engine_handle_get_state(
     return protocol_engine_append_format(
         output_batch,
         PROTOCOL_OUTPUT_QUERY,
-        "RSP %lu ok state=%s aligned=%u enabled=%u moving=%u mode=UNKNOWN active_request=0 fault=%s feedback_age_max_ms=%lu",
+        "RSP %lu ok state=%s aligned=%u enabled=%u moving=%u mode=%s active_request=0 fault=%s feedback_age_max_ms=%lu",
         (unsigned long)request->request_id,
         protocol_engine_arm_state_text(engine->query_context.arm.state),
         engine->query_context.arm.aligned,
         engine->query_context.arm.enabled,
         engine->query_context.arm.moving,
+        protocol_engine_control_mode_text(engine->query_context.arm.control_mode),
         protocol_engine_arm_fault_text(engine->query_context.arm.fault),
         (unsigned long)feedback_age_max_ms);
 }
@@ -1150,6 +1178,196 @@ static ProtocolEngineStatus protocol_engine_handle_align_reference(
                                          (unsigned long)request->request_id);
 }
 
+/** @brief Validates and queues SET_MODE, ENABLE, STOP, DISABLE, or CLEAR_FAULT. */
+static ProtocolEngineStatus protocol_engine_handle_lifecycle_action(
+    ProtocolEngine *engine,
+    const AsciiProtocolRequest *request,
+    ProtocolCommandType command_type,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    ProtocolCommand command;
+    ArmState state;
+
+    if (engine->query_context_valid == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu INTERNAL_ERROR context=state",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    memset(&command, 0, sizeof(command));
+    command.type = command_type;
+    command.request_id = request->request_id;
+    command.session_id = engine->session_id;
+    command.accepted_at_us = timestamp_us;
+    command.motor_mask = PROTOCOL_ENGINE_ALL_JOINTS_MASK;
+    state = engine->query_context.arm.state;
+
+    if (command_type == PROTOCOL_COMMAND_SET_MODE)
+    {
+        AsciiProtocolSpan mode_span;
+
+        if (ascii_protocol_find_field(request, "mode", &mode_span) == 0U)
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu MISSING_FIELD field=mode",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (protocol_engine_span_equals(&mode_span, "POS_VEL") != 0U)
+        {
+            command.control_mode = ARM_CONTROL_MODE_POSITION_VELOCITY;
+        }
+        else if (protocol_engine_span_equals(&mode_span, "MIT") != 0U)
+        {
+            command.control_mode = ARM_CONTROL_MODE_MIT;
+        }
+        else
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu BAD_VALUE field=mode",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if ((state != ARM_STATE_DISABLED) ||
+            (engine->query_context.arm.enabled != 0U) ||
+            (engine->query_context.arm.moving != 0U))
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu INVALID_STATE state=%s",
+                                                (unsigned long)request->request_id,
+                                                protocol_engine_arm_state_text(state));
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+    }
+    else if (command_type == PROTOCOL_COMMAND_ENABLE)
+    {
+        if ((state != ARM_STATE_DISABLED) ||
+            (engine->query_context.arm.aligned == 0U) ||
+            (engine->query_context.arm.control_mode == ARM_CONTROL_MODE_UNKNOWN) ||
+            (engine->query_context.arm.fault != ARM_FAULT_NONE) ||
+            (engine->query_context.motors.valid_joint_mask !=
+             PROTOCOL_ENGINE_ALL_JOINTS_MASK))
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu NOT_READY state=%s",
+                                                (unsigned long)request->request_id,
+                                                protocol_engine_arm_state_text(state));
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        command.control_mode = engine->query_context.arm.control_mode;
+    }
+    else if (command_type == PROTOCOL_COMMAND_STOP)
+    {
+        AsciiProtocolSpan behavior_span;
+
+        if ((ascii_protocol_find_field(request, "behavior", &behavior_span) == 0U) ||
+            (protocol_engine_span_equals(&behavior_span, "controlled") == 0U))
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu BAD_VALUE field=behavior",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if ((state != ARM_STATE_READY) && (state != ARM_STATE_MOVING) &&
+            (state != ARM_STATE_STOPPING) && (state != ARM_STATE_FAULT))
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu INVALID_STATE state=%s",
+                                                (unsigned long)request->request_id,
+                                                protocol_engine_arm_state_text(state));
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+    }
+    else if (command_type == PROTOCOL_COMMAND_CLEAR_FAULT)
+    {
+        AsciiProtocolSpan scope_span;
+        AsciiProtocolSpan joint_span;
+        uint8_t has_scope = ascii_protocol_find_field(request,
+                                                      "scope",
+                                                      &scope_span);
+        uint8_t has_joint = ascii_protocol_find_field(request,
+                                                      "joint",
+                                                      &joint_span);
+
+        if ((has_scope != 0U) && (has_joint != 0U))
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu BAD_VALUE field=scope",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (has_scope != 0U)
+        {
+            if (protocol_engine_span_equals(&scope_span, "all") == 0U)
+            {
+                (void)protocol_engine_append_format(output_batch,
+                                                    PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                    "ERR %lu BAD_VALUE field=scope",
+                                                    (unsigned long)request->request_id);
+                return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+            }
+        }
+        else if (has_joint != 0U)
+        {
+            uint32_t joint_number;
+
+            if ((protocol_engine_parse_u32(&joint_span, &joint_number) == 0U) ||
+                (joint_number < 1U) || (joint_number > ARM_JOINT_COUNT))
+            {
+                (void)protocol_engine_append_format(output_batch,
+                                                    PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                    "ERR %lu BAD_VALUE field=joint",
+                                                    (unsigned long)request->request_id);
+                return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+            }
+            command.motor_mask = (uint8_t)(1U << (joint_number - 1U));
+            command.scope_joint = (uint8_t)joint_number;
+        }
+        else
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu MISSING_FIELD field=scope",
+                                                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (((state != ARM_STATE_FAULT) && (state != ARM_STATE_DISABLED)) ||
+            (engine->query_context.arm.enabled != 0U) ||
+            (engine->query_context.arm.moving != 0U))
+        {
+            (void)protocol_engine_append_format(output_batch,
+                                                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                "ERR %lu INVALID_STATE state=%s",
+                                                (unsigned long)request->request_id,
+                                                protocol_engine_arm_state_text(state));
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+    }
+
+    if (protocol_engine_enqueue_command(engine, &command) == 0U)
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BUSY queue=command",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    return protocol_engine_append_format(output_batch,
+                                         PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                         "ACK %lu accepted",
+                                         (unsigned long)request->request_id);
+}
+
 /**
  * @brief Initializes one protocol engine for the current firmware boot.
  */
@@ -1188,8 +1406,15 @@ uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
 {
     uint8_t slot_index;
 
-    if ((engine == NULL) || (command == NULL) ||
-        (engine->command_read_sequence == engine->command_write_sequence))
+    if ((engine == NULL) || (command == NULL))
+    {
+        return 0U;
+    }
+    if (protocol_engine_pop_stop_command(engine, command) != 0U)
+    {
+        return 1U;
+    }
+    if (engine->command_read_sequence == engine->command_write_sequence)
     {
         return 0U;
     }
@@ -1203,6 +1428,24 @@ uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
 }
 
 /**
+ * @brief Pops only the independent highest-priority STOP slot.
+ */
+uint8_t protocol_engine_pop_stop_command(ProtocolEngine *engine,
+                                         ProtocolCommand *command)
+{
+    if ((engine == NULL) || (command == NULL) ||
+        (engine->stop_read_sequence == engine->stop_write_sequence))
+    {
+        return 0U;
+    }
+    protocol_engine_compiler_barrier();
+    *command = engine->stop_command;
+    protocol_engine_compiler_barrier();
+    ++engine->stop_read_sequence;
+    return 1U;
+}
+
+/**
  * @brief Cancels all accepted commands not yet taken by ArmControlTask.
  */
 void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
@@ -1210,6 +1453,7 @@ void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
     if (engine != NULL)
     {
         engine->command_read_sequence = engine->command_write_sequence;
+        engine->stop_read_sequence = engine->stop_write_sequence;
     }
 }
 
@@ -1701,6 +1945,36 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
                                                                &request,
                                                                timestamp_us,
                                                                output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "SET_MODE") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_lifecycle_action(
+            engine, &request, PROTOCOL_COMMAND_SET_MODE, timestamp_us, output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "ENABLE") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_lifecycle_action(
+            engine, &request, PROTOCOL_COMMAND_ENABLE, timestamp_us, output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "STOP") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_lifecycle_action(
+            engine, &request, PROTOCOL_COMMAND_STOP, timestamp_us, output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "DISABLE") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_lifecycle_action(
+            engine, &request, PROTOCOL_COMMAND_DISABLE, timestamp_us, output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request, "CLEAR_FAULT") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_lifecycle_action(
+            engine, &request, PROTOCOL_COMMAND_CLEAR_FAULT, timestamp_us, output_batch);
     }
     else
     {

@@ -39,6 +39,14 @@ typedef enum
     ARM_FAULT_LINK_TIMEOUT
 } ArmFault;
 
+/** @brief Identifies the currently confirmed seven-motor control mode. */
+typedef enum
+{
+    ARM_CONTROL_MODE_UNKNOWN = 0,
+    ARM_CONTROL_MODE_POSITION_VELOCITY,
+    ARM_CONTROL_MODE_MIT
+} ArmControlMode;
+
 /** @brief Reports whether a requested arm-domain transition was accepted. */
 typedef enum
 {
@@ -56,6 +64,7 @@ typedef struct
     Diagnostics *diagnostics;
     ArmState state;
     ArmFault fault;
+    ArmControlMode control_mode;
     uint64_t state_entered_at_us;
     uint32_t fault_detail;
     uint8_t aligned;
@@ -71,6 +80,7 @@ typedef struct
 {
     ArmState state;
     ArmFault fault;
+    ArmControlMode control_mode;
     uint64_t state_entered_at_us;
     uint32_t fault_detail;
     uint8_t joint_count;
@@ -117,6 +127,54 @@ ArmTransitionStatus arm_controller_mark_reference_aligned(
 ArmTransitionStatus arm_controller_force_stop_disable(
     ArmController *controller,
     uint64_t timestamp_us);
+
+/**
+ * @brief Records a seven-motor mode after register readback confirmation.
+ * @param controller Initialized disabled controller.
+ * @param control_mode Confirmed POS_VEL or MIT mode.
+ * @param timestamp_us Transition timestamp.
+ * @return OK or an argument/state error.
+ */
+ArmTransitionStatus arm_controller_confirm_control_mode(
+    ArmController *controller,
+    ArmControlMode control_mode,
+    uint64_t timestamp_us);
+
+/**
+ * @brief Enters ENABLING after all software safety gates pass.
+ * @param controller Initialized aligned disabled controller.
+ * @param timestamp_us Transition timestamp.
+ * @return OK or an argument/state error.
+ */
+ArmTransitionStatus arm_controller_begin_enable(ArmController *controller,
+                                                uint64_t timestamp_us);
+
+/**
+ * @brief Enters READY only after all seven drivers report enabled.
+ * @param controller Controller in ENABLING.
+ * @param timestamp_us Confirmation timestamp.
+ * @return OK or an argument/state error.
+ */
+ArmTransitionStatus arm_controller_confirm_enabled(ArmController *controller,
+                                                   uint64_t timestamp_us);
+
+/**
+ * @brief Records confirmed all-axis disable while retaining RAM alignment.
+ * @param controller Initialized controller.
+ * @param timestamp_us Confirmation timestamp.
+ * @return OK or INVALID_ARGUMENT.
+ */
+ArmTransitionStatus arm_controller_confirm_disabled(ArmController *controller,
+                                                    uint64_t timestamp_us);
+
+/**
+ * @brief Clears a latched runtime fault after its external source is gone.
+ * @param controller Initialized disabled controller.
+ * @param timestamp_us Recovery timestamp.
+ * @return OK or an argument/state error.
+ */
+ArmTransitionStatus arm_controller_clear_fault(ArmController *controller,
+                                               uint64_t timestamp_us);
 
 /**
  * @brief Copies the current controller state.

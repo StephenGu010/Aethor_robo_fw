@@ -75,6 +75,52 @@ static uint8_t motor_runtime_is_parameter_response(const MotorRuntime *runtime,
                      ((frame->data[2] == 0x33U) || (frame->data[2] == 0x55U)));
 }
 
+/** @brief Checks whether a frame is the pending control-mode readback response. */
+static uint8_t motor_runtime_is_mode_readback_response(
+    const MotorRuntime *runtime,
+    const CanFrame *frame)
+{
+    return (uint8_t)((runtime->mode_switch_state ==
+                      MOTOR_MODE_SWITCH_READ_WAITING) &&
+                     (frame->length == CAN_CLASSIC_MAX_DATA_LENGTH) &&
+                     (frame->data[2] == 0x33U) &&
+                     (frame->data[3] == S3519_REGISTER_CONTROL_MODE));
+}
+
+/** @brief Validates and consumes one pending control-mode register readback. */
+static MotorRuntimeStatus motor_runtime_accept_mode_readback(
+    MotorRuntime *runtime,
+    const CanFrame *frame)
+{
+    S3519ParameterResponse response;
+    uint8_t joint_index = runtime->mode_switch_joint_index;
+    uint32_t expected_mode =
+        (runtime->requested_control_mode == S3519_CONTROL_MODE_MIT) ? 1U : 2U;
+
+    if ((joint_index >= ARM_JOINT_COUNT) ||
+        (s3519_decode_parameter_response(frame, &response) !=
+         S3519_CODEC_STATUS_OK) ||
+        (frame->identifier != runtime->configuration->joints[joint_index].master_id) ||
+        (response.esc_id != runtime->configuration->joints[joint_index].esc_id) ||
+        (response.register_address != S3519_REGISTER_CONTROL_MODE) ||
+        (response.raw_value != expected_mode))
+    {
+        runtime->mode_switch_state = MOTOR_MODE_SWITCH_FAILED;
+        return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
+    }
+
+    runtime->discovery.results[joint_index].observed_control_mode = expected_mode;
+    ++runtime->mode_switch_joint_index;
+    runtime->mode_switch_attempt_count = 0U;
+    runtime->mode_switch_state =
+        (runtime->mode_switch_joint_index >= ARM_JOINT_COUNT)
+            ? MOTOR_MODE_SWITCH_COMPLETE
+            : MOTOR_MODE_SWITCH_READ_READY;
+    return (runtime->mode_switch_state == MOTOR_MODE_SWITCH_COMPLETE)
+               ? MOTOR_RUNTIME_STATUS_ACTION_COMPLETE
+               : MOTOR_RUNTIME_STATUS_OK;
+}
+
 /**
  * @brief Decodes and applies one outstanding read-only discovery response.
  * @param runtime Initialized runtime.
@@ -274,6 +320,19 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
 
+    if (motor_runtime_is_mode_readback_response(runtime, frame) != 0U)
+    {
+        return motor_runtime_accept_mode_readback(runtime, frame);
+    }
+    if (((runtime->mode_switch_state == MOTOR_MODE_SWITCH_WRITING) ||
+         (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_READY) ||
+         (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING)) &&
+        (frame->length == CAN_CLASSIC_MAX_DATA_LENGTH) &&
+        (frame->data[2] == 0x55U))
+    {
+        return MOTOR_RUNTIME_STATUS_OK;
+    }
+
     if (motor_runtime_is_parameter_response(runtime, frame) != 0U)
     {
         return motor_runtime_accept_parameter_response(runtime, frame);
@@ -386,6 +445,166 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
                 return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
             }
         }
+    }
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
+ * @brief Starts a seven-motor volatile control-mode write/readback operation.
+ */
+MotorRuntimeStatus motor_runtime_begin_control_mode_switch(
+    MotorRuntime *runtime,
+    S3519ControlMode control_mode)
+{
+    if (runtime == NULL)
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    if ((control_mode != S3519_CONTROL_MODE_MIT) &&
+        (control_mode != S3519_CONTROL_MODE_POSITION_VELOCITY))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->discovery.state != MOTOR_DISCOVERY_STATE_COMPLETE)
+    {
+        return MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR;
+    }
+    if ((runtime->mode_switch_state != MOTOR_MODE_SWITCH_IDLE) &&
+        (runtime->mode_switch_state != MOTOR_MODE_SWITCH_COMPLETE) &&
+        (runtime->mode_switch_state != MOTOR_MODE_SWITCH_FAILED))
+    {
+        return MOTOR_RUNTIME_STATUS_WAITING;
+    }
+    runtime->requested_control_mode = control_mode;
+    runtime->mode_switch_joint_index = 0U;
+    runtime->mode_switch_attempt_count = 0U;
+    runtime->mode_request_sent_at_us = 0U;
+    runtime->mode_switch_state = MOTOR_MODE_SWITCH_WRITING;
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
+ * @brief Produces the next mode write or readback request frame.
+ */
+MotorRuntimeStatus motor_runtime_next_control_mode_frame(
+    MotorRuntime *runtime,
+    uint64_t timestamp_us,
+    CanFrame *frame)
+{
+    uint8_t esc_id;
+
+    if ((runtime == NULL) || (frame == NULL))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_COMPLETE)
+    {
+        return MOTOR_RUNTIME_STATUS_ACTION_COMPLETE;
+    }
+    if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_FAILED)
+    {
+        return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
+    }
+    if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING)
+    {
+        if ((timestamp_us >= runtime->mode_request_sent_at_us) &&
+            ((timestamp_us - runtime->mode_request_sent_at_us) <
+             MOTOR_DISCOVERY_REQUEST_TIMEOUT_US))
+        {
+            return MOTOR_RUNTIME_STATUS_WAITING;
+        }
+        ++runtime->mode_switch_attempt_count;
+        if (runtime->mode_switch_attempt_count >= MOTOR_DISCOVERY_MAX_ATTEMPTS)
+        {
+            runtime->mode_switch_state = MOTOR_MODE_SWITCH_FAILED;
+            return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
+        }
+        runtime->mode_switch_state = MOTOR_MODE_SWITCH_READ_READY;
+    }
+    if (runtime->mode_switch_joint_index >= ARM_JOINT_COUNT)
+    {
+        runtime->mode_switch_state = MOTOR_MODE_SWITCH_COMPLETE;
+        return MOTOR_RUNTIME_STATUS_ACTION_COMPLETE;
+    }
+    esc_id = (uint8_t)runtime->configuration->joints[
+        runtime->mode_switch_joint_index].esc_id;
+    if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_WRITING)
+    {
+        uint32_t mode_value =
+            (runtime->requested_control_mode == S3519_CONTROL_MODE_MIT) ? 1U : 2U;
+
+        if (s3519_pack_control_mode_write(esc_id, mode_value, frame) !=
+            S3519_CODEC_STATUS_OK)
+        {
+            runtime->mode_switch_state = MOTOR_MODE_SWITCH_FAILED;
+            return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
+        }
+        ++runtime->mode_switch_joint_index;
+        if (runtime->mode_switch_joint_index >= ARM_JOINT_COUNT)
+        {
+            runtime->mode_switch_joint_index = 0U;
+            runtime->mode_switch_state = MOTOR_MODE_SWITCH_READ_READY;
+        }
+        return MOTOR_RUNTIME_STATUS_FRAME_READY;
+    }
+    if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_READY)
+    {
+        if (s3519_pack_parameter_read(esc_id,
+                                      S3519_REGISTER_CONTROL_MODE,
+                                      frame) != S3519_CODEC_STATUS_OK)
+        {
+            runtime->mode_switch_state = MOTOR_MODE_SWITCH_FAILED;
+            return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
+        }
+        runtime->mode_request_sent_at_us = timestamp_us;
+        runtime->mode_switch_state = MOTOR_MODE_SWITCH_READ_WAITING;
+        return MOTOR_RUNTIME_STATUS_FRAME_READY;
+    }
+    return MOTOR_RUNTIME_STATUS_WAITING;
+}
+
+/**
+ * @brief Builds one enable/disable/clear command for each selected motor.
+ */
+MotorRuntimeStatus motor_runtime_build_mode_command_batch(
+    const MotorRuntime *runtime,
+    S3519ControlMode control_mode,
+    S3519ModeCommand command,
+    uint8_t motor_mask,
+    MotorEmergencyFrameBatch *batch)
+{
+    uint8_t joint_index;
+
+    if ((runtime == NULL) || (batch == NULL) || (motor_mask == 0U) ||
+        ((motor_mask & (uint8_t)~0x7FU) != 0U))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    memset(batch, 0, sizeof(*batch));
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if ((motor_mask & (uint8_t)(1U << joint_index)) == 0U)
+        {
+            continue;
+        }
+        if ((batch->count >= MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES) ||
+            (s3519_pack_mode_command(
+                 (uint8_t)runtime->configuration->joints[joint_index].esc_id,
+                 control_mode,
+                 command,
+                 &batch->frames[batch->count]) != S3519_CODEC_STATUS_OK))
+        {
+            return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+        }
+        ++batch->count;
     }
     return MOTOR_RUNTIME_STATUS_OK;
 }

@@ -20,12 +20,12 @@
 #include "main.h"
 #include "cmsis_os.h"
 #include "fdcan.h"
-#include "gpio.h"
 #include "usb_device.h"
+#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "aethor_application.h"
+#include "aethor_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -100,12 +100,8 @@ int main(void)
   MX_FDCAN1_Init();
   MX_FDCAN2_Init();
   MX_FDCAN3_Init();
-  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
-  if (aethor_application_init() != 0)
-  {
-    Error_Handler();
-  }
+  aethor_app_init((uint64_t)HAL_GetTick() * 1000ULL);
   /* USER CODE END 2 */
 
   /* Call init function for freertos objects (in cmsis_os2.c) */

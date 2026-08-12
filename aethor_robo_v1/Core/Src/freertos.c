@@ -25,7 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "aethor_application.h"
+#include "aethor_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,6 +47,8 @@
 /* USER CODE BEGIN Variables */
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
+uint32_t defaultTaskBuffer[ 512 ];
+osStaticThreadDef_t defaultTaskControlBlock;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -55,6 +57,7 @@ osThreadId defaultTaskHandle;
 
 void StartDefaultTask(void const * argument);
 
+extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* GetIdleTaskMemory prototype (linked to static allocation support) */
@@ -101,7 +104,7 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 512);
+  osThreadStaticDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 512, defaultTaskBuffer, &defaultTaskControlBlock);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -119,6 +122,8 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void const * argument)
 {
+  /* init code for USB_DEVICE */
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN StartDefaultTask */
   TickType_t lastWakeTime = xTaskGetTickCount();
 
@@ -126,8 +131,8 @@ void StartDefaultTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-    aethor_application_service();
-    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(5U));
+    aethor_app_service((uint64_t)HAL_GetTick() * 1000ULL);
+    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(4U));
   }
   /* USER CODE END StartDefaultTask */
 }

@@ -1,0 +1,18 @@
+PRD Phase 0 pre-change Keil map baseline
+Recorded: 2026-08-12 Asia/Shanghai
+Source: MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.map
+Source modified: 2026-08-12 15:36:22
+Source length: 565411 bytes
+Baseline commit: b6b7ab75ff5434b1ad739d55735c681d428ba4ea
+
+Total RO Size (Code + RO Data): 45800 bytes (44.73 kB)
+Total RW Size (RW Data + ZI Data): 31496 bytes (30.76 kB)
+Total ROM Size (Code + RO Data + RW Data): 46004 bytes (44.93 kB)
+FreeRTOS heap_4 ucHeap: 15360 bytes at 0x240038a4
+ARM startup HEAP / Heap_Mem: 512 bytes at 0x24007508
+
+Interpretation:
+- The 15360-byte FreeRTOS heap is compiled into the baseline image.
+- The current CubeMX default task is dynamically created, so this baseline does not prove zero runtime allocation.
+- Phase 0 must switch the application task to static creation and compare the post-change map.
+- Build and map evidence do not prove hardware operation.

@@ -1,177 +1,352 @@
+/**
+ * @file bsp_fdcan.c
+ * @brief Strict STM32H7 FDCAN1 classic-CAN transport and error supervision.
+ */
+
 #include "bsp_fdcan.h"
+
+#include <stddef.h>
+#include <string.h>
+
+static FdcanDriverState fdcan_driver_state;
+
 /**
-************************************************************************
-* @brief:      	bsp_can_init(void)
-* @param:       void
-* @retval:     	void
-* @details:    	CAN 使能
-************************************************************************
-**/
-void bsp_can_init(void)
+ * @brief Configure one exact FIFO0 filter for each active motor Master ID.
+ * @param configuration Validated robot configuration.
+ * @return Explicit driver status.
+ */
+FdcanDriverStatus can_filter_init(const RobotConfiguration *configuration)
 {
-	can_filter_init();
-	HAL_FDCAN_Start(&hfdcan1);                               //开启FDCAN
-	HAL_FDCAN_Start(&hfdcan2);
-	HAL_FDCAN_Start(&hfdcan3);
-	HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
-	HAL_FDCAN_ActivateNotification(&hfdcan2, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
-	HAL_FDCAN_ActivateNotification(&hfdcan3, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
+    FDCAN_FilterTypeDef standard_filter = {0};
+    uint8_t joint_index;
+    uint8_t filter_index = 0U;
+
+    if ((robot_config_validate(configuration) != ROBOT_CONFIG_STATUS_OK) ||
+        (hfdcan1.Init.StdFiltersNbr < ROBOT_JOINT_COUNT))
+    {
+        return FDCAN_DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+    standard_filter.IdType = FDCAN_STANDARD_ID;
+    standard_filter.FilterType = FDCAN_FILTER_MASK;
+    standard_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    standard_filter.FilterID2 = 0x7FFU;
+
+    for (joint_index = 0U; joint_index < ROBOT_JOINT_COUNT; ++joint_index)
+    {
+        if ((configuration->active_joint_mask & (uint8_t)(1U << joint_index)) == 0U)
+        {
+            continue;
+        }
+        standard_filter.FilterIndex = filter_index;
+        standard_filter.FilterID1 = configuration->joint[joint_index].master_id;
+        if (HAL_FDCAN_ConfigFilter(&hfdcan1, &standard_filter) != HAL_OK)
+        {
+            return FDCAN_DRIVER_STATUS_HAL_ERROR;
+        }
+        filter_index++;
+    }
+
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,
+                                     FDCAN_REJECT,
+                                     FDCAN_REJECT,
+                                     FDCAN_REJECT_REMOTE,
+                                     FDCAN_REJECT_REMOTE) != HAL_OK)
+    {
+        return FDCAN_DRIVER_STATUS_HAL_ERROR;
+    }
+    if (HAL_FDCAN_ConfigFifoWatermark(&hfdcan1, FDCAN_CFG_RX_FIFO0, 1U) != HAL_OK)
+    {
+        return FDCAN_DRIVER_STATUS_HAL_ERROR;
+    }
+
+    return FDCAN_DRIVER_STATUS_OK;
 }
+
 /**
-************************************************************************
-* @brief:      	can_filter_init(void)
-* @param:       void
-* @retval:     	void
-* @details:    	CAN滤波器初始化
-************************************************************************
-**/
-void can_filter_init(void)
+ * @brief Start FDCAN1 as the only active motor bus and enable monitored interrupts.
+ * @param configuration Validated robot configuration used to build exact filters.
+ * @return Explicit driver status.
+ */
+FdcanDriverStatus bsp_can_init(const RobotConfiguration *configuration)
 {
-	FDCAN_FilterTypeDef fdcan_filter;
-	
-	fdcan_filter.IdType = FDCAN_STANDARD_ID;                       //标准ID
-	fdcan_filter.FilterIndex = 0;                                  //滤波器索引                   
-	fdcan_filter.FilterType = FDCAN_FILTER_MASK;                   
-	fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;           //过滤器0关联到FIFO0  
-	fdcan_filter.FilterID1 = 0x00;                               
-	fdcan_filter.FilterID2 = 0x00;
+    uint32_t notification_mask = FDCAN_IT_RX_FIFO0_NEW_MESSAGE |
+                                 FDCAN_IT_ERROR_WARNING |
+                                 FDCAN_IT_ERROR_PASSIVE |
+                                 FDCAN_IT_BUS_OFF;
 
-	HAL_FDCAN_ConfigFilter(&hfdcan1,&fdcan_filter); 		 				  //接收ID2
-	//拒绝接收匹配不成功的标准ID和扩展ID,不接受远程帧
-	HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,FDCAN_REJECT,FDCAN_REJECT,FDCAN_REJECT_REMOTE,FDCAN_REJECT_REMOTE);
-	HAL_FDCAN_ConfigFifoWatermark(&hfdcan1, FDCAN_CFG_RX_FIFO0, 1);
-//	HAL_FDCAN_ConfigFifoWatermark(&hfdcan1, FDCAN_CFG_RX_FIFO1, 1);
-//	HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_TX_COMPLETE, FDCAN_TX_BUFFER0);
+    memset(&fdcan_driver_state, 0, sizeof(fdcan_driver_state));
+    if (can_filter_init(configuration) != FDCAN_DRIVER_STATUS_OK)
+    {
+        return FDCAN_DRIVER_STATUS_HAL_ERROR;
+    }
+    if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)
+    {
+        return FDCAN_DRIVER_STATUS_HAL_ERROR;
+    }
+    if (HAL_FDCAN_ActivateNotification(&hfdcan1, notification_mask, 0U) != HAL_OK)
+    {
+        (void)HAL_FDCAN_Stop(&hfdcan1);
+        return FDCAN_DRIVER_STATUS_HAL_ERROR;
+    }
+
+    fdcan_driver_state.started = 1U;
+    return FDCAN_DRIVER_STATUS_OK;
 }
+
 /**
-************************************************************************
-* @brief:      	fdcanx_send_data(FDCAN_HandleTypeDef *hfdcan, uint16_t id, uint8_t *data, uint32_t len)
-* @param:       hfdcan：FDCAN句柄
-* @param:       id：CAN设备ID
-* @param:       data：发送的数据
-* @param:       len：发送的数据长度
-* @retval:     	void
-* @details:    	发送数据
-************************************************************************
-**/
-uint8_t fdcanx_send_data(hcan_t *hfdcan, uint16_t id, uint8_t *data, uint32_t len)
-{	
-    FDCAN_TxHeaderTypeDef pTxHeader;
-    pTxHeader.Identifier=id;
-    pTxHeader.IdType=FDCAN_STANDARD_ID;
-    pTxHeader.TxFrameType=FDCAN_DATA_FRAME;
-	
-	if(len<=8)
-		pTxHeader.DataLength = len;
-	if(len==12)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_12;
-	if(len==16)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_16;
-	if(len==20)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_20;
-	if(len==24)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_24;
-	if(len==32)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_32;
-	if(len==48)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_48;
-	if(len==64)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_64;
-	
-    pTxHeader.ErrorStateIndicator=FDCAN_ESI_ACTIVE;
-    pTxHeader.BitRateSwitch=FDCAN_BRS_ON;
-    pTxHeader.FDFormat=FDCAN_FD_CAN;
-    pTxHeader.TxEventFifoControl=FDCAN_NO_TX_EVENTS;
-    pTxHeader.MessageMarker=0;
- 
-	if(HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &pTxHeader, data)!=HAL_OK) 
-		return 1;//发送
-	return 0;	
+ * @brief Send one validated 11-bit classic CAN data frame without BRS.
+ * @param fdcan_handle HAL FDCAN handle; only FDCAN1 is accepted for motor traffic.
+ * @param frame Validated classic CAN frame.
+ * @return Explicit driver status.
+ */
+FdcanDriverStatus fdcan_classic_send(FDCAN_HandleTypeDef *fdcan_handle,
+                                     const FdcanClassicFrame *frame)
+{
+    FDCAN_TxHeaderTypeDef transmit_header = {0};
+    uint8_t dlc;
+
+    if ((fdcan_handle == NULL) || (frame == NULL))
+    {
+        return FDCAN_DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+    if ((fdcan_handle != &hfdcan1) || (fdcan_driver_state.started == 0U))
+    {
+        return FDCAN_DRIVER_STATUS_NOT_READY;
+    }
+    if (fdcan_driver_state.bus_off_latched != 0U)
+    {
+        return FDCAN_DRIVER_STATUS_BUS_OFF;
+    }
+    if ((fdcan_classic_length_to_dlc(frame->length, &dlc) != FDCAN_CLASSIC_STATUS_OK) ||
+        (frame->identifier > FDCAN_CLASSIC_MAX_IDENTIFIER))
+    {
+        return FDCAN_DRIVER_STATUS_INVALID_FRAME;
+    }
+    if (HAL_FDCAN_GetTxFifoFreeLevel(fdcan_handle) == 0U)
+    {
+        return FDCAN_DRIVER_STATUS_TX_QUEUE_FULL;
+    }
+
+    transmit_header.Identifier = frame->identifier;
+    transmit_header.IdType = FDCAN_STANDARD_ID;
+    transmit_header.TxFrameType = FDCAN_DATA_FRAME;
+    transmit_header.DataLength = dlc;
+    transmit_header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    transmit_header.BitRateSwitch = FDCAN_BRS_OFF;
+    transmit_header.FDFormat = FDCAN_CLASSIC_CAN;
+    transmit_header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    transmit_header.MessageMarker = 0U;
+
+    if (HAL_FDCAN_AddMessageToTxFifoQ(fdcan_handle,
+                                      &transmit_header,
+                                      (uint8_t *)frame->data) != HAL_OK)
+    {
+        fdcan_driver_state.transmit_error_count++;
+        return FDCAN_DRIVER_STATUS_HAL_ERROR;
+    }
+
+    return FDCAN_DRIVER_STATUS_OK;
 }
+
 /**
-************************************************************************
-* @brief:      	fdcanx_receive(FDCAN_HandleTypeDef *hfdcan, uint8_t *buf)
-* @param:       hfdcan：FDCAN句柄
-* @param:       buf：接收数据缓存
-* @retval:     	接收的数据长度
-* @details:    	接收数据
-************************************************************************
-**/
-uint8_t fdcanx_receive(hcan_t *hfdcan, uint16_t *rec_id, uint8_t *buf)
-{	
-	FDCAN_RxHeaderTypeDef pRxHeader;
-	uint8_t len;
-	
-	if(HAL_FDCAN_GetRxMessage(hfdcan,FDCAN_RX_FIFO0, &pRxHeader, buf)==HAL_OK)
-	{
-		*rec_id = pRxHeader.Identifier;
-		if(pRxHeader.DataLength<=FDCAN_DLC_BYTES_8)
-			len = pRxHeader.DataLength;
-		if(pRxHeader.DataLength<=FDCAN_DLC_BYTES_12)
-			len = 12;
-		if(pRxHeader.DataLength<=FDCAN_DLC_BYTES_16)
-			len = 16;
-		if(pRxHeader.DataLength<=FDCAN_DLC_BYTES_20)
-			len = 20;
-		if(pRxHeader.DataLength<=FDCAN_DLC_BYTES_24)
-			len = 24;
-		if(pRxHeader.DataLength<=FDCAN_DLC_BYTES_32)
-			len = 32;
-		if(pRxHeader.DataLength<=FDCAN_DLC_BYTES_48)
-			len = 48;
-		if(pRxHeader.DataLength<=FDCAN_DLC_BYTES_64)
-			len = 64;
-		
-		return len;//接收数据
-	}
-	return 0;	
+ * @brief Receive and strictly validate one 11-bit classic CAN data frame.
+ * @param fdcan_handle HAL FDCAN handle.
+ * @param frame Destination classic CAN frame.
+ * @return Explicit driver status.
+ */
+FdcanDriverStatus fdcan_classic_receive(FDCAN_HandleTypeDef *fdcan_handle,
+                                        FdcanClassicFrame *frame)
+{
+    FDCAN_RxHeaderTypeDef receive_header = {0};
+    uint8_t payload[FDCAN_CLASSIC_MAX_DATA_LENGTH] = {0U};
+    uint8_t length;
+
+    if ((fdcan_handle == NULL) || (frame == NULL))
+    {
+        return FDCAN_DRIVER_STATUS_INVALID_ARGUMENT;
+    }
+    if (HAL_FDCAN_GetRxFifoFillLevel(fdcan_handle, FDCAN_RX_FIFO0) == 0U)
+    {
+        return FDCAN_DRIVER_STATUS_NO_MESSAGE;
+    }
+    if (HAL_FDCAN_GetRxMessage(fdcan_handle,
+                               FDCAN_RX_FIFO0,
+                               &receive_header,
+                               payload) != HAL_OK)
+    {
+        fdcan_driver_state.receive_error_count++;
+        return FDCAN_DRIVER_STATUS_HAL_ERROR;
+    }
+    if ((receive_header.IdType != FDCAN_STANDARD_ID) ||
+        (receive_header.RxFrameType != FDCAN_DATA_FRAME) ||
+        (receive_header.FDFormat != FDCAN_CLASSIC_CAN) ||
+        (receive_header.BitRateSwitch != FDCAN_BRS_OFF) ||
+        (fdcan_classic_dlc_to_length((uint8_t)receive_header.DataLength, &length) !=
+         FDCAN_CLASSIC_STATUS_OK))
+    {
+        fdcan_driver_state.receive_error_count++;
+        return FDCAN_DRIVER_STATUS_INVALID_FRAME;
+    }
+    if (fdcan_classic_frame_init(frame,
+                                 (uint16_t)receive_header.Identifier,
+                                 payload,
+                                 length) != FDCAN_CLASSIC_STATUS_OK)
+    {
+        fdcan_driver_state.receive_error_count++;
+        return FDCAN_DRIVER_STATUS_INVALID_FRAME;
+    }
+
+    return FDCAN_DRIVER_STATUS_OK;
 }
 
+/**
+ * @brief Get the read-only FDCAN1 health snapshot.
+ * @return Address of the static driver state.
+ */
+const FdcanDriverState *fdcan_classic_get_state(void)
+{
+    return &fdcan_driver_state;
+}
 
+/**
+ * @brief Weak application hook invoked for each accepted FDCAN1 frame.
+ * @param frame Accepted classic CAN frame.
+ */
+__weak void fdcan_classic_frame_received(const FdcanClassicFrame *frame)
+{
+    (void)frame;
+}
 
-uint8_t rx_data1[8] = {0};
-uint16_t rec_id1;
+/**
+ * @brief Weak safety hook invoked once FDCAN1 enters Bus-Off.
+ */
+__weak void fdcan_classic_bus_off_received(void)
+{
+}
+
+/**
+ * @brief Drain all available FDCAN1 FIFO0 frames during one receive callback.
+ */
 void fdcan1_rx_callback(void)
 {
-	fdcanx_receive(&hfdcan1, &rec_id1, rx_data1);
+    while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) > 0U)
+    {
+        FdcanClassicFrame received_frame;
+
+        if (fdcan_classic_receive(&hfdcan1, &received_frame) == FDCAN_DRIVER_STATUS_OK)
+        {
+            fdcan_classic_frame_received(&received_frame);
+        }
+    }
 }
-uint8_t rx_data2[8] = {0};
-uint16_t rec_id2;
+
+/**
+ * @brief Compatibility placeholder because FDCAN2 motor traffic is intentionally disabled.
+ */
 void fdcan2_rx_callback(void)
 {
-	fdcanx_receive(&hfdcan2, &rec_id2, rx_data2);
 }
-uint8_t rx_data3[8] = {0};
-uint16_t rec_id3;
+
+/**
+ * @brief Compatibility placeholder because FDCAN3 motor traffic is intentionally disabled.
+ */
 void fdcan3_rx_callback(void)
 {
-	fdcanx_receive(&hfdcan3, &rec_id3, rx_data3);
 }
 
-
-void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+/**
+ * @brief HAL callback for FIFO0 notifications; only FDCAN1 is serviced.
+ * @param fdcan_handle HAL FDCAN handle that raised the callback.
+ * @param receive_interrupts Active FIFO0 interrupt flags.
+ */
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *fdcan_handle,
+                               uint32_t receive_interrupts)
 {
-    if(hfdcan == &hfdcan1)
-	{
-		fdcan1_rx_callback();
-	}
-	if(hfdcan == &hfdcan2)
-	{
-		fdcan2_rx_callback();
-	}
-	if(hfdcan == &hfdcan3)
-	{
-		fdcan3_rx_callback();
-	}
+    if ((fdcan_handle == &hfdcan1) &&
+        ((receive_interrupts & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0U))
+    {
+        fdcan1_rx_callback();
+    }
 }
 
+/**
+ * @brief HAL callback that records Error Warning, Error Passive, and Bus-Off.
+ * @param fdcan_handle HAL FDCAN handle that raised the callback.
+ * @param error_status_interrupts Active error-status interrupt flags.
+ */
+void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef *fdcan_handle,
+                                   uint32_t error_status_interrupts)
+{
+    FDCAN_ProtocolStatusTypeDef protocol_status = {0};
 
+    if (fdcan_handle != &hfdcan1)
+    {
+        return;
+    }
 
+    if (HAL_FDCAN_GetProtocolStatus(fdcan_handle, &protocol_status) == HAL_OK)
+    {
+        fdcan_driver_state.warning = (uint8_t)protocol_status.Warning;
+        fdcan_driver_state.error_passive = (uint8_t)protocol_status.ErrorPassive;
+    }
+    if ((error_status_interrupts & FDCAN_IT_ERROR_WARNING) != 0U)
+    {
+        fdcan_driver_state.warning_event_count++;
+    }
+    if ((error_status_interrupts & FDCAN_IT_ERROR_PASSIVE) != 0U)
+    {
+        fdcan_driver_state.error_passive_event_count++;
+    }
+    if ((error_status_interrupts & FDCAN_IT_BUS_OFF) != 0U)
+    {
+        fdcan_driver_state.bus_off_latched = 1U;
+        fdcan_driver_state.started = 0U;
+        fdcan_driver_state.bus_off_event_count++;
+        fdcan_classic_bus_off_received();
+    }
+}
 
+/**
+ * @brief Compatibility wrapper around the strict classic CAN send API.
+ * @param fdcan_handle HAL FDCAN handle.
+ * @param identifier Standard CAN identifier.
+ * @param data Payload bytes.
+ * @param length Payload length.
+ * @return Zero on success, otherwise one.
+ */
+uint8_t fdcanx_send_data(hcan_t *fdcan_handle, uint16_t identifier,
+                         uint8_t *data, uint32_t length)
+{
+    FdcanClassicFrame frame;
 
+    if ((length > UINT8_MAX) ||
+        (fdcan_classic_frame_init(&frame, identifier, data, (uint8_t)length) !=
+         FDCAN_CLASSIC_STATUS_OK))
+    {
+        return 1U;
+    }
+    return (fdcan_classic_send(fdcan_handle, &frame) == FDCAN_DRIVER_STATUS_OK) ? 0U : 1U;
+}
 
+/**
+ * @brief Compatibility wrapper around the strict classic CAN receive API.
+ * @param fdcan_handle HAL FDCAN handle.
+ * @param received_identifier Receives the standard identifier.
+ * @param buffer Receives up to eight payload bytes.
+ * @return Received length, or zero when no valid frame was available.
+ */
+uint8_t fdcanx_receive(hcan_t *fdcan_handle, uint16_t *received_identifier,
+                       uint8_t *buffer)
+{
+    FdcanClassicFrame frame;
 
+    if ((received_identifier == NULL) || (buffer == NULL) ||
+        (fdcan_classic_receive(fdcan_handle, &frame) != FDCAN_DRIVER_STATUS_OK))
+    {
+        return 0U;
+    }
 
-
-
-
+    *received_identifier = frame.identifier;
+    memcpy(buffer, frame.data, frame.length);
+    return frame.length;
+}

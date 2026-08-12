@@ -1,0 +1,31 @@
+PRD Phase 0 automated verification
+Recorded: 2026-08-12 Asia/Shanghai
+Branch: refactor/prd-phase-00
+
+Command:
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\check_phase0_architecture.ps1
+Result:
+[PASS] App sources contain no dynamic allocation calls.
+[PASS] App business layers do not include platform headers.
+[PASS] App sources expose no executable motor commands.
+[PASS] CubeMX retains the static default task and USER_KEY label.
+[PASS] main.c and freertos.c use the Phase 0 application entry.
+[PASS] Keil compiles one copy of each required source and no legacy controller.
+[PASS] Phase 0 architecture contracts are satisfied.
+
+Command:
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_phase0_tests.ps1
+Result:
+PHASE0_TESTS_PASSED
+
+Command:
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_tests.ps1
+Result:
+HOST_TESTS_PASSED
+
+Scope:
+- Phase 0 tests compile the HAL-independent App configuration, diagnostics,
+  controller, and application facade with C11 warnings treated as errors.
+- Legacy host tests remain as migration regression evidence only; their motor
+  controllers are not included in the current Keil production target.
+- These results do not prove USB, CAN, motor, or seven-axis hardware operation.

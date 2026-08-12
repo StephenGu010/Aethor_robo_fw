@@ -10,34 +10,36 @@ Host and architecture results:
 - Tests/host/run_motor_core_tests.ps1: MOTOR_CORE_TESTS_PASSED
 - Tests/host/run_platform_io_tests.ps1: PLATFORM_IO_TESTS_PASSED
 - Tests/host/run_motion_tests.ps1: MOTION_TESTS_PASSED
-- Tests/host/run_simulator_tests.ps1: 8 tests passed; SIMULATOR_TESTS_PASSED
+- Tests/host/run_simulator_tests.ps1: 9 tests passed; SIMULATOR_TESTS_PASSED
 - Tests/host/check_phase0_architecture.ps1: all architecture contracts passed
 - git diff --check: passed; line-ending conversion warnings only
 
 Simulator logical soak:
-- Disabled telemetry: 8 logical hours, 1,440,000 periods at 50 Hz
+- Disabled telemetry: 8 logical hours, 1,440,000 JOINT_STATE periods at 50 Hz
+  plus 288,000 MOTOR_STATE periods at 10 Hz
 - Motion/stop/recovery: 2 logical hours, 4,800 completed moves,
   2,400 stopped moves, 24 injected-fault recoveries
 - Replay cache stayed at or below 32 entries; pending telemetry stayed bounded
+- Fragmentation/reconnect stress: 2,000 requests, 54 bad-CRC frames, 10 sessions
 - This is accelerated logical time, not wall-clock or hardware soak evidence
 
 Keil full Rebuild:
 - Command: E:\keil\UV4\UV4.exe -r MDK-ARM\CtrBoard-H7_FDCAN.uvprojx -j0
 - Compiler: ARMCC V5.05 update 1 build 106
 - Result: 0 Error(s), 0 Warning(s)
-- Program Size: Code=70844 RO-data=3172 RW-data=476 ZI-data=87124
+- Program Size: Code=71424 RO-data=3208 RW-data=476 ZI-data=87164
 - Keil FilePath references: 68 total, 0 missing
 
 Artifacts:
 - HEX: MDK-ARM\CtrBoard-H7_FDCAN\CtrBoard-H7_FDCAN.hex
-  Length: 208897 bytes
-  SHA-256: E49B61DA3CB46B73FF1129A5DC9917C0004382DE8645F45713A44BF7674E8B8D
+  Length: 210623 bytes
+  SHA-256: 48A22D2C77E74839EBD9B42C122F69FBDAD698014DAC4BAD7BB3B82736E40BBA
 - MAP: MDK-ARM\CtrBoard-H7_FDCAN\CtrBoard-H7_FDCAN.map
-  Length: 670761 bytes
-  SHA-256: 81F12C688EB427182B57D8710F33193403BE54DA4792D443BBC62B0F6A987183
+  Length: 671725 bytes
+  SHA-256: F930964DF2E35A8A4840B92C26283E49B7BD689033DA5159B2D3FE2A88F9CD8D
 - Build log: MDK-ARM\first-arm-final-rebuild.log
   Length: 3121 bytes
-  SHA-256: D11F94F2B453B8D4F15A03086CD7BB120BE0FDD61A9788C324337BE99C3868E1
+  SHA-256: 6838B3F449F99ED09DBD4A91B5873A8FBFB528F5B43ABE3C5E210E057C42A9D9
 
 Evidence boundary:
 - These results prove host software behavior and a reproducible STM32 image build.

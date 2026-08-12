@@ -28,6 +28,8 @@
 - 实体模型只消费 `JOINT_STATE.q_deg`，它是对齐后的七轴关节角；不能直接使用电机原始弧度。
 - 幽灵模型只表示用户目标。一次 `MOVE_JOINTS` 必须发送恰好七个有限值，不能拆成七条单轴命令。
 - `MOTOR_STATE` 默认 10 Hz，并在状态变化时立即输出；`JOINT_STATE` 默认 50 Hz。遥测序号允许因丢旧保新出现间隙。
+- `GET_MOTORS startup=id,mode,ranges,version` 返回四个七轴验证掩码；未置位表示相应启动参数尚未获得可信响应。
+- `GET_DIAG parse=bad_frame,bad_crc` 和 `motion=active_request,predicted_ms,actual_ms,max_error_mdeg` 使用紧凑定长字段，供日志和 UI 直接关联。
 - DH/URDF 仅属于上位机模型。当前机械参数未知不阻止协议和关节空间软件测试，但生产使能保持锁定。
 
 ## 安全门控

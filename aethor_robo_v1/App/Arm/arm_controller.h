@@ -1,6 +1,6 @@
 /**
  * @file arm_controller.h
- * @brief Defines the Phase 0 robot boot self-test and latched fault state.
+ * @brief Defines the seven-axis arm safety state machine and latched faults.
  */
 
 #ifndef APP_ARM_ARM_CONTROLLER_H
@@ -13,12 +13,18 @@
 #include "diagnostics.h"
 
 /**
- * @brief Defines the only states reachable by the Phase 0 production entry.
+ * @brief Defines every formal first-arm lifecycle state from the PRD.
  */
 typedef enum
 {
     ARM_STATE_BOOT = 0,
     ARM_STATE_SELF_TEST,
+    ARM_STATE_UNALIGNED,
+    ARM_STATE_DISABLED,
+    ARM_STATE_ENABLING,
+    ARM_STATE_READY,
+    ARM_STATE_MOVING,
+    ARM_STATE_STOPPING,
     ARM_STATE_FAULT
 } ArmState;
 
@@ -43,6 +49,9 @@ typedef struct
     ArmFault fault;
     uint64_t state_entered_at_us;
     uint32_t fault_detail;
+    uint8_t aligned;
+    uint8_t enabled;
+    uint8_t moving;
     uint8_t initialized;
 } ArmController;
 
@@ -56,6 +65,9 @@ typedef struct
     uint64_t state_entered_at_us;
     uint32_t fault_detail;
     uint8_t joint_count;
+    uint8_t aligned;
+    uint8_t enabled;
+    uint8_t moving;
 } ArmSnapshot;
 
 /**

@@ -12,6 +12,7 @@
 #include "ascii_protocol.h"
 #include "arm_controller.h"
 #include "diagnostics.h"
+#include "joint_reference.h"
 #include "motor_types.h"
 
 #define PROTOCOL_ENGINE_MESSAGE_CAPACITY (520U)
@@ -73,6 +74,7 @@ typedef struct
 typedef struct
 {
     ArmSnapshot arm;
+    JointStateSnapshot joints;
     MotorFeedbackSnapshot motors;
     DiagnosticCounters diagnostics;
     uint64_t timestamp_us;

@@ -736,6 +736,11 @@
               <FileType>1</FileType>
               <FilePath>..\App\Arm\arm_controller.c</FilePath>
             </File>
+            <File>
+              <FileName>joint_reference.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Arm\joint_reference.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

@@ -9,6 +9,23 @@
 #include <stddef.h>
 #include <string.h>
 
+#define MOTOR_BANK_SNAPSHOT_MAX_ATTEMPTS (3U)
+
+/**
+ * @brief Prevents compiler reordering across the single-writer seqlock edges.
+ */
+static void motor_bank_compiler_barrier(void)
+{
+#if defined(__CC_ARM)
+    __schedule_barrier();
+#elif defined(__GNUC__) || defined(__clang__)
+    __asm__ volatile ("" ::: "memory");
+#else
+    volatile uint32_t barrier_value = 0U;
+    (void)barrier_value;
+#endif
+}
+
 /**
  * @brief Checks that all floating-point feedback values are finite.
  * @param feedback Decoded feedback sample.
@@ -124,11 +141,15 @@ MotorBankStatus motor_bank_update_feedback(MotorBank *bank,
         return MOTOR_BANK_STATUS_STALE_SAMPLE;
     }
 
+    ++bank->publication_sequence;
+    motor_bank_compiler_barrier();
     motor->feedback = *feedback;
     motor->feedback_valid = 1U;
     bank->valid_joint_mask |= (uint8_t)(1U << joint_index);
     bank->bus_state = MOTOR_BUS_ACTIVE;
     ++bank->generation;
+    motor_bank_compiler_barrier();
+    ++bank->publication_sequence;
     return MOTOR_BANK_STATUS_OK;
 }
 
@@ -145,6 +166,10 @@ MotorBankStatus motor_bank_get_snapshot(const MotorBank *bank,
                                         uint64_t stale_after_us,
                                         MotorFeedbackSnapshot *snapshot)
 {
+    MotorFeedbackSnapshot snapshot_candidate;
+    uint32_t sequence_before;
+    uint32_t sequence_after;
+    uint8_t attempt_index;
     uint8_t joint_index;
 
     if ((bank == NULL) || (bank->initialized == 0U) || (snapshot == NULL))
@@ -152,22 +177,44 @@ MotorBankStatus motor_bank_get_snapshot(const MotorBank *bank,
         return MOTOR_BANK_STATUS_INVALID_ARGUMENT;
     }
 
-    memset(snapshot, 0, sizeof(*snapshot));
-    snapshot->bus_state = bank->bus_state;
-    snapshot->published_at_us = timestamp_us;
-    snapshot->generation = bank->generation;
-
-    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    for (attempt_index = 0U;
+         attempt_index < MOTOR_BANK_SNAPSHOT_MAX_ATTEMPTS;
+         ++attempt_index)
     {
-        const MotorObject *motor = &bank->motors[joint_index];
-
-        snapshot->joints[joint_index] = motor->feedback;
-        if ((motor->feedback_valid != 0U) &&
-            (timestamp_us >= motor->feedback.timestamp_us) &&
-            ((timestamp_us - motor->feedback.timestamp_us) <= stale_after_us))
+        sequence_before = bank->publication_sequence;
+        if ((sequence_before & 1U) != 0U)
         {
-            snapshot->valid_joint_mask |= (uint8_t)(1U << joint_index);
+            continue;
+        }
+        motor_bank_compiler_barrier();
+
+        memset(&snapshot_candidate, 0, sizeof(snapshot_candidate));
+        snapshot_candidate.bus_state = bank->bus_state;
+        snapshot_candidate.published_at_us = timestamp_us;
+        snapshot_candidate.generation = bank->generation;
+
+        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+        {
+            const MotorObject *motor = &bank->motors[joint_index];
+
+            snapshot_candidate.joints[joint_index] = motor->feedback;
+            if ((motor->feedback_valid != 0U) &&
+                (timestamp_us >= motor->feedback.timestamp_us) &&
+                ((timestamp_us - motor->feedback.timestamp_us) <= stale_after_us))
+            {
+                snapshot_candidate.valid_joint_mask |=
+                    (uint8_t)(1U << joint_index);
+            }
+        }
+
+        motor_bank_compiler_barrier();
+        sequence_after = bank->publication_sequence;
+        if ((sequence_before == sequence_after) &&
+            ((sequence_after & 1U) == 0U))
+        {
+            *snapshot = snapshot_candidate;
+            return MOTOR_BANK_STATUS_OK;
         }
     }
-    return MOTOR_BANK_STATUS_OK;
+    return MOTOR_BANK_STATUS_SNAPSHOT_BUSY;
 }

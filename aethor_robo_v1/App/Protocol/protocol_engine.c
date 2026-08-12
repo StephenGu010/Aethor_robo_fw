@@ -233,6 +233,18 @@ static const char *protocol_engine_arm_state_text(ArmState state)
             return "BOOT";
         case ARM_STATE_SELF_TEST:
             return "SELF_TEST";
+        case ARM_STATE_UNALIGNED:
+            return "UNALIGNED";
+        case ARM_STATE_DISABLED:
+            return "DISABLED";
+        case ARM_STATE_ENABLING:
+            return "ENABLING";
+        case ARM_STATE_READY:
+            return "READY";
+        case ARM_STATE_MOVING:
+            return "MOVING";
+        case ARM_STATE_STOPPING:
+            return "STOPPING";
         case ARM_STATE_FAULT:
         default:
             return "FAULT";
@@ -502,6 +514,9 @@ static ProtocolEngineStatus protocol_engine_handle_get_state(
     const AsciiProtocolRequest *request,
     ProtocolOutputBatch *output_batch)
 {
+    uint32_t feedback_age_max_ms = 0U;
+    uint8_t joint_index;
+
     if (engine->query_context_valid == 0U)
     {
         return protocol_engine_append_format(output_batch,
@@ -509,21 +524,46 @@ static ProtocolEngineStatus protocol_engine_handle_get_state(
                                              "ERR %lu INTERNAL_ERROR context=state",
                                              (unsigned long)request->request_id);
     }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const MotorJointFeedback *feedback =
+            &engine->query_context.motors.joints[joint_index];
+        if ((feedback->timestamp_us != 0U) &&
+            (engine->query_context.timestamp_us >= feedback->timestamp_us))
+        {
+            uint64_t age_ms = (engine->query_context.timestamp_us -
+                               feedback->timestamp_us) / 1000U;
+            if (age_ms > feedback_age_max_ms)
+            {
+                feedback_age_max_ms = (age_ms > UINT32_MAX)
+                                          ? UINT32_MAX
+                                          : (uint32_t)age_ms;
+            }
+        }
+    }
     return protocol_engine_append_format(
         output_batch,
         PROTOCOL_OUTPUT_QUERY,
-        "RSP %lu ok state=%s aligned=0 enabled=0 moving=0 mode=UNKNOWN active_request=0 fault=%s feedback_age_max_ms=0",
+        "RSP %lu ok state=%s aligned=%u enabled=%u moving=%u mode=UNKNOWN active_request=0 fault=%s feedback_age_max_ms=%lu",
         (unsigned long)request->request_id,
         protocol_engine_arm_state_text(engine->query_context.arm.state),
-        protocol_engine_arm_fault_text(engine->query_context.arm.fault));
+        engine->query_context.arm.aligned,
+        engine->query_context.arm.enabled,
+        engine->query_context.arm.moving,
+        protocol_engine_arm_fault_text(engine->query_context.arm.fault),
+        (unsigned long)feedback_age_max_ms);
 }
 
-/** @brief Returns an explicitly invalid joint snapshot until reference alignment. */
+/** @brief Returns the latest aligned joint snapshot without producing CAN traffic. */
 static ProtocolEngineStatus protocol_engine_handle_get_jpos(
     ProtocolEngine *engine,
     const AsciiProtocolRequest *request,
     ProtocolOutputBatch *output_batch)
 {
+    char body[PROTOCOL_MAX_LINE_LENGTH + 1U];
+    size_t body_length = 0U;
+    uint8_t joint_index;
+
     if (engine->query_context_valid == 0U)
     {
         return protocol_engine_append_format(output_batch,
@@ -531,12 +571,56 @@ static ProtocolEngineStatus protocol_engine_handle_get_jpos(
                                              "ERR %lu INTERNAL_ERROR context=jpos",
                                              (unsigned long)request->request_id);
     }
-    return protocol_engine_append_format(
-        output_batch,
-        PROTOCOL_OUTPUT_QUERY,
-        "RSP %lu ok t_us=%lu q_deg=0.000,0.000,0.000,0.000,0.000,0.000,0.000 valid=0,0,0,0,0,0,0 aligned=0",
-        (unsigned long)request->request_id,
-        (unsigned long)engine->query_context.timestamp_us);
+    if (protocol_engine_append_text(
+            body,
+            sizeof(body),
+            &body_length,
+            "RSP %lu ok t_us=%lu q_deg=",
+            (unsigned long)request->request_id,
+            (unsigned long)engine->query_context.joints.published_at_us) == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if (protocol_engine_append_text(
+                body,
+                sizeof(body),
+                &body_length,
+                "%s%.3f",
+                (joint_index == 0U) ? "" : ",",
+                engine->query_context.joints.position_deg[joint_index]) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    if (protocol_engine_append_text(body, sizeof(body), &body_length, " valid=") == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t valid = (uint8_t)((engine->query_context.joints.valid_joint_mask &
+                                   (uint8_t)(1U << joint_index)) != 0U);
+        if (protocol_engine_append_text(body,
+                                        sizeof(body),
+                                        &body_length,
+                                        "%s%u",
+                                        (joint_index == 0U) ? "" : ",",
+                                        valid) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    if (protocol_engine_append_text(body,
+                                    sizeof(body),
+                                    &body_length,
+                                    " aligned=%u",
+                                    engine->query_context.joints.aligned) == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    return protocol_engine_append_body(output_batch, PROTOCOL_OUTPUT_QUERY, body);
 }
 
 /** @brief Returns motor validity, raw driver state, temperatures, and age. */
@@ -626,6 +710,33 @@ static ProtocolEngineStatus protocol_engine_handle_get_motors(
                 "%s%d",
                 (joint_index == 0U) ? "" : ",",
                 (int)engine->query_context.motors.joints[joint_index].rotor_temperature_c) == 0U)
+        {
+            return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+        }
+    }
+    if (protocol_engine_append_text(body, sizeof(body), &body_length, " age_ms=") == 0U)
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const MotorJointFeedback *feedback =
+            &engine->query_context.motors.joints[joint_index];
+        uint32_t age_ms = UINT32_MAX;
+
+        if ((feedback->timestamp_us != 0U) &&
+            (engine->query_context.timestamp_us >= feedback->timestamp_us))
+        {
+            uint64_t age_value = (engine->query_context.timestamp_us -
+                                  feedback->timestamp_us) / 1000U;
+            age_ms = (age_value > UINT32_MAX) ? UINT32_MAX : (uint32_t)age_value;
+        }
+        if (protocol_engine_append_text(body,
+                                        sizeof(body),
+                                        &body_length,
+                                        "%s%lu",
+                                        (joint_index == 0U) ? "" : ",",
+                                        (unsigned long)age_ms) == 0U)
         {
             return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
         }

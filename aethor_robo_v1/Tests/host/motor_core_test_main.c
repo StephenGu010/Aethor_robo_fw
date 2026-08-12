@@ -97,6 +97,22 @@ static void test_motor_bank_publishes_coherent_feedback_snapshots(void)
 }
 
 /**
+ * @brief Verifies a reader never accepts a snapshot during an active publish.
+ */
+static void test_motor_bank_rejects_snapshot_during_publish(void)
+{
+    MotorBank bank;
+    MotorFeedbackSnapshot snapshot;
+
+    assert(motor_bank_init(&bank, arm_config_get_production()) ==
+           MOTOR_BANK_STATUS_OK);
+    bank.publication_sequence = 1U;
+
+    assert(motor_bank_get_snapshot(&bank, 1000U, 500U, &snapshot) ==
+           MOTOR_BANK_STATUS_SNAPSHOT_BUSY);
+}
+
+/**
  * @brief Verifies emergency frames preempt normal traffic without overwriting it.
  */
 static void test_can_scheduler_prioritizes_emergency_frames(void)
@@ -553,6 +569,7 @@ int main(void)
 {
     test_motor_bank_uses_frozen_seven_axis_mapping();
     test_motor_bank_publishes_coherent_feedback_snapshots();
+    test_motor_bank_rejects_snapshot_during_publish();
     test_can_scheduler_prioritizes_emergency_frames();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();

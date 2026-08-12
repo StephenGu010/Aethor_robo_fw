@@ -14,10 +14,40 @@
 #include "board_config.h"
 #include "build_info.h"
 #include "diagnostics.h"
+#include "joint_reference.h"
 #include "motion_types.h"
 #include "motor_types.h"
 #include "platform_contract.h"
 #include "protocol_contract.h"
+
+/**
+ * @brief Builds deterministic commissioned joint parameters for domain tests.
+ * @return Valid seven-axis configuration independent of real hardware values.
+ */
+static ArmConfig make_test_commissioned_configuration(void)
+{
+    ArmConfig configuration = *arm_config_get_production();
+    uint8_t joint_index;
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        JointConfig *joint = &configuration.joints[joint_index];
+
+        joint->direction = (joint_index == 1U) ? -1 : 1;
+        joint->soft_limit_min_rad = -3.0F;
+        joint->soft_limit_max_rad = 3.0F;
+        joint->max_velocity_rad_s = 1.0F;
+        joint->max_acceleration_rad_s2 = 2.0F;
+        joint->mit_kp = 10.0F;
+        joint->mit_kd = 1.0F;
+        joint->motor_pmax_rad = 12.5F;
+        joint->motor_vmax_rad_s = 45.0F;
+        joint->motor_tmax_nm = 18.0F;
+        joint->gear_ratio = 2.0F;
+        joint->verified_fields = ARM_JOINT_REQUIRED_ENABLE_FIELDS;
+    }
+    return configuration;
+}
 
 /**
  * @brief Verifies the production configuration contains seven ordered joints.
@@ -270,6 +300,77 @@ static void test_arm_controller_latches_invalid_config_fault(void)
 }
 
 /**
+ * @brief Verifies commissioned software boots into the mandatory unaligned gate.
+ */
+static void test_arm_controller_enters_unaligned_after_self_test(void)
+{
+    ArmConfig configuration = make_test_commissioned_configuration();
+    Diagnostics diagnostics;
+    ArmController controller;
+    ArmSnapshot snapshot;
+
+    diagnostics_init(&diagnostics);
+    arm_controller_init(&controller, &configuration, &diagnostics, 1000U);
+    arm_controller_step(&controller, 2000U);
+    arm_controller_step(&controller, 3000U);
+
+    assert(arm_controller_get_snapshot(&controller, &snapshot));
+    assert(snapshot.state == ARM_STATE_UNALIGNED);
+    assert(snapshot.fault == ARM_FAULT_NONE);
+    assert(snapshot.aligned == 0U);
+}
+
+/**
+ * @brief Verifies alignment converts motor radians into coherent joint degrees.
+ */
+static void test_joint_reference_alignment_and_reboot_invalidation(void)
+{
+    ArmConfig configuration = make_test_commissioned_configuration();
+    JointReference reference;
+    JointStateSnapshot joint_snapshot;
+    MotorFeedbackSnapshot motor_snapshot = {0};
+    float reference_degrees[ARM_JOINT_COUNT] = {10.0F, -20.0F, 0.0F, 0.0F,
+                                                0.0F, 0.0F, 0.0F};
+    uint8_t joint_index;
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        motor_snapshot.joints[joint_index].position_rad = 1.0F;
+        motor_snapshot.joints[joint_index].velocity_rad_s = 0.2F;
+        motor_snapshot.joints[joint_index].torque_nm = 0.3F;
+    }
+    motor_snapshot.valid_joint_mask = 0x7FU;
+    motor_snapshot.generation = 5U;
+
+    assert(joint_reference_init(&reference, &configuration) ==
+           JOINT_REFERENCE_STATUS_OK);
+    assert(joint_reference_publish(&reference, &motor_snapshot, 2000U) ==
+           JOINT_REFERENCE_STATUS_NOT_ALIGNED);
+    assert(joint_reference_align(&reference,
+                                 &motor_snapshot,
+                                 reference_degrees,
+                                 3000U) == JOINT_REFERENCE_STATUS_OK);
+    assert(joint_reference_get_snapshot(&reference, &joint_snapshot) ==
+           JOINT_REFERENCE_STATUS_OK);
+    assert(joint_snapshot.aligned == 1U);
+    assert(joint_snapshot.valid_joint_mask == 0x7FU);
+    assert(joint_snapshot.position_deg[0] > 9.999F);
+    assert(joint_snapshot.position_deg[0] < 10.001F);
+    assert(joint_snapshot.position_deg[1] > -20.001F);
+    assert(joint_snapshot.position_deg[1] < -19.999F);
+    assert(joint_snapshot.velocity_deg_s[0] > 5.729F);
+    assert(joint_snapshot.velocity_deg_s[0] < 5.731F);
+    assert(joint_snapshot.velocity_deg_s[1] < -5.729F);
+
+    assert(joint_reference_init(&reference, &configuration) ==
+           JOINT_REFERENCE_STATUS_OK);
+    assert(joint_reference_get_snapshot(&reference, &joint_snapshot) ==
+           JOINT_REFERENCE_STATUS_OK);
+    assert(joint_snapshot.aligned == 0U);
+    assert(joint_snapshot.valid_joint_mask == 0U);
+}
+
+/**
  * @brief Verifies public diagnostics and snapshot queries reject null outputs.
  */
 static void test_phase0_state_queries_reject_null_outputs(void)
@@ -390,6 +491,8 @@ int main(void)
     test_diagnostics_ring_overwrites_oldest_event();
     test_arm_controller_latches_incomplete_config_fault();
     test_arm_controller_latches_invalid_config_fault();
+    test_arm_controller_enters_unaligned_after_self_test();
+    test_joint_reference_alignment_and_reboot_invalidation();
     test_phase0_state_queries_reject_null_outputs();
     test_layer_contracts_are_frozen();
     test_aethor_app_latches_safe_phase0_fault();

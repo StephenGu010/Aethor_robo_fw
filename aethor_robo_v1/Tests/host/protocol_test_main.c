@@ -282,6 +282,20 @@ static void test_protocol_engine_query_dispatch(void)
     assert(strstr(output_batch.messages[0].data, "valid=0,0,0,0,0,0,0") != NULL);
     assert(strstr(output_batch.messages[0].data, "aligned=0") != NULL);
 
+    query_context.joints.position_deg[0] = 12.345F;
+    query_context.joints.valid_joint_mask = 0x01U;
+    query_context.joints.aligned = 1U;
+    query_context.joints.published_at_us = 9050U;
+    protocol_engine_update_query_context(&engine, &query_context);
+    request_length = build_request_frame("REQ 18 GET_JPOS",
+                                         request_frame,
+                                         sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        2150U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output_batch.messages[0].data, "q_deg=12.345") != NULL);
+    assert(strstr(output_batch.messages[0].data, "valid=1,0,0,0,0,0,0") != NULL);
+    assert(strstr(output_batch.messages[0].data, "aligned=1") != NULL);
+
     request_length = build_request_frame("REQ 13 GET_MOTORS",
                                          request_frame,
                                          sizeof(request_frame));
@@ -289,6 +303,7 @@ static void test_protocol_engine_query_dispatch(void)
                                         2200U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output_batch.messages[0].data, "status=1,0,0,0,0,0,0") != NULL);
     assert(strstr(output_batch.messages[0].data, "mos_c=42,0,0,0,0,0,0") != NULL);
+    assert(strstr(output_batch.messages[0].data, "age_ms=") != NULL);
 
     request_length = build_request_frame("REQ 14 GET_DIAG",
                                          request_frame,

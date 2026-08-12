@@ -159,6 +159,7 @@ function Invoke-Phase0ArchitectureCheck {
         'arm_config.c',
         'build_info.c',
         'arm_controller.c',
+        'joint_reference.c',
         'diagnostics.c',
         'ascii_protocol.c',
         'protocol_engine.c',

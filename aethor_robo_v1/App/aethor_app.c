@@ -12,6 +12,7 @@
 
 static Diagnostics application_diagnostics;
 static ArmController application_controller;
+static JointReference application_joint_reference;
 static MotorRuntime application_motor_runtime;
 static ProtocolEngine application_protocol_engine;
 static uint8_t application_initialized;
@@ -30,6 +31,8 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
                         arm_config_get_production(),
                         &application_diagnostics,
                         timestamp_us);
+    (void)joint_reference_init(&application_joint_reference,
+                               arm_config_get_production());
     motor_status = motor_runtime_init(&application_motor_runtime,
                                       arm_config_get_production());
     protocol_engine_init(&application_protocol_engine, boot_id);
@@ -55,6 +58,8 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
     memset(&query_context, 0, sizeof(query_context));
     (void)arm_controller_get_snapshot(&application_controller,
                                       &query_context.arm);
+    (void)joint_reference_get_snapshot(&application_joint_reference,
+                                       &query_context.joints);
     (void)motor_runtime_get_snapshot(&application_motor_runtime,
                                      timestamp_us,
                                      MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
@@ -152,6 +157,17 @@ void aethor_app_service(uint64_t timestamp_us)
 {
     if (application_initialized != 0U)
     {
+        MotorFeedbackSnapshot motor_snapshot;
+
+        if (motor_runtime_get_snapshot(&application_motor_runtime,
+                                       timestamp_us,
+                                       MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
+                                       &motor_snapshot) == MOTOR_RUNTIME_STATUS_OK)
+        {
+            (void)joint_reference_publish(&application_joint_reference,
+                                          &motor_snapshot,
+                                          timestamp_us);
+        }
         arm_controller_step(&application_controller, timestamp_us);
     }
 }

@@ -1,6 +1,6 @@
 /**
  * @file arm_controller.c
- * @brief Implements the Phase 0 boot, self-test, and latched fault sequence.
+ * @brief Implements boot self-test and the safe entry into arm lifecycle states.
  */
 
 #include "arm_controller.h"
@@ -78,6 +78,9 @@ void arm_controller_init(ArmController *controller,
     controller->fault = ARM_FAULT_NONE;
     controller->state_entered_at_us = timestamp_us;
     controller->fault_detail = 0U;
+    controller->aligned = 0U;
+    controller->enabled = 0U;
+    controller->moving = 0U;
     controller->initialized = 1U;
 
     (void)diagnostics_push(diagnostics,
@@ -124,8 +127,21 @@ void arm_controller_step(ArmController *controller, uint64_t timestamp_us)
                                            validation.missing_verified_fields,
                                            timestamp_us);
             }
+            else
+            {
+                controller->state = ARM_STATE_UNALIGNED;
+                controller->fault = ARM_FAULT_NONE;
+                controller->fault_detail = 0U;
+                controller->state_entered_at_us = timestamp_us;
+            }
             break;
 
+        case ARM_STATE_UNALIGNED:
+        case ARM_STATE_DISABLED:
+        case ARM_STATE_ENABLING:
+        case ARM_STATE_READY:
+        case ARM_STATE_MOVING:
+        case ARM_STATE_STOPPING:
         case ARM_STATE_FAULT:
         default:
             break;
@@ -154,5 +170,8 @@ bool arm_controller_get_snapshot(const ArmController *controller,
     snapshot->joint_count = (controller->configuration != NULL)
                                 ? controller->configuration->joint_count
                                 : 0U;
+    snapshot->aligned = controller->aligned;
+    snapshot->enabled = controller->enabled;
+    snapshot->moving = controller->moving;
     return true;
 }

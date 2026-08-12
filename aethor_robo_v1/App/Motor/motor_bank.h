@@ -22,7 +22,8 @@ typedef enum
     MOTOR_BANK_STATUS_ID_UNKNOWN,
     MOTOR_BANK_STATUS_ID_MISMATCH,
     MOTOR_BANK_STATUS_INVALID_SAMPLE,
-    MOTOR_BANK_STATUS_STALE_SAMPLE
+    MOTOR_BANK_STATUS_STALE_SAMPLE,
+    MOTOR_BANK_STATUS_SNAPSHOT_BUSY
 } MotorBankStatus;
 
 /**
@@ -53,6 +54,7 @@ typedef struct
 {
     MotorObject motors[ARM_JOINT_COUNT];
     MotorBusState bus_state;
+    volatile uint32_t publication_sequence;
     uint32_t generation;
     uint8_t valid_joint_mask;
     uint8_t initialized;

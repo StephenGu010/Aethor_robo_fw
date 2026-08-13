@@ -587,14 +587,38 @@ MotorRuntimeStatus motor_runtime_build_position_velocity_subset(
     memset(batch, 0, sizeof(*batch));
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
+        const S3519Ranges *ranges;
+        float absolute_velocity_rad_s;
+
         if ((motor_mask & (uint8_t)(1U << joint_index)) == 0U)
         {
             continue;
         }
+        if ((runtime->discovery.verified_joint_mask &
+             (uint8_t)(1U << joint_index)) == 0U)
+        {
+            memset(batch, 0, sizeof(*batch));
+            return MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE;
+        }
+        ranges = &runtime->discovery.results[joint_index].ranges;
+        absolute_velocity_rad_s = fabsf(motor_velocity_rad_s[joint_index]);
+        if (!isfinite(motor_position_rad[joint_index]) ||
+            !isfinite(absolute_velocity_rad_s) ||
+            !isfinite(ranges->position_max_rad) ||
+            !isfinite(ranges->velocity_max_rad_s) ||
+            (ranges->position_max_rad <= 0.0F) ||
+            (ranges->velocity_max_rad_s <= 0.0F) ||
+            (fabsf(motor_position_rad[joint_index]) >
+             ranges->position_max_rad) ||
+            (absolute_velocity_rad_s > ranges->velocity_max_rad_s))
+        {
+            memset(batch, 0, sizeof(*batch));
+            return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+        }
         if (s3519_pack_position_velocity(
                 (uint8_t)runtime->configuration->joints[joint_index].esc_id,
                 motor_position_rad[joint_index],
-                fabsf(motor_velocity_rad_s[joint_index]),
+                absolute_velocity_rad_s,
                 &batch->frames[batch->count]) != S3519_CODEC_STATUS_OK)
         {
             memset(batch, 0, sizeof(*batch));

@@ -698,22 +698,45 @@ static void phase0_submit_request(const char *body, uint64_t timestamp_us)
  * @param driver_state S3519 enabled or disabled state nibble.
  * @param timestamp_us Monotonic receive time.
  */
-static void phase0_feed_feedback(uint8_t esc_id,
-                                 uint8_t driver_state,
-                                 uint64_t timestamp_us)
+static void phase0_feed_position_feedback(uint8_t esc_id,
+                                          uint8_t driver_state,
+                                          float position_rad,
+                                          uint64_t timestamp_us)
 {
+    uint32_t encoded_position;
     uint8_t payload[8] = {
         (uint8_t)((driver_state << 4U) | esc_id),
         0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 35U, 27U
     };
     CanFrame frame;
 
+    assert(position_rad >= -12.5F);
+    assert(position_rad <= 12.5F);
+    encoded_position = (uint32_t)((position_rad + 12.5F) * 65535.0F / 25.0F);
+    payload[1] = (uint8_t)((encoded_position >> 8U) & 0xFFU);
+    payload[2] = (uint8_t)(encoded_position & 0xFFU);
     assert(can_frame_init(&frame,
                           (uint16_t)(esc_id + 0x10U),
                           payload,
                           sizeof(payload)) == CAN_FRAME_STATUS_OK);
     assert(aethor_app_receive_can_frame(&frame, timestamp_us) ==
            MOTOR_RUNTIME_STATUS_OK);
+}
+
+/**
+ * @brief Feeds one centered S3519 feedback frame with an explicit driver state.
+ * @param esc_id One-based motor identifier.
+ * @param driver_state S3519 enabled or disabled state nibble.
+ * @param timestamp_us Monotonic receive time.
+ */
+static void phase0_feed_feedback(uint8_t esc_id,
+                                 uint8_t driver_state,
+                                 uint64_t timestamp_us)
+{
+    phase0_feed_position_feedback(esc_id,
+                                  driver_state,
+                                  0.0F,
+                                  timestamp_us);
 }
 
 /**
@@ -848,6 +871,96 @@ static void test_aethor_app_repeats_unfinished_bench_target_batch(void)
     assert(memcmp(repeated_target.data,
                   first_target.data,
                   first_target.length) == 0);
+}
+
+/**
+ * @brief Verifies extended relative motion locks one target and rejects PMAX overflow.
+ */
+static void test_aethor_app_locks_fixed_relative_target_from_command_start(void)
+{
+    ProtocolOutputBatch output_batch;
+    CanFrame command_frame;
+    CanFrame first_target;
+    CanFrame repeated_target;
+    CanTxPriority priority;
+    uint64_t timestamp_us = 1000U;
+
+    aethor_app_init(timestamp_us, 10001U);
+    (void)aethor_app_service(++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    phase0_submit_request("REQ 1 HELLO client=fixed-target protocol=1",
+                          ++timestamp_us);
+    phase0_initialize_selected_motors(&timestamp_us);
+
+    phase0_submit_request("REQ 3 ENABLE motors=1", ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us,
+                                     &command_frame,
+                                     &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    phase0_feed_position_feedback(1U,
+                                  S3519_DRIVER_STATE_ENABLED,
+                                  0.0F,
+                                  ++timestamp_us);
+    assert(aethor_app_service(++timestamp_us) == 1U);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data, "DONE 3 COMPLETED") != NULL);
+
+    phase0_submit_request(
+        "REQ 4 MOVE_REL_TARGET motors=1 delta_deg=360.0 speed_deg_s=3.0",
+        ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us,
+                                     &first_target,
+                                     &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(first_target.identifier == 0x101U);
+    phase0_feed_position_feedback(1U,
+                                  S3519_DRIVER_STATE_ENABLED,
+                                  1.0F,
+                                  ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us,
+                                     &repeated_target,
+                                     &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(repeated_target.identifier == first_target.identifier);
+    assert(repeated_target.length == first_target.length);
+    assert(memcmp(repeated_target.data,
+                  first_target.data,
+                  first_target.length) == 0);
+
+    timestamp_us = 1000U;
+    aethor_app_init(timestamp_us, 10002U);
+    (void)aethor_app_service(++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    phase0_submit_request("REQ 1 HELLO client=fixed-pmax protocol=1",
+                          ++timestamp_us);
+    phase0_initialize_selected_motors(&timestamp_us);
+    phase0_submit_request("REQ 3 ENABLE motors=1", ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us,
+                                     &command_frame,
+                                     &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    phase0_feed_position_feedback(1U,
+                                  S3519_DRIVER_STATE_ENABLED,
+                                  12.0F,
+                                  ++timestamp_us);
+    assert(aethor_app_service(++timestamp_us) == 1U);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data, "DONE 3 COMPLETED") != NULL);
+
+    phase0_submit_request(
+        "REQ 4 MOVE_REL_TARGET motors=1 delta_deg=360.0 speed_deg_s=3.0",
+        ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data, "DONE 4 FAILED") != NULL);
+    assert(aethor_app_next_can_frame(++timestamp_us,
+                                     &command_frame,
+                                     &priority) !=
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
 }
 
 /**
@@ -1008,6 +1121,7 @@ int main(void)
     test_aethor_app_latches_safe_phase0_fault();
     test_aethor_app_reinitializes_deterministically();
     test_aethor_app_repeats_unfinished_bench_target_batch();
+    test_aethor_app_locks_fixed_relative_target_from_command_start();
     test_aethor_app_link_timeout_stops_and_disables();
     test_aethor_app_transport_fault_stops_and_disables();
 

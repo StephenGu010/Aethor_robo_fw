@@ -867,7 +867,8 @@ static uint8_t aethor_app_start_lifecycle_action(
             }
         }
     }
-    else if (command->type == PROTOCOL_COMMAND_MOVE_RELATIVE)
+    else if ((command->type == PROTOCOL_COMMAND_MOVE_RELATIVE) ||
+             (command->type == PROTOCOL_COMMAND_MOVE_RELATIVE_TARGET))
     {
         float motor_position_rad[ARM_JOINT_COUNT];
         float motor_velocity_rad_s[ARM_JOINT_COUNT];

@@ -1,15 +1,22 @@
 <#
 .SYNOPSIS
-Runs a guarded three-stage one-turn output-shaft test on S3519 motors 1 and 3.
+Runs a guarded three-stage relative-angle return test on S3519 motors 1 and 3.
 .DESCRIPTION
 Uses aethor-arm-ascii-v1 over COM7. Each stage sends one fixed relative target
-of 360 degrees. Physical motion requires the explicit -RunMotion switch.
+and the final stage returns both motors to their command-start positions.
+Physical motion requires the explicit -RunMotion switch.
 #>
 
 [CmdletBinding()]
 param(
     [ValidatePattern('^COM\d+$')]
     [string]$PortName = 'COM7',
+    [ValidateRange(-360.0, 360.0)]
+    [ValidateScript({ $_ -ne 0.0 })]
+    [double]$Motor1Degrees = 360.0,
+    [ValidateRange(-360.0, 360.0)]
+    [ValidateScript({ $_ -ne 0.0 })]
+    [double]$Motor3Degrees = 360.0,
     [switch]$RunMotion,
     [switch]$SelfTest
 )
@@ -20,13 +27,31 @@ $speedDegreesPerSecond = 3.0
 $motionOperation = 'MOVE_REL_TARGET'
 
 function Get-OneTurnStages {
-    <# Returns the immutable, PMAX-safe three-stage output-turn sequence. #>
+    <# Returns the immutable three-stage move-and-return sequence. #>
 
     return @(
-        [pscustomobject]@{ Name = 'ID1'; Motors = '1'; Delta = 360.0 },
-        [pscustomobject]@{ Name = 'ID3'; Motors = '3'; Delta = 360.0 },
-        [pscustomobject]@{ Name = 'ID1_ID3'; Motors = '1,3'; Delta = -360.0 }
+        [pscustomobject]@{
+            Name = 'ID1'; Motors = '1'; Deltas = [double[]]@($Motor1Degrees)
+        },
+        [pscustomobject]@{
+            Name = 'ID3'; Motors = '3'; Deltas = [double[]]@($Motor3Degrees)
+        },
+        [pscustomobject]@{
+            Name = 'ID1_ID3_RETURN'; Motors = '1,3'
+            Deltas = [double[]]@(-$Motor1Degrees, -$Motor3Degrees)
+        }
     )
+}
+
+function ConvertTo-AethorValueList {
+    <# Formats one numeric value for each selected motor in ascending list order. #>
+    param(
+        [Parameter(Mandatory)][double[]]$Values
+    )
+
+    return (($Values | ForEach-Object {
+                    $_.ToString('0.0###', $invariantCulture)
+                }) -join ',')
 }
 
 function Get-RepeatedValueList {
@@ -36,9 +61,8 @@ function Get-RepeatedValueList {
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$MotorList
     )
 
-    $motorCount = $MotorList.Split(',').Count
-    $formattedValue = $Value.ToString('0.0###', $invariantCulture)
-    return (@($formattedValue) * $motorCount) -join ','
+    return ConvertTo-AethorValueList `
+        -Values ([double[]](1..$MotorList.Split(',').Count | ForEach-Object { $Value }))
 }
 
 function Get-Crc16CcittFalse {
@@ -349,15 +373,17 @@ function Invoke-OneTurnStage {
 
     $script:activeMotorList = $Stage.Motors
     $script:shutdownRequired = $true
-    $deltaValues = Get-RepeatedValueList -Value $Stage.Delta -MotorList $Stage.Motors
+    $deltaValues = ConvertTo-AethorValueList -Values $Stage.Deltas
     $speedValues = Get-RepeatedValueList `
         -Value $speedDegreesPerSecond -MotorList $Stage.Motors
+    $maximumAbsoluteDelta = ($Stage.Deltas | ForEach-Object { [math]::Abs($_) } |
+            Measure-Object -Maximum).Maximum
     $plannedDurationMilliseconds = [int][math]::Ceiling(
-        ([math]::Abs($Stage.Delta) / $speedDegreesPerSecond) * 1000.0)
+        ($maximumAbsoluteDelta / $speedDegreesPerSecond) * 1000.0)
     $actionTimeoutMilliseconds = $plannedDurationMilliseconds + 5000
 
     Write-Output ("STAGE_START name={0} motors={1} delta_deg={2} planned_ms={3}" -f `
-        $Stage.Name, $Stage.Motors, $Stage.Delta, $plannedDurationMilliseconds)
+        $Stage.Name, $Stage.Motors, $deltaValues, $plannedDurationMilliseconds)
     Invoke-AethorAction -Context $Context -Operation 'INIT_MOTORS' `
         -Fields "motors=$($Stage.Motors)" -TimeoutMilliseconds 30000 | Out-Null
     Invoke-AethorAction -Context $Context -Operation 'CLEAR_FAULT' `
@@ -366,7 +392,7 @@ function Invoke-OneTurnStage {
         -Fields "motors=$($Stage.Motors)" -TimeoutMilliseconds 10000 | Out-Null
 
     Write-Output ("STAGE_PROGRESS name={0} command=1/1 target_delta_deg={1}" -f `
-        $Stage.Name, $Stage.Delta)
+        $Stage.Name, $deltaValues)
     Invoke-AethorAction -Context $Context -Operation $motionOperation `
         -Fields "motors=$($Stage.Motors) delta_deg=$deltaValues speed_deg_s=$speedValues" `
         -TimeoutMilliseconds $actionTimeoutMilliseconds | Out-Null
@@ -381,7 +407,7 @@ function Invoke-OneTurnStage {
     Write-Output ("STAGE_FINAL_MOTORS name={0} {1}" -f $Stage.Name, $motorResponse.Body)
     Write-Output ("STAGE_FINAL_DIAG name={0} {1}" -f $Stage.Name, $diagnosticResponse.Body)
     Write-Output ("STAGE_COMPLETED name={0} motors={1} total_deg={2}" -f `
-        $Stage.Name, $Stage.Motors, $Stage.Delta)
+        $Stage.Name, $Stage.Motors, $deltaValues)
 }
 
 function Invoke-OneTurnSequence {
@@ -433,18 +459,14 @@ function Invoke-OneTurnSelfTest {
     if ($stages.Count -ne 3) {
         throw "STAGE_COUNT_FAILED actual=$($stages.Count)"
     }
-    $expectedNames = @('ID1', 'ID3', 'ID1_ID3')
+    $expectedNames = @('ID1', 'ID3', 'ID1_ID3_RETURN')
     $expectedMotors = @('1', '3', '1,3')
-    $expectedDeltas = @(360.0, 360.0, -360.0)
     for ($stageIndex = 0; $stageIndex -lt $stages.Count; $stageIndex++) {
         $stage = $stages[$stageIndex]
         if (($stage.Name -ne $expectedNames[$stageIndex]) -or
             ($stage.Motors -ne $expectedMotors[$stageIndex]) -or
-            ([math]::Abs($stage.Delta - $expectedDeltas[$stageIndex]) -gt 0.0001) -or
             ($stage.PSObject.Properties.Name -contains 'Steps') -or
-            ([math]::Abs(
-                    ([math]::Abs($stage.Delta) / $speedDegreesPerSecond) -
-                    120.0) -gt 0.0001)) {
+            ($stage.Deltas.Count -ne $stage.Motors.Split(',').Count)) {
             throw "STAGE_PLAN_FAILED index=$stageIndex"
         }
         $motorCount = $stage.Motors.Split(',').Count
@@ -453,6 +475,12 @@ function Invoke-OneTurnSelfTest {
         if ($speedCount -ne $motorCount) {
             throw "STAGE_SPEED_WIDTH_FAILED name=$($stage.Name)"
         }
+    }
+    if (([math]::Abs($stages[0].Deltas[0] - $Motor1Degrees) -gt 0.0001) -or
+        ([math]::Abs($stages[1].Deltas[0] - $Motor3Degrees) -gt 0.0001) -or
+        ([math]::Abs($stages[2].Deltas[0] + $Motor1Degrees) -gt 0.0001) -or
+        ([math]::Abs($stages[2].Deltas[1] + $Motor3Degrees) -gt 0.0001)) {
+        throw 'STAGE_RETURN_TARGET_FAILED'
     }
 
     $referenceCrc = Get-Crc16CcittFalse `
@@ -473,7 +501,10 @@ function Invoke-OneTurnSelfTest {
         throw "MOTION_OPERATION_FAILED actual=$motionOperation"
     }
 
-    Write-Output 'ONE_TURN_SELF_TESTS_PASSED stages=3 commands=3'
+    $angleSummary = '{0},{1}' -f `
+        $Motor1Degrees.ToString('0.####', $invariantCulture), `
+        $Motor3Degrees.ToString('0.####', $invariantCulture)
+    Write-Output "ONE_TURN_SELF_TESTS_PASSED stages=3 commands=3 angles=$angleSummary"
 }
 
 if ($SelfTest) {

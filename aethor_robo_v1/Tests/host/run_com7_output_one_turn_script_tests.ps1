@@ -17,12 +17,13 @@ if (-not (Test-Path -LiteralPath $hardwareScriptPath -PathType Leaf)) {
 }
 
 $selfTestOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass `
-    -File $hardwareScriptPath -SelfTest 2>&1
+    -File $hardwareScriptPath -SelfTest `
+    -Motor1Degrees 35 -Motor3Degrees 95 2>&1
 if ($LASTEXITCODE -ne 0) {
     throw "ONE_TURN_SELF_TEST_PROCESS_FAILED: $selfTestOutput"
 }
 if (($selfTestOutput -join "`n") -notmatch
-    'ONE_TURN_SELF_TESTS_PASSED stages=3 commands=3') {
+    'ONE_TURN_SELF_TESTS_PASSED stages=3 commands=3 angles=35,95') {
     throw "ONE_TURN_SELF_TEST_MARKER_MISSING: $selfTestOutput"
 }
 

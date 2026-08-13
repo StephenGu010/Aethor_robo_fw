@@ -86,11 +86,11 @@ static MotorDiscoveryStatus motor_discovery_store_response(
             break;
 
         case S3519_REGISTER_DECELERATION:
-            if (!isfinite(response->float_value) || (response->float_value <= 0.0F))
+            if (!isfinite(response->float_value) || (response->float_value == 0.0F))
             {
                 return motor_discovery_fail(discovery, MOTOR_DISCOVERY_STATUS_BAD_VALUE);
             }
-            result->deceleration_rad_s2 = response->float_value;
+            result->deceleration_rad_s2 = fabsf(response->float_value);
             break;
 
         case S3519_REGISTER_MAXIMUM_SPEED:

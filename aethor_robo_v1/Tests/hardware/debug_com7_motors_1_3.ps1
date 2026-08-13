@@ -131,9 +131,15 @@ function New-AethorContext {
     <# Creates mutable request/session state around one optional serial port. #>
     param($SerialPort)
 
+    $invocationToken = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    [uint32]$initialRequestId = [Convert]::ToUInt32($invocationToken, 16)
+    if ($initialRequestId -eq 0) {
+        $initialRequestId = 1
+    }
     return [pscustomobject]@{
         SerialPort = $SerialPort
-        NextRequestId = [uint32]1
+        ClientName = "com7-debug-$invocationToken"
+        NextRequestId = $initialRequestId
         SessionId = [uint32]0
         LastHeartbeatUtc = [datetime]::MinValue
         HeartbeatRequestIds = New-Object 'System.Collections.Generic.HashSet[uint32]'
@@ -282,7 +288,12 @@ function Invoke-ScriptSelfTest {
     <# Verifies CRC vectors, frame rejection, selection mapping, and safe defaults. #>
 
     $testContext = New-AethorContext -SerialPort $null
-    if (($testContext.NextRequestId -ne 1) -or ($testContext.SessionId -ne 0)) {
+    $secondTestContext = New-AethorContext -SerialPort $null
+    if (($testContext.NextRequestId -eq 0) -or
+        ($testContext.SessionId -ne 0) -or
+        [string]::IsNullOrWhiteSpace($testContext.ClientName) -or
+        ($testContext.NextRequestId -eq $secondTestContext.NextRequestId) -or
+        ($testContext.ClientName -eq $secondTestContext.ClientName)) {
         throw 'CONTEXT_DEFAULTS_FAILED'
     }
 
@@ -372,7 +383,7 @@ function Initialize-AethorSession {
     param([Parameter(Mandatory)]$Context)
 
     $hello = Invoke-AethorQuery -Context $Context -Operation 'HELLO' `
-        -Fields 'client=com7-dual-debug protocol=1'
+        -Fields "client=$($Context.ClientName) protocol=1"
     $sessionMatch = [regex]::Match($hello.Body, '(?:^| )session=(\d+)(?: |$)')
     if (-not $sessionMatch.Success) {
         throw "HELLO_SESSION_MISSING: $($hello.Body)"

@@ -476,8 +476,8 @@ static void test_motor_discovery_verifies_every_joint(void)
                     response.float_value = 30.0F;
                     break;
                 case S3519_REGISTER_DECELERATION:
-                    response.raw_value = float_to_raw_register(25.0F);
-                    response.float_value = 25.0F;
+                    response.raw_value = float_to_raw_register(-25.0F);
+                    response.float_value = -25.0F;
                     break;
                 case S3519_REGISTER_MAXIMUM_SPEED:
                     response.raw_value = float_to_raw_register(20.0F);

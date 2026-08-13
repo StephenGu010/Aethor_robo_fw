@@ -49,19 +49,19 @@
 /* USER CODE BEGIN Variables */
 /* USER CODE END Variables */
 osThreadId ArmControlTaskHandle;
-uint32_t armControlTaskBuffer[ 512 ];
+uint32_t armControlTaskBuffer[ 768 ];
 osStaticThreadDef_t armControlTaskControlBlock;
 osThreadId CanRxTaskHandle;
 uint32_t canRxTaskBuffer[ 384 ];
 osStaticThreadDef_t canRxTaskControlBlock;
 osThreadId ProtocolTaskHandle;
-uint32_t protocolTaskBuffer[ 768 ];
+uint32_t protocolTaskBuffer[ 1280 ];
 osStaticThreadDef_t protocolTaskControlBlock;
 osThreadId UsbTxTaskHandle;
 uint32_t usbTxTaskBuffer[ 384 ];
 osStaticThreadDef_t usbTxTaskControlBlock;
 osThreadId TelemetryTaskHandle;
-uint32_t telemetryTaskBuffer[ 384 ];
+uint32_t telemetryTaskBuffer[ 1024 ];
 osStaticThreadDef_t telemetryTaskControlBlock;
 osThreadId DiagnosticsTaskHandle;
 uint32_t diagnosticsTaskBuffer[ 384 ];
@@ -130,7 +130,7 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* definition and creation of ArmControlTask */
-  osThreadStaticDef(ArmControlTask, StartArmControlTask, osPriorityRealtime, 0, 512, armControlTaskBuffer, &armControlTaskControlBlock);
+  osThreadStaticDef(ArmControlTask, StartArmControlTask, osPriorityRealtime, 0, 768, armControlTaskBuffer, &armControlTaskControlBlock);
   ArmControlTaskHandle = osThreadCreate(osThread(ArmControlTask), NULL);
 
   /* definition and creation of CanRxTask */
@@ -138,7 +138,7 @@ void MX_FREERTOS_Init(void) {
   CanRxTaskHandle = osThreadCreate(osThread(CanRxTask), NULL);
 
   /* definition and creation of ProtocolTask */
-  osThreadStaticDef(ProtocolTask, StartProtocolTask, osPriorityAboveNormal, 0, 768, protocolTaskBuffer, &protocolTaskControlBlock);
+  osThreadStaticDef(ProtocolTask, StartProtocolTask, osPriorityAboveNormal, 0, 1280, protocolTaskBuffer, &protocolTaskControlBlock);
   ProtocolTaskHandle = osThreadCreate(osThread(ProtocolTask), NULL);
 
   /* definition and creation of UsbTxTask */
@@ -146,7 +146,7 @@ void MX_FREERTOS_Init(void) {
   UsbTxTaskHandle = osThreadCreate(osThread(UsbTxTask), NULL);
 
   /* definition and creation of TelemetryTask */
-  osThreadStaticDef(TelemetryTask, StartTelemetryTask, osPriorityBelowNormal, 0, 384, telemetryTaskBuffer, &telemetryTaskControlBlock);
+  osThreadStaticDef(TelemetryTask, StartTelemetryTask, osPriorityBelowNormal, 0, 1024, telemetryTaskBuffer, &telemetryTaskControlBlock);
   TelemetryTaskHandle = osThreadCreate(osThread(TelemetryTask), NULL);
 
   /* definition and creation of DiagnosticsTask */

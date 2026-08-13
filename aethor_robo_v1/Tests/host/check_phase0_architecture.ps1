@@ -113,6 +113,22 @@ function Invoke-Phase0ArchitectureCheck {
     {
         Add-ArchitectureFailure -FailureList $failureList -Message 'freertos.c must create exactly six static application tasks.'
     }
+    $requiredTaskStackWords = [ordered]@{
+        ArmControlTask = 768
+        ProtocolTask = 1280
+        TelemetryTask = 1024
+    }
+    foreach ($taskStackRequirement in $requiredTaskStackWords.GetEnumerator())
+    {
+        $taskName = $taskStackRequirement.Key
+        $stackWords = $taskStackRequirement.Value
+        Assert-TextContains -FailureList $failureList -Text $freertosText `
+            -Pattern "osThreadStaticDef\s*\(\s*$taskName\s*,[^\r\n]*,\s*$stackWords\s*," `
+            -Message "freertos.c does not reserve $stackWords stack words for $taskName."
+        Assert-TextContains -FailureList $failureList -Text $iocText `
+            -Pattern "FREERTOS\.Tasks01=[^\r\n]*\b$taskName,[^,]+,$stackWords," `
+            -Message "CubeMX does not preserve $stackWords stack words for $taskName."
+    }
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'aethor_app_service\s*\(' `
         -Message 'freertos.c does not service the Phase 0 application facade.'

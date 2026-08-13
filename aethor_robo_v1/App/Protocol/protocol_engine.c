@@ -30,6 +30,11 @@ typedef enum
     PROTOCOL_CONFIG_A_LIMIT
 } ProtocolConfigVector;
 
+/** @brief Creates a nonzero connection-scope identifier for internal ownership. */
+static uint32_t protocol_engine_create_session(ProtocolEngine *engine,
+                                               uint32_t request_id,
+                                               uint64_t timestamp_us);
+
 /** @brief Clears an output batch before every processing attempt. */
 static void protocol_engine_clear_output(ProtocolOutputBatch *output_batch)
 {
@@ -369,6 +374,46 @@ static ProtocolEngineStatus protocol_engine_append_format(
 }
 
 /**
+ * @brief Appends one bounded LF-terminated aethor-text-v1 response.
+ */
+static ProtocolEngineStatus protocol_engine_append_text_format(
+    ProtocolOutputBatch *output_batch,
+    ProtocolOutputPriority priority,
+    const char *format,
+    ...)
+{
+    ProtocolOutputMessage *message;
+    int written_length;
+    va_list arguments;
+
+    if ((output_batch == NULL) || (format == NULL) ||
+        (output_batch->count >= PROTOCOL_ENGINE_MAX_OUTPUT_COUNT))
+    {
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    message = &output_batch->messages[output_batch->count];
+    va_start(arguments, format);
+    written_length = vsnprintf(message->data,
+                               TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH,
+                               format,
+                               arguments);
+    va_end(arguments);
+    if ((written_length < 0) ||
+        ((size_t)written_length >= TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH) ||
+        (((size_t)written_length + 1U) > TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH))
+    {
+        message->data[0] = '\0';
+        return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
+    }
+    message->data[written_length] = '\n';
+    message->data[written_length + 1] = '\0';
+    message->length = (uint16_t)((size_t)written_length + 1U);
+    message->priority = priority;
+    ++output_batch->count;
+    return PROTOCOL_ENGINE_STATUS_OK;
+}
+
+/**
  * @brief Appends formatted text to a bounded response body.
  */
 static uint8_t protocol_engine_append_text(char *body,
@@ -512,6 +557,33 @@ static const char *protocol_engine_arm_state_text(ArmState state)
         case ARM_STATE_FAULT:
         default:
             return "FAULT";
+    }
+}
+
+/** @brief Returns lowercase aethor-text-v1 text for one controller state. */
+static const char *protocol_engine_text_arm_state(ArmState state)
+{
+    switch (state)
+    {
+        case ARM_STATE_BOOT:
+            return "boot";
+        case ARM_STATE_SELF_TEST:
+            return "self_test";
+        case ARM_STATE_UNALIGNED:
+            return "unaligned";
+        case ARM_STATE_DISABLED:
+            return "disabled";
+        case ARM_STATE_ENABLING:
+            return "enabling";
+        case ARM_STATE_READY:
+            return "ready";
+        case ARM_STATE_MOVING:
+            return "moving";
+        case ARM_STATE_STOPPING:
+            return "stopping";
+        case ARM_STATE_FAULT:
+        default:
+            return "fault";
     }
 }
 
@@ -669,6 +741,250 @@ static void protocol_engine_store_recent(ProtocolEngine *engine,
     result->valid = 1U;
     engine->recent_write_index = (uint8_t)(
         (engine->recent_write_index + 1U) % PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY);
+}
+
+/**
+ * @brief Stores one nonzero aethor-text-v1 request result for exact replay.
+ */
+static void protocol_engine_store_text_recent(
+    ProtocolEngine *engine,
+    uint32_t request_id,
+    uint32_t body_hash,
+    uint64_t timestamp_us,
+    const ProtocolOutputBatch *output_batch)
+{
+    ProtocolRecentResult *result;
+
+    if ((request_id == 0U) || (output_batch->count != 1U))
+    {
+        return;
+    }
+    result = &engine->recent_results[engine->recent_write_index];
+    memset(result, 0, sizeof(*result));
+    result->request_id = request_id;
+    result->body_hash = body_hash;
+    result->completed_at_us = timestamp_us;
+    result->response_length = output_batch->messages[0].length;
+    result->priority = output_batch->messages[0].priority;
+    memcpy(result->response,
+           output_batch->messages[0].data,
+           (size_t)result->response_length + 1U);
+    result->valid = 1U;
+    engine->recent_write_index = (uint8_t)(
+        (engine->recent_write_index + 1U) % PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY);
+}
+
+/**
+ * @brief Appends one parsed token to a single-space canonical request body.
+ */
+static uint8_t protocol_engine_append_canonical_span(
+    char canonical[TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH + 1U],
+    size_t *canonical_length,
+    const TextProtocolSpan *span,
+    uint8_t prepend_space)
+{
+    size_t required_length;
+
+    if ((canonical == NULL) || (canonical_length == NULL) || (span == NULL))
+    {
+        return 0U;
+    }
+    required_length = *canonical_length + span->length +
+                      ((prepend_space != 0U) ? 1U : 0U);
+    if (required_length > TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH)
+    {
+        return 0U;
+    }
+    if (prepend_space != 0U)
+    {
+        canonical[*canonical_length] = ' ';
+        ++(*canonical_length);
+    }
+    memcpy(&canonical[*canonical_length], span->data, span->length);
+    *canonical_length += span->length;
+    canonical[*canonical_length] = '\0';
+    return 1U;
+}
+
+/**
+ * @brief Builds the normalized command body used for request-ID conflict checks.
+ */
+static uint8_t protocol_engine_build_text_canonical_body(
+    const TextProtocolRequest *request,
+    char canonical[TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH + 1U],
+    size_t *canonical_length)
+{
+    uint8_t index;
+
+    if ((request == NULL) || (canonical == NULL) || (canonical_length == NULL))
+    {
+        return 0U;
+    }
+    canonical[0] = '\0';
+    *canonical_length = 0U;
+    for (index = 0U; index < request->command_word_count; ++index)
+    {
+        if (protocol_engine_append_canonical_span(
+                canonical,
+                canonical_length,
+                &request->command_words[index],
+                (uint8_t)(*canonical_length != 0U)) == 0U)
+        {
+            return 0U;
+        }
+    }
+    for (index = 0U; index < request->positional_count; ++index)
+    {
+        if (protocol_engine_append_canonical_span(canonical,
+                                                  canonical_length,
+                                                  &request->positionals[index],
+                                                  1U) == 0U)
+        {
+            return 0U;
+        }
+    }
+    for (index = 0U; index < request->field_count; ++index)
+    {
+        const TextProtocolField *field = &request->fields[index];
+        static const TextProtocolSpan separator = {"=", 1U};
+
+        if ((protocol_engine_append_canonical_span(canonical,
+                                                   canonical_length,
+                                                   &field->key,
+                                                   1U) == 0U) ||
+            (protocol_engine_append_canonical_span(canonical,
+                                                   canonical_length,
+                                                   &separator,
+                                                   0U) == 0U) ||
+            (protocol_engine_append_canonical_span(canonical,
+                                                   canonical_length,
+                                                   &field->value,
+                                                   0U) == 0U))
+        {
+            return 0U;
+        }
+    }
+    return 1U;
+}
+
+/**
+ * @brief Formats one error using the parsed command path as its operation name.
+ */
+static ProtocolEngineStatus protocol_engine_append_text_command_error(
+    ProtocolOutputBatch *output_batch,
+    const TextProtocolRequest *request,
+    const char *error_code)
+{
+    if (request->command_word_count == 2U)
+    {
+        return protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+            "error %lu %.*s %.*s code=%s",
+            (unsigned long)request->request_id,
+            (int)request->command_words[0].length,
+            request->command_words[0].data,
+            (int)request->command_words[1].length,
+            request->command_words[1].data,
+            error_code);
+    }
+    return protocol_engine_append_text_format(
+        output_batch,
+        PROTOCOL_OUTPUT_HIGH_PRIORITY,
+        "error %lu %.*s code=%s",
+        (unsigned long)request->request_id,
+        (int)request->command_words[0].length,
+        request->command_words[0].data,
+        error_code);
+}
+
+/**
+ * @brief Starts one aethor-text-v1 connection scope and returns device identity.
+ */
+static ProtocolEngineStatus protocol_engine_handle_text_hello(
+    ProtocolEngine *engine,
+    const TextProtocolRequest *request,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    const BuildInfo *build_info = build_info_get();
+#if (AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE)
+    static const char profile[] = "bench";
+#else
+    static const char profile[] = "arm";
+#endif
+
+    if ((request->positional_count != 0U) || (request->field_count != 0U))
+    {
+        return protocol_engine_append_text_command_error(output_batch,
+                                                         request,
+                                                         "bad_argument");
+    }
+    memset(engine->recent_results, 0, sizeof(engine->recent_results));
+    engine->recent_write_index = 0U;
+    engine->command_read_sequence = engine->command_write_sequence;
+    engine->stop_read_sequence = engine->stop_write_sequence;
+    engine->result_read_sequence = engine->result_write_sequence;
+    engine->session_id = protocol_engine_create_session(engine,
+                                                        request->request_id,
+                                                        timestamp_us);
+    engine->session_active = 1U;
+    engine->watchdog_timeout_reported = 0U;
+    engine->last_valid_request_at_us = timestamp_us;
+    engine->stream_rate_hz = 0U;
+    engine->next_telemetry_due_us = timestamp_us;
+    engine->next_motor_telemetry_due_us = timestamp_us;
+    engine->telemetry_sequence = 0U;
+    engine->event_sequence = 0U;
+    return protocol_engine_append_text_format(
+        output_batch,
+        PROTOCOL_OUTPUT_QUERY,
+        "ok %lu hello protocol=aethor-text-v1 fw=%s profile=%s dof=%u boot=%lu watchdog_ms=%lu",
+        (unsigned long)request->request_id,
+        build_info->firmware_version,
+        profile,
+        (unsigned int)ARM_JOINT_COUNT,
+        (unsigned long)engine->boot_id,
+        (unsigned long)(PROTOCOL_ENGINE_WATCHDOG_TIMEOUT_US / 1000ULL));
+}
+
+/** @brief Returns the minimal controller state used as a manual keepalive. */
+static ProtocolEngineStatus protocol_engine_handle_text_ping(
+    ProtocolEngine *engine,
+    const TextProtocolRequest *request,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    ArmState state = ARM_STATE_BOOT;
+    uint8_t enabled_mask = 0U;
+
+    if ((request->positional_count != 0U) || (request->field_count != 0U))
+    {
+        return protocol_engine_append_text_command_error(output_batch,
+                                                         request,
+                                                         "bad_argument");
+    }
+    if (engine->query_context_valid != 0U)
+    {
+        state = engine->query_context.arm.state;
+        if (engine->query_context.arm.enabled != 0U)
+        {
+            enabled_mask = PROTOCOL_ENGINE_ALL_JOINTS_MASK;
+        }
+    }
+    if (engine->session_active != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine->watchdog_timeout_reported = 0U;
+    }
+    return protocol_engine_append_text_format(
+        output_batch,
+        PROTOCOL_OUTPUT_QUERY,
+        "ok %lu ping state=%s enabled=%02x boot=%lu",
+        (unsigned long)request->request_id,
+        protocol_engine_text_arm_state(state),
+        (unsigned int)enabled_mask,
+        (unsigned long)engine->boot_id);
 }
 
 /**
@@ -2681,6 +2997,116 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
                                      body_hash,
                                      timestamp_us,
                                      output_batch);
+    }
+    return engine_status;
+}
+
+/**
+ * @brief Processes one complete aethor-text-v1 request line without wire CRC.
+ */
+ProtocolEngineStatus protocol_engine_process_text_line(
+    ProtocolEngine *engine,
+    const char *line,
+    size_t length,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch)
+{
+    TextProtocolRequest request;
+    TextProtocolStatus parse_status;
+    ProtocolRecentResult *recent_result;
+    ProtocolEngineStatus engine_status;
+    char canonical[TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH + 1U];
+    size_t canonical_length = 0U;
+    uint32_t body_hash;
+
+    if ((engine == NULL) || (line == NULL) || (output_batch == NULL))
+    {
+        return PROTOCOL_ENGINE_STATUS_INVALID_ARGUMENT;
+    }
+    protocol_engine_clear_output(output_batch);
+    parse_status = text_protocol_parse_request(line, length, &request);
+    if (parse_status != TEXT_PROTOCOL_STATUS_OK)
+    {
+        const char *error_code =
+            (parse_status == TEXT_PROTOCOL_STATUS_LINE_TOO_LONG)
+                ? "line_too_long"
+                : "bad_line";
+
+        if (engine->bad_frame_count < UINT32_MAX)
+        {
+            ++engine->bad_frame_count;
+        }
+        (void)protocol_engine_append_text_format(output_batch,
+                                                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                 "error 0 parse code=%s",
+                                                 error_code);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (protocol_engine_build_text_canonical_body(&request,
+                                                   canonical,
+                                                   &canonical_length) == 0U)
+    {
+        (void)protocol_engine_append_text_format(output_batch,
+                                                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                                 "error %lu parse code=bad_line",
+                                                 (unsigned long)request.request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    body_hash = ascii_protocol_crc32_iso_hdlc((const uint8_t *)canonical,
+                                              canonical_length);
+    recent_result = (request.has_request_id != 0U)
+                        ? protocol_engine_find_recent(engine,
+                                                      request.request_id,
+                                                      timestamp_us)
+                        : NULL;
+    if (recent_result != NULL)
+    {
+        if (recent_result->body_hash != body_hash)
+        {
+            (void)protocol_engine_append_text_command_error(output_batch,
+                                                             &request,
+                                                             "request_conflict");
+            return PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT;
+        }
+        protocol_engine_replay(recent_result, output_batch);
+        if (engine->session_active != 0U)
+        {
+            engine->last_valid_request_at_us = timestamp_us;
+            engine->watchdog_timeout_reported = 0U;
+        }
+        return PROTOCOL_ENGINE_STATUS_REPLAYED;
+    }
+
+    if (text_protocol_request_path_equals(&request, "hello", NULL) != 0U)
+    {
+        engine_status = protocol_engine_handle_text_hello(engine,
+                                                          &request,
+                                                          timestamp_us,
+                                                          output_batch);
+    }
+    else if (text_protocol_request_path_equals(&request, "ping", NULL) != 0U)
+    {
+        engine_status = protocol_engine_handle_text_ping(engine,
+                                                         &request,
+                                                         timestamp_us,
+                                                         output_batch);
+    }
+    else
+    {
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        &request,
+                                                        "unknown_command");
+        engine_status = PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+
+    if ((request.has_request_id != 0U) && (output_batch->count == 1U) &&
+        (engine_status != PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL))
+    {
+        protocol_engine_store_text_recent(engine,
+                                          request.request_id,
+                                          body_hash,
+                                          timestamp_us,
+                                          output_batch);
     }
     return engine_status;
 }

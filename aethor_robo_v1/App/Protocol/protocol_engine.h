@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "ascii_protocol.h"
+#include "text_protocol.h"
 #include "arm_controller.h"
 #include "diagnostics.h"
 #include "joint_reference.h"
@@ -281,6 +282,22 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
                                                   size_t length,
                                                   uint64_t timestamp_us,
                                                   ProtocolOutputBatch *output_batch);
+
+/**
+ * @brief Processes one complete aethor-text-v1 request line without wire CRC.
+ * @param engine Initialized engine.
+ * @param line Complete request line with an optional LF or CRLF terminator.
+ * @param length Exact line length.
+ * @param timestamp_us Current monotonic timestamp.
+ * @param output_batch Destination immediate outputs.
+ * @return Detailed parse, replay, or dispatch status.
+ */
+ProtocolEngineStatus protocol_engine_process_text_line(
+    ProtocolEngine *engine,
+    const char *line,
+    size_t length,
+    uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch);
 
 /**
  * @brief Detects the first 1,000 ms communication watchdog expiry per session.

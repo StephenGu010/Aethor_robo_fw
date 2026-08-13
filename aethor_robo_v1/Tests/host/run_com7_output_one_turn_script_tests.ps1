@@ -21,7 +21,8 @@ $selfTestOutput = & powershell.exe -NoProfile -ExecutionPolicy Bypass `
 if ($LASTEXITCODE -ne 0) {
     throw "ONE_TURN_SELF_TEST_PROCESS_FAILED: $selfTestOutput"
 }
-if (($selfTestOutput -join "`n") -notmatch 'ONE_TURN_SELF_TESTS_PASSED') {
+if (($selfTestOutput -join "`n") -notmatch
+    'ONE_TURN_SELF_TESTS_PASSED stages=3 commands=3') {
     throw "ONE_TURN_SELF_TEST_MARKER_MISSING: $selfTestOutput"
 }
 

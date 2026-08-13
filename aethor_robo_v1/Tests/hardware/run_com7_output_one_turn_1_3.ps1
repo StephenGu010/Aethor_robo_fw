@@ -2,8 +2,8 @@
 .SYNOPSIS
 Runs a guarded three-stage one-turn output-shaft test on S3519 motors 1 and 3.
 .DESCRIPTION
-Uses aethor-arm-ascii-v1 over COM7. Each output turn is split into 120 commands
-of 3 degrees. Physical motion requires the explicit -RunMotion switch.
+Uses aethor-arm-ascii-v1 over COM7. Each stage sends one fixed relative target
+of 360 degrees. Physical motion requires the explicit -RunMotion switch.
 #>
 
 [CmdletBinding()]
@@ -16,17 +16,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $invariantCulture = [System.Globalization.CultureInfo]::InvariantCulture
-$stepDegrees = 3.0
 $speedDegreesPerSecond = 3.0
-$stepsPerTurn = 120
+$motionOperation = 'MOVE_REL_TARGET'
 
 function Get-OneTurnStages {
     <# Returns the immutable, PMAX-safe three-stage output-turn sequence. #>
 
     return @(
-        [pscustomobject]@{ Name = 'ID1'; Motors = '1'; Delta = 3.0; Steps = 120 },
-        [pscustomobject]@{ Name = 'ID3'; Motors = '3'; Delta = 3.0; Steps = 120 },
-        [pscustomobject]@{ Name = 'ID1_ID3'; Motors = '1,3'; Delta = -3.0; Steps = 120 }
+        [pscustomobject]@{ Name = 'ID1'; Motors = '1'; Delta = 360.0 },
+        [pscustomobject]@{ Name = 'ID3'; Motors = '3'; Delta = 360.0 },
+        [pscustomobject]@{ Name = 'ID1_ID3'; Motors = '1,3'; Delta = -360.0 }
     )
 }
 
@@ -317,8 +316,32 @@ function Initialize-AethorSession {
     $Context.LastHeartbeatUtc = [datetime]::UtcNow
 }
 
+function Invoke-AethorStopWithRetry {
+    <# Stops one motor subset, retrying exactly once after a transient failure. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$MotorList
+    )
+
+    for ($attemptNumber = 1; $attemptNumber -le 2; $attemptNumber++) {
+        try {
+            Invoke-AethorAction -Context $Context -Operation 'STOP' `
+                -Fields "motors=$MotorList" -TimeoutMilliseconds 3000 | Out-Null
+            return
+        }
+        catch {
+            if ($attemptNumber -ge 2) {
+                throw
+            }
+            Write-Warning ("STOP_RETRY motors={0} first_error={1}" -f `
+                $MotorList, $_.Exception.Message)
+        }
+    }
+    throw "STOP_RETRY_UNREACHABLE motors=$MotorList"
+}
+
 function Invoke-OneTurnStage {
-    <# Initializes, enables, incrementally moves, stops, and disables one stage. #>
+    <# Initializes, enables, runs one fixed target, stops, and disables one stage. #>
     param(
         [Parameter(Mandatory)]$Context,
         [Parameter(Mandatory)]$Stage
@@ -329,9 +352,12 @@ function Invoke-OneTurnStage {
     $deltaValues = Get-RepeatedValueList -Value $Stage.Delta -MotorList $Stage.Motors
     $speedValues = Get-RepeatedValueList `
         -Value $speedDegreesPerSecond -MotorList $Stage.Motors
+    $plannedDurationMilliseconds = [int][math]::Ceiling(
+        ([math]::Abs($Stage.Delta) / $speedDegreesPerSecond) * 1000.0)
+    $actionTimeoutMilliseconds = $plannedDurationMilliseconds + 5000
 
-    Write-Output ("STAGE_START name={0} motors={1} delta_deg={2} steps={3}" -f `
-        $Stage.Name, $Stage.Motors, $Stage.Delta, $Stage.Steps)
+    Write-Output ("STAGE_START name={0} motors={1} delta_deg={2} planned_ms={3}" -f `
+        $Stage.Name, $Stage.Motors, $Stage.Delta, $plannedDurationMilliseconds)
     Invoke-AethorAction -Context $Context -Operation 'INIT_MOTORS' `
         -Fields "motors=$($Stage.Motors)" -TimeoutMilliseconds 30000 | Out-Null
     Invoke-AethorAction -Context $Context -Operation 'CLEAR_FAULT' `
@@ -339,22 +365,13 @@ function Invoke-OneTurnStage {
     Invoke-AethorAction -Context $Context -Operation 'ENABLE' `
         -Fields "motors=$($Stage.Motors)" -TimeoutMilliseconds 10000 | Out-Null
 
-    for ($stepIndex = 1; $stepIndex -le $Stage.Steps; $stepIndex++) {
-        Invoke-AethorAction -Context $Context -Operation 'MOVE_REL' `
-            -Fields "motors=$($Stage.Motors) delta_deg=$deltaValues speed_deg_s=$speedValues" `
-            -TimeoutMilliseconds 10000 -Quiet | Out-Null
-        if (($stepIndex -eq 1) -or (($stepIndex % 10) -eq 0) -or
-            ($stepIndex -eq $Stage.Steps)) {
-            Write-Output ("STAGE_PROGRESS name={0} step={1}/{2} cumulative_deg={3}" -f `
-                $Stage.Name,
-                $stepIndex,
-                $Stage.Steps,
-                ($stepIndex * $Stage.Delta))
-        }
-    }
+    Write-Output ("STAGE_PROGRESS name={0} command=1/1 target_delta_deg={1}" -f `
+        $Stage.Name, $Stage.Delta)
+    Invoke-AethorAction -Context $Context -Operation $motionOperation `
+        -Fields "motors=$($Stage.Motors) delta_deg=$deltaValues speed_deg_s=$speedValues" `
+        -TimeoutMilliseconds $actionTimeoutMilliseconds | Out-Null
 
-    Invoke-AethorAction -Context $Context -Operation 'STOP' `
-        -Fields "motors=$($Stage.Motors)" -TimeoutMilliseconds 10000 | Out-Null
+    Invoke-AethorStopWithRetry -Context $Context -MotorList $Stage.Motors
     Invoke-AethorAction -Context $Context -Operation 'DISABLE' `
         -Fields "motors=$($Stage.Motors)" -TimeoutMilliseconds 10000 | Out-Null
     $script:shutdownRequired = $false
@@ -364,7 +381,7 @@ function Invoke-OneTurnStage {
     Write-Output ("STAGE_FINAL_MOTORS name={0} {1}" -f $Stage.Name, $motorResponse.Body)
     Write-Output ("STAGE_FINAL_DIAG name={0} {1}" -f $Stage.Name, $diagnosticResponse.Body)
     Write-Output ("STAGE_COMPLETED name={0} motors={1} total_deg={2}" -f `
-        $Stage.Name, $Stage.Motors, ($Stage.Steps * $Stage.Delta))
+        $Stage.Name, $Stage.Motors, $Stage.Delta)
 }
 
 function Invoke-OneTurnSequence {
@@ -410,7 +427,7 @@ function Invoke-BestEffortShutdown {
 }
 
 function Invoke-OneTurnSelfTest {
-    <# Verifies CRC, frame parsing, stage totals, selection widths, and safe defaults. #>
+    <# Verifies CRC, fixed-target stages, planned durations, and safe defaults. #>
 
     $stages = @(Get-OneTurnStages)
     if ($stages.Count -ne 3) {
@@ -418,15 +435,16 @@ function Invoke-OneTurnSelfTest {
     }
     $expectedNames = @('ID1', 'ID3', 'ID1_ID3')
     $expectedMotors = @('1', '3', '1,3')
-    $expectedTotals = @(360.0, 360.0, -360.0)
+    $expectedDeltas = @(360.0, 360.0, -360.0)
     for ($stageIndex = 0; $stageIndex -lt $stages.Count; $stageIndex++) {
         $stage = $stages[$stageIndex]
-        $actualTotal = $stage.Delta * $stage.Steps
         if (($stage.Name -ne $expectedNames[$stageIndex]) -or
             ($stage.Motors -ne $expectedMotors[$stageIndex]) -or
-            ($stage.Steps -ne $stepsPerTurn) -or
-            ([math]::Abs($stage.Delta) -gt $stepDegrees) -or
-            ([math]::Abs($actualTotal - $expectedTotals[$stageIndex]) -gt 0.0001)) {
+            ([math]::Abs($stage.Delta - $expectedDeltas[$stageIndex]) -gt 0.0001) -or
+            ($stage.PSObject.Properties.Name -contains 'Steps') -or
+            ([math]::Abs(
+                    ([math]::Abs($stage.Delta) / $speedDegreesPerSecond) -
+                    120.0) -gt 0.0001)) {
             throw "STAGE_PLAN_FAILED index=$stageIndex"
         }
         $motorCount = $stage.Motors.Split(',').Count
@@ -451,8 +469,11 @@ function Invoke-OneTurnSelfTest {
     if ($RunMotion.IsPresent) {
         throw 'SELF_TEST_MUST_NOT_RUN_MOTION'
     }
+    if ($motionOperation -ne 'MOVE_REL_TARGET') {
+        throw "MOTION_OPERATION_FAILED actual=$motionOperation"
+    }
 
-    Write-Output 'ONE_TURN_SELF_TESTS_PASSED stages=3 steps=360'
+    Write-Output 'ONE_TURN_SELF_TESTS_PASSED stages=3 commands=3'
 }
 
 if ($SelfTest) {

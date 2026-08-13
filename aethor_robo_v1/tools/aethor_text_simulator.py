@@ -216,7 +216,7 @@ class AethorTextSimulator:
         motors, mask = self._parse_motor_list(positionals[0])
         accepted = f"ok {request_id} bench {operation} accepted=1"
         if operation == "init":
-            done = (f"done {request_id} bench init result=completed present={mask:02x} "
+            done = (f"done {request_id} bench init result=completed identity={mask:02x} "
                     f"mode={mask:02x} ranges={mask:02x} version={mask:02x}")
         elif operation == "enable":
             self.motor_enabled_mask |= mask

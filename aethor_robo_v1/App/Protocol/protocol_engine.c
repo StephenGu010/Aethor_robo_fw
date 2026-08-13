@@ -1681,9 +1681,10 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
 
     if ((request->positional_count != 0U) || (request->field_count != 0U))
     {
-        return protocol_engine_append_text_command_error(output_batch,
-                                                         request,
-                                                         "bad_argument");
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        request,
+                                                        "bad_argument");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
     memset(engine->recent_results, 0, sizeof(engine->recent_results));
     engine->recent_write_index = 0U;
@@ -1724,21 +1725,33 @@ static ProtocolEngineStatus protocol_engine_handle_text_ping(
 {
     ArmState state = ARM_STATE_BOOT;
     uint8_t enabled_mask = 0U;
+    uint8_t moving_mask = 0U;
+    uint8_t holding_mask = 0U;
+    uint8_t fault_mask = 0U;
 
     if ((request->positional_count != 0U) || (request->field_count != 0U))
     {
-        return protocol_engine_append_text_command_error(output_batch,
-                                                         request,
-                                                         "bad_argument");
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        request,
+                                                        "bad_argument");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
     if (engine->query_context_valid != 0U)
     {
         state = engine->query_context.arm.state;
+        protocol_engine_text_motor_masks(&engine->query_context,
+                                         &enabled_mask,
+                                         &moving_mask,
+                                         &holding_mask,
+                                         &fault_mask);
         if (engine->query_context.arm.enabled != 0U)
         {
             enabled_mask = PROTOCOL_ENGINE_ALL_JOINTS_MASK;
         }
     }
+    (void)moving_mask;
+    (void)holding_mask;
+    (void)fault_mask;
     if (engine->session_active != 0U)
     {
         engine->last_valid_request_at_us = timestamp_us;
@@ -4087,11 +4100,11 @@ static uint8_t protocol_engine_format_text_result(
             return (uint8_t)(protocol_engine_append_text_format(
                                  output_batch,
                                  PROTOCOL_OUTPUT_HIGH_PRIORITY,
-                                 "done %lu bench init result=%s present=%02x mode=%02x ranges=%02x version=%02x",
+                                 "done %lu bench init result=%s identity=%02x mode=%02x ranges=%02x version=%02x",
                                  (unsigned long)result->request_id,
                                  result_text,
-                                 (unsigned int)(engine->query_context.motors
-                                                    .valid_joint_mask &
+                                 (unsigned int)(engine->query_context
+                                                    .motor_identity_verified_mask &
                                                 result->motor_mask),
                                  (unsigned int)(engine->query_context
                                                     .motor_mode_verified_mask &
@@ -5035,11 +5048,6 @@ ProtocolEngineStatus protocol_engine_process_text_line(
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
     engine->text_protocol_active = 1U;
-    if (engine->session_active != 0U)
-    {
-        engine->last_valid_request_at_us = timestamp_us;
-        engine->watchdog_timeout_reported = 0U;
-    }
     body_hash = ascii_protocol_crc32_iso_hdlc((const uint8_t *)canonical,
                                               canonical_length);
     recent_result = (request.has_request_id != 0U)
@@ -5190,6 +5198,12 @@ ProtocolEngineStatus protocol_engine_process_text_line(
                                           body_hash,
                                           timestamp_us,
                                           output_batch);
+    }
+    if ((engine_status == PROTOCOL_ENGINE_STATUS_OK) &&
+        (engine->session_active != 0U))
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine->watchdog_timeout_reported = 0U;
     }
     return engine_status;
 }

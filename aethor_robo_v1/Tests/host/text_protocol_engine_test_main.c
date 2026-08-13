@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "protocol_engine.h"
+#include "s3519_codec.h"
 
 /**
  * @brief Builds a coherent query snapshot with distinctive seven-axis values.
@@ -110,6 +111,19 @@ static void test_text_lifecycle(void)
                                     &output_batch);
     assert(strcmp(response,
                   "ok 0 ping state=disabled enabled=00 boot=1234\n") == 0);
+
+    query_context.arm.enabled = 0U;
+    query_context.motors.valid_joint_mask = 0x05U;
+    query_context.motors.joints[0].driver_state = S3519_DRIVER_STATE_ENABLED;
+    query_context.motors.joints[2].driver_state = S3519_DRIVER_STATE_ENABLED;
+    protocol_engine_update_query_context(&engine, &query_context);
+    response = process_text_request(&engine,
+                                    "2 ping\n",
+                                    3000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "ok 2 ping state=disabled enabled=05 boot=1234\n") == 0);
 }
 
 /** @brief Verifies nonzero IDs replay exactly and conflicting bodies are rejected. */
@@ -181,6 +195,14 @@ static void test_text_errors(void)
                                     &output_batch);
     assert(strcmp(response,
                   "error 0 nonsense code=unknown_command\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "hello extra\n",
+                                    1500U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 0 hello code=bad_argument\n") == 0);
 
     response = process_text_request(&engine,
                                     "show\tstate\n",
@@ -504,6 +526,31 @@ static void test_text_watchdog_scope(void)
     assert(protocol_engine_watchdog_expired(&engine, 3002000U) == 0U);
 }
 
+/** @brief Verifies an unknown parsed command cannot refresh the live watchdog. */
+static void test_unknown_text_command_does_not_keep_motors_energized(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolQueryContext query_context;
+
+    protocol_engine_init(&engine, 9467U);
+    memset(&query_context, 0, sizeof(query_context));
+    query_context.arm.state = ARM_STATE_READY;
+    query_context.arm.enabled = 1U;
+    protocol_engine_update_query_context(&engine, &query_context);
+    (void)process_text_request(&engine,
+                               "1 hello\n",
+                               1000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    (void)process_text_request(&engine,
+                               "2 nonsense\n",
+                               900000U,
+                               PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                               &output_batch);
+    assert(protocol_engine_watchdog_expired(&engine, 1001000U) == 1U);
+}
+
 /** @brief Verifies terminal-friendly bounded help topics. */
 static void test_text_help(void)
 {
@@ -543,6 +590,7 @@ int main(void)
     test_text_bench_rejections();
     test_text_bench_done_output();
     test_text_watchdog_scope();
+    test_unknown_text_command_does_not_keep_motors_energized();
     test_text_help();
     puts("TEXT_PROTOCOL_ENGINE_TESTS_PASSED");
     return 0;

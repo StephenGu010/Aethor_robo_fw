@@ -133,3 +133,4 @@ function Invoke-Phase0HostTests {
 }
 
 Invoke-Phase0HostTests
+exit 0

@@ -341,4 +341,149 @@ if ($SelfTest) {
     exit 0
 }
 
-throw 'Hardware workflow is not implemented yet.'
+function Open-AethorSerialPort {
+    <# Opens one exclusive ASCII USB CDC port with bounded read/write timeouts. #>
+    param([Parameter(Mandatory)][string]$Name)
+
+    $serialPort = [System.IO.Ports.SerialPort]::new(
+        $Name,
+        115200,
+        [System.IO.Ports.Parity]::None,
+        8,
+        [System.IO.Ports.StopBits]::One)
+    $serialPort.Encoding = [System.Text.Encoding]::ASCII
+    $serialPort.NewLine = "`n"
+    $serialPort.ReadTimeout = 50
+    $serialPort.WriteTimeout = 500
+    try {
+        $serialPort.Open()
+    }
+    catch [System.UnauthorizedAccessException] {
+        $serialPort.Dispose()
+        throw "$Name is occupied. Close UartAssist's serial connection and retry."
+    }
+    $serialPort.DiscardInBuffer()
+    $serialPort.DiscardOutBuffer()
+    return $serialPort
+}
+
+function Initialize-AethorSession {
+    <# Establishes HELLO and stores the runtime session identifier. #>
+    param([Parameter(Mandatory)]$Context)
+
+    $hello = Invoke-AethorQuery -Context $Context -Operation 'HELLO' `
+        -Fields 'client=com7-dual-debug protocol=1'
+    $sessionMatch = [regex]::Match($hello.Body, '(?:^| )session=(\d+)(?: |$)')
+    if (-not $sessionMatch.Success) {
+        throw "HELLO_SESSION_MISSING: $($hello.Body)"
+    }
+    $Context.SessionId = [uint32]::Parse($sessionMatch.Groups[1].Value)
+    $Context.LastHeartbeatUtc = [datetime]::UtcNow
+}
+
+function Invoke-ReadOnlyStage {
+    <# Runs handshake, queries, and selected-motor discovery without enabling motion. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Selection
+    )
+
+    Initialize-AethorSession -Context $Context
+    Invoke-AethorQuery -Context $Context -Operation 'SET_STREAM' `
+        -Fields 'rate_hz=0 fields=jpos,jvel,state,motor' | Out-Null
+    foreach ($queryOperation in @(
+            'GET_INFO',
+            'GET_CONFIG',
+            'GET_STATE',
+            'GET_MOTORS',
+            'GET_DIAG')) {
+        Invoke-AethorQuery -Context $Context -Operation $queryOperation | Out-Null
+    }
+    Invoke-AethorAction -Context $Context -Operation 'INIT_MOTORS' `
+        -Fields "motors=$($Selection.Canonical)" -TimeoutMilliseconds 30000 | Out-Null
+    Invoke-AethorQuery -Context $Context -Operation 'GET_MOTORS' | Out-Null
+}
+
+function Invoke-MotionStage {
+    <# Clears, enables, moves out/back, stops, disables, and reads final diagnostics. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)]$Selection,
+        [Parameter(Mandatory)][double]$Speed
+    )
+
+    $speedText = $Speed.ToString('0.0###', $invariantCulture)
+    $speedValues = (@($speedText) * $Selection.Count) -join ','
+    Invoke-AethorAction -Context $Context -Operation 'CLEAR_FAULT' `
+        -Fields "motors=$($Selection.Canonical)" -TimeoutMilliseconds 10000 | Out-Null
+    Invoke-AethorAction -Context $Context -Operation 'ENABLE' `
+        -Fields "motors=$($Selection.Canonical)" -TimeoutMilliseconds 10000 | Out-Null
+    Invoke-AethorAction -Context $Context -Operation 'MOVE_REL' `
+        -Fields "motors=$($Selection.Canonical) delta_deg=$($Selection.ForwardValues) speed_deg_s=$speedValues" `
+        -TimeoutMilliseconds 10000 | Out-Null
+    Invoke-AethorAction -Context $Context -Operation 'MOVE_REL' `
+        -Fields "motors=$($Selection.Canonical) delta_deg=$($Selection.ReverseValues) speed_deg_s=$speedValues" `
+        -TimeoutMilliseconds 10000 | Out-Null
+    Invoke-AethorAction -Context $Context -Operation 'STOP' `
+        -Fields "motors=$($Selection.Canonical)" -TimeoutMilliseconds 10000 | Out-Null
+    Invoke-AethorAction -Context $Context -Operation 'DISABLE' `
+        -Fields "motors=$($Selection.Canonical)" -TimeoutMilliseconds 10000 | Out-Null
+    Invoke-AethorQuery -Context $Context -Operation 'GET_MOTORS' | Out-Null
+    Invoke-AethorQuery -Context $Context -Operation 'GET_DIAG' | Out-Null
+}
+
+function Invoke-BestEffortShutdown {
+    <# Tries STOP then DISABLE without hiding the original failure. #>
+    param(
+        $Context,
+        [Parameter(Mandatory)]$Selection
+    )
+
+    if (($null -eq $Context) -or ($Context.SessionId -eq 0) -or
+        ($null -eq $Context.SerialPort) -or (-not $Context.SerialPort.IsOpen)) {
+        return
+    }
+    foreach ($operation in @('STOP', 'DISABLE')) {
+        try {
+            Invoke-AethorAction -Context $Context -Operation $operation `
+                -Fields "motors=$($Selection.Canonical)" -TimeoutMilliseconds 3000 | Out-Null
+        }
+        catch {
+            Write-Warning "Best-effort $operation failed: $($_.Exception.Message)"
+        }
+    }
+}
+
+$selection = Get-MotorSelection -Text $MotorList -Magnitude $DeltaDegrees
+$serialPort = $null
+$context = $null
+$shutdownRequired = $false
+try {
+    $serialPort = Open-AethorSerialPort -Name $PortName
+    $context = New-AethorContext -SerialPort $serialPort
+    Invoke-ReadOnlyStage -Context $context -Selection $selection
+    if (-not $RunMotion) {
+        Write-Output "READ_ONLY_DEBUG_PASSED port=$PortName motors=$($selection.Canonical)"
+        exit 0
+    }
+    $shutdownRequired = $true
+    Invoke-MotionStage -Context $context -Selection $selection `
+        -Speed $SpeedDegreesPerSecond
+    $shutdownRequired = $false
+    Write-Output "MOTION_DEBUG_PASSED port=$PortName motors=$($selection.Canonical)"
+}
+catch {
+    Write-Error "COM7_DUAL_MOTOR_DEBUG_FAILED: $($_.Exception.Message)"
+    exit 1
+}
+finally {
+    if ($shutdownRequired) {
+        Invoke-BestEffortShutdown -Context $context -Selection $selection
+    }
+    if ($null -ne $serialPort) {
+        if ($serialPort.IsOpen) {
+            $serialPort.Close()
+        }
+        $serialPort.Dispose()
+    }
+}

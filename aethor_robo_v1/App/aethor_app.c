@@ -396,11 +396,11 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
         return PROTOCOL_ENGINE_STATUS_INVALID_ARGUMENT;
     }
     aethor_app_update_protocol_context(timestamp_us);
-    return protocol_engine_process_line(&application_protocol_engine,
-                                        line,
-                                        length,
-                                        timestamp_us,
-                                        output_batch);
+    return protocol_engine_process_text_line(&application_protocol_engine,
+                                             line,
+                                             length,
+                                             timestamp_us,
+                                             output_batch);
 }
 
 /**
@@ -1531,7 +1531,7 @@ uint8_t aethor_app_generate_stream_output(
 ProtocolEngineStatus aethor_app_format_line_too_long(
     ProtocolOutputBatch *output_batch)
 {
-    return protocol_engine_format_line_too_long(output_batch);
+    return protocol_engine_format_text_line_too_long(output_batch);
 }
 
 /**

@@ -676,45 +676,29 @@ static void test_aethor_app_reinitializes_deterministically(void)
 }
 
 /**
- * @brief Verifies link timeout emits an event and schedules fail-safe disable frames.
+ * @brief Verifies an idle disabled controller does not arm the link watchdog.
  */
-static void test_aethor_app_link_timeout_stops_and_disables(void)
+static void test_aethor_app_idle_link_does_not_timeout(void)
 {
-    static const char hello_body[] = "REQ 1 HELLO client=phase0 protocol=1";
-    char hello_frame[128];
-    size_t hello_length = 0U;
+    static const char hello_line[] = "1 hello\n";
     ProtocolOutputBatch output_batch;
     ArmSnapshot arm_snapshot;
     CanFrame emergency_frame;
-    uint8_t emergency_count = 0U;
 
-    assert(ascii_protocol_format_frame(hello_body,
-                                       sizeof(hello_body) - 1U,
-                                       hello_frame,
-                                       sizeof(hello_frame),
-                                       &hello_length) == ASCII_PROTOCOL_STATUS_OK);
     aethor_app_init(1000U, 7777U);
-    assert(aethor_app_process_protocol_line(hello_frame,
-                                            hello_length,
+    assert(aethor_app_process_protocol_line(hello_line,
+                                            sizeof(hello_line) - 1U,
                                             2000U,
                                             &output_batch) ==
            PROTOCOL_ENGINE_STATUS_OK);
-    assert(aethor_app_service(1002000U) == 1U);
+    assert(aethor_app_service(1002000U) == 0U);
     assert(aethor_app_get_snapshot(&arm_snapshot));
-    assert(arm_snapshot.state == ARM_STATE_FAULT);
-    assert(arm_snapshot.fault == ARM_FAULT_LINK_TIMEOUT);
+    assert(arm_snapshot.state != ARM_STATE_FAULT);
+    assert(arm_snapshot.fault == ARM_FAULT_NONE);
     assert(arm_snapshot.enabled == 0U);
     assert(arm_snapshot.moving == 0U);
-
-    while (aethor_app_pop_emergency_can_frame(&emergency_frame) != 0U)
-    {
-        assert(emergency_frame.data[7] == S3519_MODE_COMMAND_DISABLE);
-        ++emergency_count;
-    }
-    assert(emergency_count == MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES);
-    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
-    assert(strstr(output_batch.messages[0].data, "LINK_TIMEOUT") != NULL);
-    assert(strstr(output_batch.messages[0].data, "STOP_DISABLE") != NULL);
+    assert(aethor_app_pop_emergency_can_frame(&emergency_frame) == 0U);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
 }
 
 /**
@@ -768,7 +752,7 @@ int main(void)
     test_layer_contracts_are_frozen();
     test_aethor_app_latches_safe_phase0_fault();
     test_aethor_app_reinitializes_deterministically();
-    test_aethor_app_link_timeout_stops_and_disables();
+    test_aethor_app_idle_link_does_not_timeout();
     test_aethor_app_transport_fault_stops_and_disables();
 
     printf("PHASE0_TESTS_PASSED\n");

@@ -1754,6 +1754,67 @@ static ProtocolEngineStatus protocol_engine_handle_text_ping(
         (unsigned long)engine->boot_id);
 }
 
+/** @brief Returns bounded terminal help without quoting or escape syntax. */
+static ProtocolEngineStatus protocol_engine_handle_text_help(
+    const TextProtocolRequest *request,
+    ProtocolOutputBatch *output_batch)
+{
+    TextProtocolSpan topic;
+
+    if ((request->field_count != 0U) || (request->positional_count > 1U))
+    {
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        request,
+                                                        "bad_argument");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (request->positional_count == 0U)
+    {
+        return protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_QUERY,
+            "ok %lu help topics=show,stream,arm,bench examples=show_state,arm_move,bench_jog",
+            (unsigned long)request->request_id);
+    }
+    (void)text_protocol_get_positional(request, 0U, &topic);
+    if ((topic.length == 4U) && (strncmp(topic.data, "show", 4U) == 0))
+    {
+        return protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_QUERY,
+            "ok %lu help show commands=info,state,joints,motors,motor,config,diag",
+            (unsigned long)request->request_id);
+    }
+    if ((topic.length == 6U) && (strncmp(topic.data, "stream", 6U) == 0))
+    {
+        return protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_QUERY,
+            "ok %lu help stream commands=joints,motors,off rates=joints_1_50,motors_1_10",
+            (unsigned long)request->request_id);
+    }
+    if ((topic.length == 3U) && (strncmp(topic.data, "arm", 3U) == 0))
+    {
+        return protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_QUERY,
+            "ok %lu help arm commands=align,enable,move,stop,disable,clear",
+            (unsigned long)request->request_id);
+    }
+    if ((topic.length == 5U) && (strncmp(topic.data, "bench", 5U) == 0))
+    {
+        return protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_QUERY,
+            "ok %lu help bench commands=init,enable,jog,stop,disable,clear",
+            (unsigned long)request->request_id);
+    }
+    (void)protocol_engine_append_text_command_error(output_batch,
+                                                    request,
+                                                    "bad_argument");
+    return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+}
+
 /** @brief Returns immutable board, transport, motor, and build identity. */
 static ProtocolEngineStatus protocol_engine_handle_text_show_info(
     const TextProtocolRequest *request,
@@ -4650,6 +4711,20 @@ ProtocolEngineStatus protocol_engine_format_line_too_long(
                                          "ERR 0 LINE_TOO_LONG");
 }
 
+/** @brief Formats an aethor-text-v1 line overflow error without parsing. */
+ProtocolEngineStatus protocol_engine_format_text_line_too_long(
+    ProtocolOutputBatch *output_batch)
+{
+    if (output_batch == NULL)
+    {
+        return PROTOCOL_ENGINE_STATUS_INVALID_ARGUMENT;
+    }
+    protocol_engine_clear_output(output_batch);
+    return protocol_engine_append_text_format(output_batch,
+                                              PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                              "error 0 parse code=line_too_long");
+}
+
 /**
  * @brief Processes one complete CRC-protected request line.
  */
@@ -5004,6 +5079,11 @@ ProtocolEngineStatus protocol_engine_process_text_line(
                                                          timestamp_us,
                                                          output_batch);
     }
+    else if (text_protocol_request_path_equals(&request, "help", NULL) != 0U)
+    {
+        engine_status = protocol_engine_handle_text_help(&request,
+                                                         output_batch);
+    }
     else if (text_protocol_request_path_equals(&request, "show", "info") != 0U)
     {
         engine_status = protocol_engine_handle_text_show_info(&request,
@@ -5120,6 +5200,32 @@ ProtocolEngineStatus protocol_engine_process_text_line(
 uint8_t protocol_engine_watchdog_expired(ProtocolEngine *engine,
                                          uint64_t timestamp_us)
 {
+    if ((engine != NULL) && (engine->text_protocol_active != 0U))
+    {
+        uint8_t enabled_mask;
+        uint8_t moving_mask;
+        uint8_t holding_mask;
+        uint8_t fault_mask;
+
+        if (engine->query_context_valid == 0U)
+        {
+            return 0U;
+        }
+        protocol_engine_text_motor_masks(&engine->query_context,
+                                         &enabled_mask,
+                                         &moving_mask,
+                                         &holding_mask,
+                                         &fault_mask);
+        (void)holding_mask;
+        (void)fault_mask;
+        if ((engine->query_context.arm.enabled == 0U) &&
+            (engine->query_context.arm.moving == 0U) &&
+            (enabled_mask == 0U) && (moving_mask == 0U))
+        {
+            engine->watchdog_timeout_reported = 0U;
+            return 0U;
+        }
+    }
     if ((engine == NULL) || (engine->session_active == 0U) ||
         (engine->watchdog_timeout_reported != 0U) ||
         (timestamp_us < engine->last_valid_request_at_us) ||

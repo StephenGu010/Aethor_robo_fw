@@ -274,6 +274,14 @@ ProtocolEngineStatus protocol_engine_format_line_too_long(
     ProtocolOutputBatch *output_batch);
 
 /**
+ * @brief Formats an aethor-text-v1 line overflow error without parsing.
+ * @param output_batch Destination high-priority error output.
+ * @return OK or INVALID_ARGUMENT/OUTPUT_TOO_SMALL.
+ */
+ProtocolEngineStatus protocol_engine_format_text_line_too_long(
+    ProtocolOutputBatch *output_batch);
+
+/**
  * @brief Processes one complete CRC-protected request line.
  * @param engine Initialized engine.
  * @param line Complete request line.

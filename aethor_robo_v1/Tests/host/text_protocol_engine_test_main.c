@@ -473,6 +473,62 @@ static void test_text_bench_done_output(void)
                   "done 40 bench jog result=completed elapsed_ms=3050 arrived=05\n") == 0);
 }
 
+/** @brief Verifies the communication watchdog is active only while energized. */
+static void test_text_watchdog_scope(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolQueryContext query_context;
+
+    protocol_engine_init(&engine, 9456U);
+    memset(&query_context, 0, sizeof(query_context));
+    query_context.arm.state = ARM_STATE_DISABLED;
+    protocol_engine_update_query_context(&engine, &query_context);
+    (void)process_text_request(&engine,
+                               "1 hello\n",
+                               1000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    assert(protocol_engine_watchdog_expired(&engine, 2000000U) == 0U);
+
+    query_context.arm.state = ARM_STATE_READY;
+    query_context.arm.enabled = 1U;
+    protocol_engine_update_query_context(&engine, &query_context);
+    (void)process_text_request(&engine,
+                               "ping\n",
+                               2001000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    assert(protocol_engine_watchdog_expired(&engine, 3000999U) == 0U);
+    assert(protocol_engine_watchdog_expired(&engine, 3001000U) == 1U);
+    assert(protocol_engine_watchdog_expired(&engine, 3002000U) == 0U);
+}
+
+/** @brief Verifies terminal-friendly bounded help topics. */
+static void test_text_help(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+
+    protocol_engine_init(&engine, 9567U);
+    (void)process_text_request(&engine,
+                               "help\n",
+                               1000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    assert(strcmp(output_batch.messages[0].data,
+                  "ok 0 help topics=show,stream,arm,bench "
+                  "examples=show_state,arm_move,bench_jog\n") == 0);
+
+    (void)process_text_request(&engine,
+                               "help bench\n",
+                               2000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    assert(strcmp(output_batch.messages[0].data,
+                  "ok 0 help bench commands=init,enable,jog,stop,disable,clear\n") == 0);
+}
+
 /** @brief Runs the aethor-text-v1 engine lifecycle tests. */
 int main(void)
 {
@@ -486,6 +542,8 @@ int main(void)
     test_text_bench_commands();
     test_text_bench_rejections();
     test_text_bench_done_output();
+    test_text_watchdog_scope();
+    test_text_help();
     puts("TEXT_PROTOCOL_ENGINE_TESTS_PASSED");
     return 0;
 }

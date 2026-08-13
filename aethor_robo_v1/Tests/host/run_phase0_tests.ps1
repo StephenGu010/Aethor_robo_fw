@@ -51,6 +51,7 @@ function Invoke-Phase0HostTests {
         'App\Motor\motor_runtime.c',
         'App\Motor\s3519_codec.c',
         'App\Protocol\ascii_protocol.c',
+        'App\Protocol\text_protocol.c',
         'App\Protocol\protocol_engine.c'
     )
     $compilerArguments = @(

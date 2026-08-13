@@ -59,7 +59,7 @@ bool aethor_app_get_motor_snapshot(uint64_t timestamp_us,
 
 /**
  * @brief Processes one complete USB protocol line in task context.
- * @param line Complete CRC-protected request line.
+ * @param line Complete aethor-text-v1 request line without an application CRC.
  * @param length Exact line length.
  * @param timestamp_us Current monotonic timestamp.
  * @param output_batch Destination immediate response batch.

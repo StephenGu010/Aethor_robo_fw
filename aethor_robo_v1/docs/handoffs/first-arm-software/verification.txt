@@ -46,3 +46,4 @@ Evidence boundary:
 - They do not prove USB CDC enumeration, real CAN traffic, S3519 behavior,
   joint calibration, mechanical safety, DH/URDF pose, real-time bus load,
   hardware soak, or Aethor Studio V2 external compatibility.
+- Tests/host/test_com7_dual_motor_debug_script.ps1: COM7_DEBUG_SCRIPT_TESTS_PASSED (software-only; COM7 motion not implied)

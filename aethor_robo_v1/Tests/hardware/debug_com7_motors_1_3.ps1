@@ -127,8 +127,164 @@ function Get-MotorSelection {
     }
 }
 
+function New-AethorContext {
+    <# Creates mutable request/session state around one optional serial port. #>
+    param($SerialPort)
+
+    return [pscustomobject]@{
+        SerialPort = $SerialPort
+        NextRequestId = [uint32]1
+        SessionId = [uint32]0
+        LastHeartbeatUtc = [datetime]::MinValue
+        HeartbeatRequestIds = New-Object 'System.Collections.Generic.HashSet[uint32]'
+    }
+}
+
+function Write-AethorBody {
+    <# Sends one encoded request body and writes a timestamped transcript line. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Body
+    )
+
+    $frame = ConvertTo-AethorFrame -Body $Body
+    Write-Host ('[{0:HH:mm:ss.fff}] > {1}' -f [datetime]::Now, $Body)
+    $Context.SerialPort.Write($frame)
+}
+
+function Send-AethorRequest {
+    <# Allocates one request ID, sends the canonical body, and returns the ID. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Operation,
+        [string]$Fields = ''
+    )
+
+    $requestId = $Context.NextRequestId
+    $Context.NextRequestId = [uint32]($Context.NextRequestId + 1)
+    $body = "REQ $requestId $Operation"
+    if ($Fields.Length -gt 0) {
+        $body += " $Fields"
+    }
+    Write-AethorBody -Context $Context -Body $body
+    return $requestId
+}
+
+function Send-AethorHeartbeatIfDue {
+    <# Sends one session heartbeat when at least 200 ms have elapsed. #>
+    param([Parameter(Mandatory)]$Context)
+
+    if ($Context.SessionId -eq 0) {
+        return
+    }
+    $now = [datetime]::UtcNow
+    if (($now - $Context.LastHeartbeatUtc).TotalMilliseconds -lt 200) {
+        return
+    }
+    $heartbeatId = Send-AethorRequest -Context $Context -Operation 'HEARTBEAT' `
+        -Fields "session=$($Context.SessionId)"
+    [void]$Context.HeartbeatRequestIds.Add([uint32]$heartbeatId)
+    $Context.LastHeartbeatUtc = $now
+}
+
+function Read-AethorResponse {
+    <# Reads and validates one response, returning null on the short read timeout. #>
+    param([Parameter(Mandatory)]$Context)
+
+    try {
+        $line = $Context.SerialPort.ReadLine()
+    }
+    catch [System.TimeoutException] {
+        return $null
+    }
+    $response = ConvertFrom-AethorFrame -Line $line
+    Write-Host ('[{0:HH:mm:ss.fff}] < {1}' -f [datetime]::Now, $response.Body)
+    return $response
+}
+
+function Wait-AethorRequest {
+    <# Waits for a matching query or action terminal while servicing heartbeats. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][uint32]$RequestId,
+        [Parameter(Mandatory)][ValidateSet('Query', 'Action')][string]$RequestType,
+        [Parameter(Mandatory)][int]$TimeoutMilliseconds
+    )
+
+    $deadline = [datetime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    $acknowledged = $false
+    while ([datetime]::UtcNow -lt $deadline) {
+        if ($RequestType -eq 'Action') {
+            Send-AethorHeartbeatIfDue -Context $Context
+        }
+        $response = Read-AethorResponse -Context $Context
+        if ($null -eq $response) {
+            continue
+        }
+        if ($Context.HeartbeatRequestIds.Remove([uint32]$response.RequestId)) {
+            continue
+        }
+        if ($response.RequestId -ne $RequestId) {
+            continue
+        }
+        if ($response.Kind -eq 'ERR') {
+            throw "DEVICE_ERROR: $($response.Body)"
+        }
+        if (($RequestType -eq 'Query') -and ($response.Kind -eq 'RSP')) {
+            return $response
+        }
+        if (($RequestType -eq 'Action') -and ($response.Kind -eq 'ACK')) {
+            $acknowledged = $true
+            continue
+        }
+        if (($RequestType -eq 'Action') -and ($response.Kind -eq 'DONE')) {
+            if (-not $acknowledged) {
+                throw "DONE_WITHOUT_ACK: $($response.Body)"
+            }
+            if (($response.Result -ne 'COMPLETED') -and
+                ($response.Result -ne 'STOPPED')) {
+                throw "ACTION_FAILED: $($response.Body)"
+            }
+            return $response
+        }
+    }
+    throw "REQUEST_TIMEOUT id=$RequestId type=$RequestType timeout_ms=$TimeoutMilliseconds"
+}
+
+function Invoke-AethorQuery {
+    <# Sends one query and returns its matching validated RSP. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Operation,
+        [string]$Fields = ''
+    )
+
+    $requestId = Send-AethorRequest -Context $Context -Operation $Operation -Fields $Fields
+    return Wait-AethorRequest -Context $Context -RequestId $requestId `
+        -RequestType Query -TimeoutMilliseconds 3000
+}
+
+function Invoke-AethorAction {
+    <# Sends one action and waits for its ACK plus successful DONE. #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Operation,
+        [Parameter(Mandatory)][string]$Fields,
+        [Parameter(Mandatory)][int]$TimeoutMilliseconds
+    )
+
+    $requestId = Send-AethorRequest -Context $Context -Operation $Operation -Fields $Fields
+    return Wait-AethorRequest -Context $Context -RequestId $requestId `
+        -RequestType Action -TimeoutMilliseconds $TimeoutMilliseconds
+}
+
 function Invoke-ScriptSelfTest {
     <# Verifies CRC vectors, frame rejection, selection mapping, and safe defaults. #>
+
+    $testContext = New-AethorContext -SerialPort $null
+    if (($testContext.NextRequestId -ne 1) -or ($testContext.SessionId -ne 0)) {
+        throw 'CONTEXT_DEFAULTS_FAILED'
+    }
 
     $referenceCrc = Get-Crc16CcittFalse `
         -Data ([System.Text.Encoding]::ASCII.GetBytes('123456789'))

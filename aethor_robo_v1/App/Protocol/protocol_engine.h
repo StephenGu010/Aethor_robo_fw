@@ -131,12 +131,15 @@ typedef struct
 {
     float values[ARM_JOINT_COUNT];
     float auxiliary_values[ARM_JOINT_COUNT];
+    uint64_t accepted_at_us;
     uint64_t completed_at_us;
     uint32_t request_id;
     uint32_t session_id;
     ProtocolCommandType type;
     ProtocolCommandResultCode code;
     uint16_t detail;
+    uint8_t motor_mask;
+    uint8_t bench_relative_scope;
 } ProtocolCommandResult;
 
 /** @brief Owns the fixed current session and bounded recent-result cache. */

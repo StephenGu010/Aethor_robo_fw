@@ -354,6 +354,125 @@ static void test_text_detailed_show_queries(void)
                   "can_error=2 usb_drop=3 fault=none\n") == 0);
 }
 
+/** @brief Verifies bench commands map to the existing bounded business queue. */
+static void test_text_bench_commands(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    const char *response;
+
+    protocol_engine_init(&engine, 9123U);
+    response = process_text_request(&engine,
+                                    "20 bench init 1,3\n",
+                                    1000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 20 bench init accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_INIT_MOTORS);
+    assert(command.motor_mask == 0x05U);
+    assert(command.control_mode == ARM_CONTROL_MODE_POSITION_VELOCITY);
+    assert(command.bench_relative_scope != 0U);
+
+    response = process_text_request(&engine,
+                                    "21 bench enable 1,3\n",
+                                    2000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 21 bench enable accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_ENABLE);
+    assert(command.motor_mask == 0x05U);
+
+    response = process_text_request(&engine,
+                                    "22 bench jog 1,3 delta=0.2 speed=1\n",
+                                    3000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 22 bench jog accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_RELATIVE);
+    assert(command.motor_mask == 0x05U);
+    assert(command.values[0] == 0.2F);
+    assert(command.values[2] == 0.2F);
+    assert(command.speeds[0] == 1.0F);
+    assert(command.speeds[2] == 1.0F);
+
+    response = process_text_request(&engine,
+                                    "23 bench stop 1,3\n",
+                                    4000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 23 bench stop accepted=1\n") == 0);
+    assert(protocol_engine_pop_stop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_STOP);
+    assert(command.motor_mask == 0x05U);
+}
+
+/** @brief Verifies bench safety bounds, list rules, and compile-time profile gate. */
+static void test_text_bench_rejections(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    const char *response;
+
+    protocol_engine_init(&engine, 9234U);
+    response = process_text_request(&engine,
+                                    "30 bench jog 1,3 delta=3.1 speed=1\n",
+                                    1000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 30 bench jog code=out_of_range field=delta\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "31 bench enable 3,1\n",
+                                    2000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 31 bench enable code=bad_argument field=motors\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "32 arm enable\n",
+                                    3000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 32 arm enable code=profile current=bench required=arm\n") == 0);
+}
+
+/** @brief Verifies asynchronous bench completion uses the public done grammar. */
+static void test_text_bench_done_output(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    ProtocolCommandResult result;
+
+    protocol_engine_init(&engine, 9345U);
+    (void)process_text_request(&engine,
+                               "40 bench jog 1,3 delta=0.2 speed=1\n",
+                               1000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    memset(&result, 0, sizeof(result));
+    result.request_id = command.request_id;
+    result.session_id = command.session_id;
+    result.type = command.type;
+    result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
+    result.accepted_at_us = command.accepted_at_us;
+    result.completed_at_us = 3051000U;
+    result.motor_mask = command.motor_mask;
+    result.bench_relative_scope = command.bench_relative_scope;
+    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
+    assert(strcmp(output_batch.messages[0].data,
+                  "done 40 bench jog result=completed elapsed_ms=3050 arrived=05\n") == 0);
+}
+
 /** @brief Runs the aethor-text-v1 engine lifecycle tests. */
 int main(void)
 {
@@ -364,6 +483,9 @@ int main(void)
     test_text_show_queries();
     test_text_streaming();
     test_text_detailed_show_queries();
+    test_text_bench_commands();
+    test_text_bench_rejections();
+    test_text_bench_done_output();
     puts("TEXT_PROTOCOL_ENGINE_TESTS_PASSED");
     return 0;
 }

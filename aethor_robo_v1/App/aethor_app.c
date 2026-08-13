@@ -83,7 +83,11 @@ static uint8_t aethor_app_complete_action(ProtocolCommandResultCode code,
     result.type = application_action.command.type;
     result.code = code;
     result.detail = detail;
+    result.accepted_at_us = application_action.command.accepted_at_us;
     result.completed_at_us = timestamp_us;
+    result.motor_mask = application_action.command.motor_mask;
+    result.bench_relative_scope =
+        application_action.command.bench_relative_scope;
     if (application_action.command.type == PROTOCOL_COMMAND_MOVE_JOINTS)
     {
         result.auxiliary_values[0] =
@@ -552,7 +556,10 @@ static uint8_t aethor_app_start_lifecycle_action(
     result.session_id = command->session_id;
     result.type = command->type;
     result.code = PROTOCOL_COMMAND_RESULT_FAILED;
+    result.accepted_at_us = command->accepted_at_us;
     result.completed_at_us = timestamp_us;
+    result.motor_mask = command->motor_mask;
+    result.bench_relative_scope = command->bench_relative_scope;
     (void)arm_controller_get_snapshot(&application_controller, &arm_snapshot);
     vendor_mode = aethor_app_vendor_mode(arm_snapshot.control_mode);
 

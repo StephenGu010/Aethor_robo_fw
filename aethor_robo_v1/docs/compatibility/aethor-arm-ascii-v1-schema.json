@@ -43,12 +43,13 @@
     "DISABLE",
     "CLEAR_FAULT"
   ],
-  "bench_only_commands": ["INIT_MOTORS", "MOVE_REL"],
+  "bench_only_commands": ["INIT_MOTORS", "MOVE_REL", "MOVE_REL_TARGET"],
   "profiles": {
     "USB_BENCH_RELATIVE": {
       "partial_motor_population": true,
       "explicit_motor_subset_required": true,
-      "maximum_absolute_delta_deg": 3.0,
+      "maximum_move_rel_delta_deg": 3.0,
+      "maximum_move_rel_target_delta_deg": 360.0,
       "maximum_speed_deg_s": 3.0
     },
     "ARM_PRODUCTION": {

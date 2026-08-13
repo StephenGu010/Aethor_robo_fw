@@ -178,7 +178,7 @@ Expected: `ONE_TURN_SELF_TESTS_PASSED stages=3 steps=360`.
 Run:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Tests\host\run_com7_debug_script_tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Tests\host\test_com7_dual_motor_debug_script.ps1
 ```
 
 Expected: `COM7_DEBUG_SCRIPT_TESTS_PASSED`.

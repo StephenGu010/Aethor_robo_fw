@@ -1,0 +1,84 @@
+Aethor Text V1 firmware and bench verification
+Recorded: 2026-08-13 Asia/Shanghai
+Branch: refactor/prd-phase-00
+Source commit before evidence artifact: 39415f41cbd2894c655131230e405c62f1a3b6bc
+
+Protocol contract:
+- Production entry: aethor-text-v1 over USB CDC, printable ASCII, LF/CRLF.
+- No application-layer wire CRC.
+- Public output kinds: ok, done, error, event, data.
+- Default profile: bench; public motor control mode: POS_VEL.
+- Bench bounds: absolute delta <= 3 deg; requested speed <= 3 deg/s.
+- Energized keepalive: ping every 250 ms or faster; firmware timeout 1000 ms.
+
+Host verification:
+- HOST_TESTS_PASSED
+- MOTOR_CORE_TESTS_PASSED
+- MOTION_TESTS_PASSED
+- PLATFORM_IO_TESTS_PASSED
+- PROTOCOL_TESTS_PASSED
+- TEXT_PROTOCOL_TESTS_PASSED
+- TEXT_PROTOCOL_ENGINE_TESTS_PASSED
+- TEXT_PROTOCOL_ARM_PROFILE_TESTS_PASSED
+- PHASE0_TESTS_PASSED
+- PRODUCTION_PROFILE_TEST_PASSED
+- SIMULATOR_TESTS_PASSED (6 tests)
+- COM7_DEBUG_SCRIPT_TESTS_PASSED
+- Phase 0 architecture contracts satisfied
+
+Keil full rebuild:
+- Tool: E:/keil/UV4/UV4.exe
+- Compiler: ARMCC V5.05 update 1 build 106
+- text_protocol.c compiled in the production target
+- Program Size: Code=71780 RO-data=3752 RW-data=444 ZI-data=92860
+- Result: 0 Error(s), 0 Warning(s)
+- Build time: 00:01:05
+
+Artifacts:
+- HEX: MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.hex
+  Length: 213082 bytes
+  SHA-256: 630F40FB9A2F629B8883BEB5F0C68CB17AA24B979828385255B0284C89A8B3DE
+- MAP: MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.map
+  Length: 707572 bytes
+  SHA-256: B28132196DC91C4484545E18A689B22F1931D330AABB21452D73FE516A4D2C13
+- AXF: MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.axf
+  Length: 2105800 bytes
+  SHA-256: EB3775B9E82D5B9AD0F472441BD74C04027DCFEB6E311668C80E639F054408E7
+
+Flash verification:
+- Probe: CMSIS-DAP serial 07000001000000000000000000000000a5a5a5a597969908
+- Target: STM32H72x/73x, Cortex-M7 r1p2, 1024 KiB flash
+- OpenOCD result: Programming Finished; Verified OK; target reset
+- Log: MDK-ARM/aethor-text-v1-final-cmsis-dap-flash.log
+
+COM7 unloaded two-motor verification:
+- Device: USB CDC VID_0483 PID_5740, COM7
+- Motor mapping: ESC/CAN ID 1 and 3; Master ID 0x11 and 0x13
+- Final script command: debug_com7_aethor_text_v1.ps1 with motors 1,3,
+  RunMotion, delta 1.0 deg, requested speed 1.0 deg/s
+- HELLO identified protocol=aethor-text-v1, profile=bench, dof=7
+- INIT completed with identity=05 mode=05 ranges=05 version=05
+- ENABLE completed with enabled=05; PING reported enabled=05
+- Positive jog completed in 90 ms with arrived=05
+- Negative jog completed in 121 ms with arrived=05
+- STOP returned stopped; DISABLE completed
+- Final motors: present=05 enabled=00 moving=00 holding=00 stale=00 fault=00
+- Final diagnostics: can_error=0 usb_drop=0 fault=none
+- Log: Tests/hardware/aethor-text-v1-com7-final-motion.log
+
+Additional staged hardware evidence:
+- Motor 1 alone completed positive/negative 1.0 deg jog and safe shutdown.
+- Motor 3 alone completed positive/negative 1.0 deg jog and safe shutdown.
+- An initial 1.0 deg test before the periodic-resend fix timed out after 1504 ms;
+  STOP and DISABLE still completed. The added host regression proves unfinished
+  selected target batches are repeated; the rebuilt image then passed all stages.
+
+Evidence boundary:
+- This proves USB CDC, FDCAN, discovery, enable, bounded POS_VEL target feedback,
+  stop, disable, and fault-free unloaded motion for connected motor IDs 1 and 3.
+- It does not prove calibrated physical output angle or speed. The observed
+  completion times are much shorter than the nominal 1 deg/s request, so the
+  S3519 POS_VEL velocity scale and mechanical output scale remain to be measured.
+- Production verified_fields remains 00. Seven-axis calibrated motion, load,
+  direction, zero, limits, gear ratio, thermal behavior, long soak, and DH/URDF
+  are not verified by this bench run.

@@ -15,12 +15,14 @@
 #include "arm_controller.h"
 #include "board_config.h"
 #include "build_info.h"
+#include "can_frame.h"
 #include "diagnostics.h"
 #include "joint_reference.h"
 #include "motion_types.h"
 #include "motor_types.h"
 #include "platform_contract.h"
 #include "protocol_contract.h"
+#include "s3519_codec.h"
 
 /**
  * @brief Builds deterministic commissioned joint parameters for domain tests.
@@ -612,6 +614,236 @@ static void test_layer_contracts_are_frozen(void)
 }
 
 /**
+ * @brief Reinterprets one float as a raw little-endian register value.
+ * @param value Floating-point register value.
+ * @return Bit-identical unsigned register payload.
+ */
+static uint32_t phase0_float_to_raw_register(float value)
+{
+    uint32_t raw_value;
+
+    memcpy(&raw_value, &value, sizeof(raw_value));
+    return raw_value;
+}
+
+/**
+ * @brief Supplies a valid discovery value for the requested selected motor.
+ * @param register_address Vendor register requested by the application.
+ * @param esc_id One-based selected motor identifier.
+ * @return Raw response value matching the production mapping.
+ */
+static uint32_t phase0_discovery_raw_value(uint8_t register_address,
+                                           uint8_t esc_id)
+{
+    switch ((S3519Register)register_address)
+    {
+        case S3519_REGISTER_ACCELERATION:
+            return phase0_float_to_raw_register(30.0F);
+        case S3519_REGISTER_DECELERATION:
+            return phase0_float_to_raw_register(-25.0F);
+        case S3519_REGISTER_MAXIMUM_SPEED:
+            return phase0_float_to_raw_register(20.0F);
+        case S3519_REGISTER_MASTER_ID:
+            return (uint32_t)(esc_id + 0x10U);
+        case S3519_REGISTER_ESC_ID:
+            return esc_id;
+        case S3519_REGISTER_CONTROL_MODE:
+            return 2U;
+        case S3519_REGISTER_HARDWARE_VERSION:
+            return 0x00010002U;
+        case S3519_REGISTER_SOFTWARE_VERSION:
+            return 0x00030004U;
+        case S3519_REGISTER_SUB_VERSION:
+            return 0x00000005U;
+        case S3519_REGISTER_POSITION_RANGE:
+            return phase0_float_to_raw_register(12.5F);
+        case S3519_REGISTER_VELOCITY_RANGE:
+            return phase0_float_to_raw_register(45.0F);
+        case S3519_REGISTER_TORQUE_RANGE:
+            return phase0_float_to_raw_register(18.0F);
+        default:
+            assert(0);
+            return 0U;
+    }
+}
+
+/**
+ * @brief Submits one plain aethor-text-v1 application request.
+ * @param line Request line without its optional transport terminator.
+ * @param timestamp_us Monotonic request time.
+ */
+static void phase0_submit_request(const char *line, uint64_t timestamp_us)
+{
+    ProtocolOutputBatch output_batch;
+
+    assert(line != NULL);
+    assert(aethor_app_process_protocol_line(line,
+                                            strlen(line),
+                                            timestamp_us,
+                                            &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_OK);
+}
+
+/**
+ * @brief Feeds one centered S3519 feedback frame with an explicit driver state.
+ * @param esc_id One-based motor identifier.
+ * @param driver_state S3519 enabled or disabled state nibble.
+ * @param timestamp_us Monotonic receive time.
+ */
+static void phase0_feed_feedback(uint8_t esc_id,
+                                 uint8_t driver_state,
+                                 uint64_t timestamp_us)
+{
+    uint8_t payload[8] = {
+        (uint8_t)((driver_state << 4U) | esc_id),
+        0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 35U, 27U
+    };
+    CanFrame frame;
+
+    assert(can_frame_init(&frame,
+                          (uint16_t)(esc_id + 0x10U),
+                          payload,
+                          sizeof(payload)) == CAN_FRAME_STATUS_OK);
+    assert(aethor_app_receive_can_frame(&frame, timestamp_us) ==
+           MOTOR_RUNTIME_STATUS_OK);
+}
+
+/**
+ * @brief Completes selected motor discovery and POS_VEL mode readback.
+ * @param timestamp_us Mutable monotonic timestamp used by the setup.
+ */
+static void phase0_initialize_selected_motors(uint64_t *timestamp_us)
+{
+    ProtocolOutputBatch output_batch;
+    uint16_t response_index;
+
+    assert(timestamp_us != NULL);
+    phase0_submit_request("2 bench init 1,3", *timestamp_us);
+    ++(*timestamp_us);
+    (void)aethor_app_service(*timestamp_us);
+    for (response_index = 0U;
+         response_index < (uint16_t)(2U * MOTOR_DISCOVERY_REGISTER_COUNT);
+         ++response_index)
+    {
+        CanFrame request;
+        CanFrame response;
+        CanTxPriority priority;
+        uint8_t payload[8] = {0U};
+        uint8_t esc_id;
+        uint32_t raw_value;
+
+        ++(*timestamp_us);
+        assert(aethor_app_next_can_frame(*timestamp_us, &request, &priority) ==
+               MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(priority == CAN_TX_PRIORITY_PARAMETER);
+        esc_id = request.data[0];
+        raw_value = phase0_discovery_raw_value(request.data[3], esc_id);
+        payload[0] = esc_id;
+        payload[2] = 0x33U;
+        payload[3] = request.data[3];
+        payload[4] = (uint8_t)(raw_value & 0xFFU);
+        payload[5] = (uint8_t)((raw_value >> 8U) & 0xFFU);
+        payload[6] = (uint8_t)((raw_value >> 16U) & 0xFFU);
+        payload[7] = (uint8_t)((raw_value >> 24U) & 0xFFU);
+        assert(can_frame_init(&response,
+                              (uint16_t)(esc_id + 0x10U),
+                              payload,
+                              sizeof(payload)) == CAN_FRAME_STATUS_OK);
+        assert(aethor_app_receive_can_frame(&response, *timestamp_us) ==
+               MOTOR_RUNTIME_STATUS_OK);
+        (void)aethor_app_service(*timestamp_us);
+    }
+    for (response_index = 0U; response_index < 4U; ++response_index)
+    {
+        CanFrame request;
+        CanTxPriority priority;
+
+        ++(*timestamp_us);
+        assert(aethor_app_next_can_frame(*timestamp_us, &request, &priority) ==
+               MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(priority == CAN_TX_PRIORITY_PARAMETER);
+        if (request.data[2] == 0x33U)
+        {
+            uint8_t payload[8] = {
+                request.data[0], 0U, 0x33U, S3519_REGISTER_CONTROL_MODE,
+                2U, 0U, 0U, 0U
+            };
+            CanFrame response;
+            MotorRuntimeStatus response_status;
+
+            assert(can_frame_init(&response,
+                                  (uint16_t)(request.data[0] + 0x10U),
+                                  payload,
+                                  sizeof(payload)) == CAN_FRAME_STATUS_OK);
+            response_status =
+                aethor_app_receive_can_frame(&response, *timestamp_us);
+            assert((response_status == MOTOR_RUNTIME_STATUS_OK) ||
+                   (response_status == MOTOR_RUNTIME_STATUS_ACTION_COMPLETE));
+        }
+        (void)aethor_app_service(*timestamp_us);
+    }
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data,
+                  "done 2 bench init result=completed") != NULL);
+}
+
+/**
+ * @brief Verifies an unfinished bench move repeats its exact selected target batch.
+ */
+static void test_aethor_app_repeats_unfinished_bench_target_batch(void)
+{
+    ProtocolOutputBatch output_batch;
+    CanFrame first_target;
+    CanFrame second_target;
+    CanFrame repeated_target;
+    CanTxPriority priority;
+    uint64_t timestamp_us = 1000U;
+
+    aethor_app_init(timestamp_us, 9999U);
+    (void)aethor_app_service(++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    phase0_submit_request("1 hello", ++timestamp_us);
+    phase0_initialize_selected_motors(&timestamp_us);
+
+    phase0_submit_request("3 bench enable 1,3", ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &first_target, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_ENABLED, ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &second_target, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    phase0_feed_feedback(3U, S3519_DRIVER_STATE_ENABLED, ++timestamp_us);
+    assert(aethor_app_service(++timestamp_us) == 1U);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data,
+                  "done 3 bench enable result=completed") != NULL);
+
+    phase0_submit_request(
+        "4 bench jog 1,3 delta=3.0 speed=1.0",
+        ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &first_target, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(first_target.identifier == 0x101U);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &second_target, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(second_target.identifier == 0x103U);
+    (void)aethor_app_service(++timestamp_us);
+
+    assert(aethor_app_next_can_frame(++timestamp_us,
+                                     &repeated_target,
+                                     &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(repeated_target.identifier == first_target.identifier);
+    assert(repeated_target.length == first_target.length);
+    assert(memcmp(repeated_target.data,
+                  first_target.data,
+                  first_target.length) == 0);
+}
+
+/**
  * @brief Verifies the application facade reaches only the safe Phase 0 fault.
  */
 static void test_aethor_app_latches_safe_phase0_fault(void)
@@ -753,6 +985,7 @@ int main(void)
     test_aethor_app_latches_safe_phase0_fault();
     test_aethor_app_reinitializes_deterministically();
     test_aethor_app_idle_link_does_not_timeout();
+    test_aethor_app_repeats_unfinished_bench_target_batch();
     test_aethor_app_transport_fault_stops_and_disables();
 
     printf("PHASE0_TESTS_PASSED\n");

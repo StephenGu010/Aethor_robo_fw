@@ -1264,6 +1264,7 @@ static uint8_t aethor_app_service_active_action(
                 0U,
                 timestamp_us);
         }
+        application_action.frame_read_index = 0U;
     }
     else if ((application_action.frame_read_index >=
               application_action.frames.count) &&

@@ -183,6 +183,7 @@ static void test_default_application_profile_is_safe_bench_control(void)
 {
     assert(AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE);
     assert(AETHOR_BENCH_MAX_RELATIVE_DEGREES == 3.0F);
+    assert(AETHOR_BENCH_MAX_TARGET_RELATIVE_DEGREES == 360.0F);
     assert(AETHOR_BENCH_MAX_SPEED_DEGREES_S == 3.0F);
     assert(AETHOR_PRODUCTION_REQUIRES_COMPLETE_CONFIGURATION == 1U);
 }

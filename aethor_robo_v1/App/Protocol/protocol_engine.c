@@ -1770,10 +1770,15 @@ static ProtocolEngineStatus protocol_engine_handle_bench_action(
                                             (unsigned long)request->request_id);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE)
+    if ((command_type == PROTOCOL_COMMAND_MOVE_RELATIVE) ||
+        (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE_TARGET))
     {
         AsciiProtocolSpan delta_span;
         AsciiProtocolSpan speed_span;
+        float maximum_delta_degrees =
+            (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE_TARGET)
+                ? AETHOR_BENCH_MAX_TARGET_RELATIVE_DEGREES
+                : AETHOR_BENCH_MAX_RELATIVE_DEGREES;
 
         if ((ascii_protocol_find_field(request, "delta_deg", &delta_span) == 0U) ||
             (protocol_engine_parse_selected_motor_values(&delta_span,
@@ -1803,8 +1808,10 @@ static ProtocolEngineStatus protocol_engine_handle_bench_action(
             {
                 continue;
             }
-            if ((command.values[joint_index] < -3.0F) ||
-                (command.values[joint_index] > 3.0F))
+            if (((command_type == PROTOCOL_COMMAND_MOVE_RELATIVE_TARGET) &&
+                 (command.values[joint_index] == 0.0F)) ||
+                (command.values[joint_index] < -maximum_delta_degrees) ||
+                (command.values[joint_index] > maximum_delta_degrees))
             {
                 (void)protocol_engine_append_format(
                     output_batch,
@@ -1814,7 +1821,8 @@ static ProtocolEngineStatus protocol_engine_handle_bench_action(
                 return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
             }
             if ((command.speeds[joint_index] <= 0.0F) ||
-                (command.speeds[joint_index] > 3.0F))
+                (command.speeds[joint_index] >
+                 AETHOR_BENCH_MAX_SPEED_DEGREES_S))
             {
                 (void)protocol_engine_append_format(
                     output_batch,
@@ -2595,6 +2603,17 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
         engine->last_valid_request_at_us = timestamp_us;
         engine_status = protocol_engine_handle_bench_action(
             engine, &request, PROTOCOL_COMMAND_MOVE_RELATIVE, timestamp_us, output_batch);
+    }
+    else if (ascii_protocol_request_operation_equals(&request,
+                                                      "MOVE_REL_TARGET") != 0U)
+    {
+        engine->last_valid_request_at_us = timestamp_us;
+        engine_status = protocol_engine_handle_bench_action(
+            engine,
+            &request,
+            PROTOCOL_COMMAND_MOVE_RELATIVE_TARGET,
+            timestamp_us,
+            output_batch);
     }
     else if ((protocol_engine_request_has_field(&request, "motors") != 0U) &&
              (ascii_protocol_request_operation_equals(&request, "ENABLE") != 0U))

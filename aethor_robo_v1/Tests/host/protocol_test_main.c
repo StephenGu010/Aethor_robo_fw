@@ -765,13 +765,63 @@ static void test_protocol_engine_bench_subset_commands(void)
     assert(strstr(output_batch.messages[0].data,
                   "ERR 5 BAD_VALUE field=delta_deg") != NULL);
 
-    request_length = build_request_frame("REQ 6 DISABLE motors=1,1",
+    request_length = build_request_frame(
+        "REQ 6 MOVE_REL_TARGET motors=1,3 delta_deg=360.0,-45.0 speed_deg_s=3.0,1.0",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        6000U, &output_batch) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_RELATIVE_TARGET);
+    assert(command.motor_mask == 0x05U);
+    assert(command.values[0] == 360.0F);
+    assert(command.values[2] == -45.0F);
+    assert(command.speeds[0] == 3.0F);
+    assert(command.speeds[2] == 1.0F);
+
+    request_length = build_request_frame(
+        "REQ 7 MOVE_REL_TARGET motors=1 delta_deg=0 speed_deg_s=3.0",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        7000U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(strstr(output_batch.messages[0].data,
+                  "ERR 7 BAD_VALUE field=delta_deg") != NULL);
+
+    request_length = build_request_frame(
+        "REQ 8 MOVE_REL_TARGET motors=1 delta_deg=360.1 speed_deg_s=3.0",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        8000U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(strstr(output_batch.messages[0].data,
+                  "ERR 8 BAD_VALUE field=delta_deg") != NULL);
+
+    request_length = build_request_frame(
+        "REQ 9 MOVE_REL_TARGET motors=1 delta_deg=-360.1 speed_deg_s=3.0",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        9000U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(strstr(output_batch.messages[0].data,
+                  "ERR 9 BAD_VALUE field=delta_deg") != NULL);
+
+    request_length = build_request_frame(
+        "REQ 10 MOVE_REL_TARGET motors=1,3 delta_deg=90 speed_deg_s=3.0,3.0",
+        request_frame,
+        sizeof(request_frame));
+    assert(protocol_engine_process_line(&engine, request_frame, request_length,
+                                        10000U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(strstr(output_batch.messages[0].data,
+                  "ERR 10 BAD_VALUE field=delta_deg") != NULL);
+
+    request_length = build_request_frame("REQ 11 DISABLE motors=1,1",
                                          request_frame,
                                          sizeof(request_frame));
     assert(protocol_engine_process_line(&engine, request_frame, request_length,
-                                        6000U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+                                        11000U, &output_batch) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
     assert(strstr(output_batch.messages[0].data,
-                  "ERR 6 BAD_VALUE field=motors") != NULL);
+                  "ERR 11 BAD_VALUE field=motors") != NULL);
 }
 
 /**

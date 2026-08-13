@@ -172,6 +172,8 @@ typedef struct
     volatile uint8_t result_write_sequence;
     volatile uint8_t result_read_sequence;
     uint8_t stream_rate_hz;
+    uint8_t text_stream_kind;
+    uint8_t text_protocol_active;
     uint8_t query_context_valid;
     uint8_t session_active;
     uint8_t watchdog_timeout_reported;

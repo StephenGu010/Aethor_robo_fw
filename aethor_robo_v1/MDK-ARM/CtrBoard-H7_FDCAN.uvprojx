@@ -697,6 +697,11 @@
               <FilePath>..\App\Protocol\ascii_protocol.c</FilePath>
             </File>
             <File>
+              <FileName>text_protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Protocol\text_protocol.c</FilePath>
+            </File>
+            <File>
               <FileName>protocol_engine.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\Protocol\protocol_engine.c</FilePath>

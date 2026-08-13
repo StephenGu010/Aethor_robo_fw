@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-Runs deterministic protocol simulator, compatibility, and logical soak tests.
+Runs deterministic aethor-text-v1 simulator and reference-client tests.
 
 .DESCRIPTION
-Uses the workspace Python interpreter without third-party packages. The soak
-tests advance logical time and do not represent wall-clock or hardware soak.
+Uses the workspace Python interpreter without third-party packages and writes
+the safe query-only reference transcript under the ignored host build folder.
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -17,10 +17,7 @@ function Invoke-AethorSimulatorTests {
     Push-Location $projectRoot
     try {
         $env:PYTHONUTF8 = '1'
-        & python -m unittest `
-            Tests.host.test_host_simulator `
-            Tests.host.test_soak_simulator `
-            -v
+        & python -m unittest Tests.host.test_text_host_simulator -v
         if ($LASTEXITCODE -ne 0) {
             throw "Simulator tests failed with exit code $LASTEXITCODE."
         }

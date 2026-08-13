@@ -1,0 +1,62 @@
+{
+  "title": "aethor-text-v1 compatibility manifest",
+  "protocol": "aethor-text-v1",
+  "transport": {
+    "production": "USB_CDC",
+    "encoding": "printable ASCII",
+    "line_terminators": ["LF", "CRLF"],
+    "maximum_request_bytes": 160,
+    "maximum_response_bytes_including_lf": 192,
+    "application_crc": null
+  },
+  "identity": {
+    "mcu": "STM32H723VGT6",
+    "joint_count": 7,
+    "motor": "S3519",
+    "driver": "DM3520",
+    "esc_ids_hex": ["01", "02", "03", "04", "05", "06", "07"],
+    "master_ids_hex": ["11", "12", "13", "14", "15", "16", "17"]
+  },
+  "request": {
+    "request_id": "optional uint32 decimal; zero is manual and is not replayed",
+    "command_words_maximum": 2,
+    "positionals_maximum": 2,
+    "fields_maximum": 8,
+    "duplicate_fields": "rejected"
+  },
+  "output_types": ["ok", "done", "error", "event", "data"],
+  "public_control_mode": "POS_VEL",
+  "profiles": {
+    "bench": {
+      "commands": ["init", "enable", "jog", "stop", "disable", "clear"],
+      "explicit_motor_list": true,
+      "maximum_absolute_delta_deg": 3.0,
+      "maximum_speed_deg_s": 3.0
+    },
+    "arm": {
+      "commands": ["align", "enable", "move", "stop", "disable", "clear"],
+      "all_seven_motors_required": true,
+      "all_physical_fields_verified_before_enable": true,
+      "joint_space_only": true
+    }
+  },
+  "stream": {
+    "default": "off",
+    "joints_rate_hz": [1, 50],
+    "motors_rate_hz": [1, 10],
+    "replacement_policy": "drop-old-keep-latest"
+  },
+  "lifecycle": {
+    "keepalive_command": "ping",
+    "host_period_ms_while_energized": 250,
+    "watchdog_timeout_ms": 1000,
+    "watchdog_scope": "any motor enabled or motion active",
+    "watchdog_action": "stop_disable",
+    "recent_result_capacity": 32,
+    "recent_result_retention_ms": 60000
+  },
+  "legacy": {
+    "protocol": "aethor-arm-ascii-v1",
+    "status": "retained for regression only; not used by the firmware application entry"
+  }
+}

@@ -301,12 +301,10 @@ class AethorTextSimulator:
         if target == "motor":
             if len(positionals) != 1:
                 return [f"error {request_id} show motor code=bad_argument"], False
-            joint_token = positionals[0]
-            if (not joint_token or
-                    any(character < "0" or character > "9"
-                        for character in joint_token)):
+            try:
+                joint_number = parse_strict_ascii_u32_token(positionals[0])
+            except ValueError:
                 return [f"error {request_id} show motor code=bad_argument"], False
-            joint_number = int(joint_token, 10)
             if not 1 <= joint_number <= JOINT_COUNT:
                 return [f"error {request_id} show motor "
                         "code=out_of_range field=joint"], False

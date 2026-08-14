@@ -4388,17 +4388,28 @@ uint8_t protocol_engine_take_queued_active_motion(ProtocolEngine *engine,
 }
 
 /**
- * @brief Cancels all accepted commands not yet taken by ArmControlTask.
+ * @brief Cancels ordinary queued work without discarding priority STOP ownership.
+ */
+void protocol_engine_cancel_pending_normal_commands(ProtocolEngine *engine)
+{
+    if (engine != NULL)
+    {
+        engine->command_read_sequence = engine->command_write_sequence;
+        engine->cancelled_queued_motion_request_id = 0U;
+    }
+}
+
+/**
+ * @brief Cancels all accepted commands during explicit session teardown.
  */
 void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
 {
     if (engine != NULL)
     {
-        engine->command_read_sequence = engine->command_write_sequence;
+        protocol_engine_cancel_pending_normal_commands(engine);
         engine->stop_read_sequence = engine->stop_write_sequence;
         engine->active_motion_request_id = 0U;
         engine->active_stop_request_id = 0U;
-        engine->cancelled_queued_motion_request_id = 0U;
     }
 }
 

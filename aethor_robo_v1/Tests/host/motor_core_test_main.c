@@ -1214,6 +1214,195 @@ static void test_motor_runtime_accepts_late_mode_write_ack_after_readback(void)
 }
 
 /**
+ * @brief Verifies a new mode generation quarantines the prior write ACK tuple.
+ */
+static void test_motor_runtime_mode_rollover_preserves_prior_generation(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    uint32_t accepted_feedback_count;
+    uint32_t rejected_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5600U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5601U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5602U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+    assert(runtime.parameter_expectations.count == 1U);
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_MIT,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.parameter_expectations.count == 1U);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5603U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    rejected_feedback_count = runtime.rejected_feedback_count;
+    response_payload[2] = 0x55U;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5604U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5605U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[2] == 0x55U);
+    response_payload[4] = 1U;
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5606U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5607U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    response_payload[2] = 0x33U;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5608U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+}
+
+/**
+ * @brief Verifies an unrelated motor tuple is not blocked by old quarantine.
+ */
+static void test_motor_runtime_mode_rollover_allows_different_tuple(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5700U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5701U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5702U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x04U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5703U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 3U);
+    assert(request_frame.data[2] == 0x55U);
+}
+
+/**
+ * @brief Verifies rollover keeps every old tuple when quarantine is full.
+ */
+static void test_motor_runtime_mode_rollover_fails_closed_at_capacity(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    uint8_t entry_index;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    runtime.mode_switch_state = MOTOR_MODE_SWITCH_COMPLETE;
+    runtime.parameter_expectations.count = 1U;
+    runtime.parameter_expectations.entries[0].timestamp_us = 5800U;
+    runtime.parameter_expectations.entries[0].identifier = 0x11U;
+    runtime.parameter_expectations.entries[0].joint_index = 0U;
+    runtime.parameter_expectations.entries[0].esc_id = 1U;
+    runtime.parameter_expectations.entries[0].opcode = 0x55U;
+    runtime.parameter_expectations.entries[0].register_address =
+        S3519_REGISTER_CONTROL_MODE;
+    runtime.parameter_expectations.entries[0].valid = 1U;
+    runtime.parameter_expectations.sources[0] =
+        MOTOR_PARAMETER_SOURCE_MODE_WRITE;
+    runtime.parameter_quarantine.count =
+        MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY;
+    for (entry_index = 0U;
+         entry_index < MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY;
+         ++entry_index)
+    {
+        runtime.parameter_quarantine.entries[entry_index].timestamp_us = 5800U;
+        runtime.parameter_quarantine.entries[entry_index].valid = 1U;
+        runtime.parameter_quarantine.entries[entry_index].quarantined = 1U;
+        runtime.parameter_quarantine.sources[entry_index] =
+            MOTOR_PARAMETER_SOURCE_DISCOVERY;
+    }
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_MIT,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.parameter_expectations.count == 1U);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5801U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+    assert(runtime.parameter_expectations.count == 1U);
+    assert(runtime.parameter_quarantine.count ==
+           MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY);
+}
+
+/**
  * @brief Verifies abort quarantines the maximum discovery-plus-mode burst.
  */
 static void test_motor_runtime_quarantines_every_outstanding_parameter_response(void)
@@ -1874,6 +2063,9 @@ int main(void)
     test_motor_runtime_parameter_quarantine_is_bounded();
     test_motor_runtime_tracks_multiple_mode_parameter_expectations();
     test_motor_runtime_accepts_late_mode_write_ack_after_readback();
+    test_motor_runtime_mode_rollover_preserves_prior_generation();
+    test_motor_runtime_mode_rollover_allows_different_tuple();
+    test_motor_runtime_mode_rollover_fails_closed_at_capacity();
     test_motor_runtime_quarantines_every_outstanding_parameter_response();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();

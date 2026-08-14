@@ -298,6 +298,14 @@ uint8_t protocol_engine_take_queued_active_motion(ProtocolEngine *engine,
 void protocol_engine_cancel_pending_commands(ProtocolEngine *engine);
 
 /**
+ * @brief Cancels only ordinary queued work while preserving priority STOP.
+ * @param engine Initialized engine whose latest STOP slot and admission gate
+ *        remain published; active motion ownership remains until its terminal
+ *        result is retained.
+ */
+void protocol_engine_cancel_pending_normal_commands(ProtocolEngine *engine);
+
+/**
  * @brief Submits one terminal result from ArmControlTask without formatting.
  * @param engine Initialized engine.
  * @param result Immutable terminal result.

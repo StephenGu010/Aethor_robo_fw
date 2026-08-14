@@ -37,15 +37,6 @@ static uint8_t motor_runtime_find_joint(const MotorRuntime *runtime,
     return 0U;
 }
 
-/** @brief Clears one bounded parameter-response collection. */
-static void motor_runtime_clear_parameter_set(MotorParameterResponseSet *set)
-{
-    if (set != NULL)
-    {
-        memset(set, 0, sizeof(*set));
-    }
-}
-
 /** @brief Matches one frame against every field of a parameter response tuple. */
 static uint8_t motor_runtime_frame_matches_parameter_signature(
     const MotorParameterResponseSignature *signature,
@@ -111,6 +102,7 @@ static uint8_t motor_runtime_find_parameter_entry(
     const CanFrame *frame,
     MotorParameterExpectationSource source,
     uint8_t require_source,
+    uint8_t expected_quarantined,
     uint8_t *entry_index)
 {
     uint8_t candidate_index;
@@ -125,6 +117,8 @@ static uint8_t motor_runtime_find_parameter_entry(
     {
         if (((require_source == 0U) ||
              (set->sources[candidate_index] == source)) &&
+            (set->entries[candidate_index].quarantined ==
+             expected_quarantined) &&
             (motor_runtime_frame_matches_parameter_signature(
                  &set->entries[candidate_index],
                  frame) != 0U))
@@ -159,6 +153,149 @@ static void motor_runtime_remove_parameter_source(
     }
 }
 
+/** @brief Marks matching old-generation expectations as bounded tombstones. */
+static void motor_runtime_mark_parameter_sources_quarantined(
+    MotorParameterResponseSet *set,
+    MotorParameterExpectationSource first_source,
+    MotorParameterExpectationSource last_source,
+    uint64_t timestamp_us,
+    uint8_t reset_timestamp)
+{
+    uint8_t entry_index;
+
+    if (set == NULL)
+    {
+        return;
+    }
+    for (entry_index = 0U; entry_index < set->count; ++entry_index)
+    {
+        MotorParameterExpectationSource source = set->sources[entry_index];
+
+        if ((source >= first_source) && (source <= last_source))
+        {
+            set->entries[entry_index].quarantined = 1U;
+            if (reset_timestamp != 0U)
+            {
+                set->entries[entry_index].timestamp_us = timestamp_us;
+            }
+        }
+    }
+}
+
+/**
+ * @brief Moves matching tombstones atomically into the fixed quarantine set.
+ * @return One when all matching entries moved, otherwise zero with no loss.
+ */
+static uint8_t motor_runtime_move_parameter_sources_to_quarantine(
+    MotorRuntime *runtime,
+    MotorParameterExpectationSource first_source,
+    MotorParameterExpectationSource last_source,
+    uint64_t timestamp_us)
+{
+    uint8_t entry_index;
+    uint8_t move_count = 0U;
+
+    motor_runtime_expire_parameter_set(&runtime->parameter_expectations,
+                                       timestamp_us);
+    motor_runtime_expire_parameter_set(&runtime->parameter_quarantine,
+                                       timestamp_us);
+    for (entry_index = 0U;
+         entry_index < runtime->parameter_expectations.count;
+         ++entry_index)
+    {
+        MotorParameterExpectationSource source =
+            runtime->parameter_expectations.sources[entry_index];
+
+        if ((runtime->parameter_expectations.entries[entry_index]
+                 .quarantined != 0U) &&
+            (source >= first_source) && (source <= last_source))
+        {
+            ++move_count;
+        }
+    }
+    if ((uint8_t)(runtime->parameter_quarantine.count + move_count) >
+        MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY)
+    {
+        return 0U;
+    }
+    entry_index = 0U;
+    while (entry_index < runtime->parameter_expectations.count)
+    {
+        MotorParameterExpectationSource source =
+            runtime->parameter_expectations.sources[entry_index];
+
+        if ((runtime->parameter_expectations.entries[entry_index]
+                 .quarantined != 0U) &&
+            (source >= first_source) && (source <= last_source))
+        {
+            uint8_t quarantine_index =
+                runtime->parameter_quarantine.count;
+
+            runtime->parameter_quarantine.entries[quarantine_index] =
+                runtime->parameter_expectations.entries[entry_index];
+            runtime->parameter_quarantine.sources[quarantine_index] = source;
+            ++runtime->parameter_quarantine.count;
+            motor_runtime_remove_parameter_entry(
+                &runtime->parameter_expectations,
+                entry_index);
+        }
+        else
+        {
+            ++entry_index;
+        }
+    }
+    return 1U;
+}
+
+/** @brief Checks whether one exact response tuple remains quarantined. */
+static uint8_t motor_runtime_parameter_request_is_quarantined(
+    MotorRuntime *runtime,
+    uint8_t joint_index,
+    const CanFrame *request,
+    uint64_t timestamp_us)
+{
+    MotorParameterResponseSignature expected = {0};
+    uint8_t entry_index;
+    const MotorParameterResponseSet *sets[2] = {
+        &runtime->parameter_quarantine,
+        &runtime->parameter_expectations
+    };
+    uint8_t set_index;
+
+    motor_runtime_expire_parameter_set(&runtime->parameter_quarantine,
+                                       timestamp_us);
+    motor_runtime_expire_parameter_set(&runtime->parameter_expectations,
+                                       timestamp_us);
+    expected.identifier =
+        runtime->configuration->joints[joint_index].master_id;
+    expected.joint_index = joint_index;
+    expected.esc_id = request->data[0];
+    expected.opcode = request->data[2];
+    expected.register_address = request->data[3];
+    expected.valid = 1U;
+    for (set_index = 0U; set_index < 2U; ++set_index)
+    {
+        for (entry_index = 0U;
+             entry_index < sets[set_index]->count;
+             ++entry_index)
+        {
+            const MotorParameterResponseSignature *candidate =
+                &sets[set_index]->entries[entry_index];
+
+            if ((candidate->quarantined != 0U) &&
+                (candidate->identifier == expected.identifier) &&
+                (candidate->joint_index == expected.joint_index) &&
+                (candidate->esc_id == expected.esc_id) &&
+                (candidate->opcode == expected.opcode) &&
+                (candidate->register_address == expected.register_address))
+            {
+                return 1U;
+            }
+        }
+    }
+    return 0U;
+}
+
 /**
  * @brief Records one emitted request without losing other in-flight tuples.
  * @return One when stored or refreshed, otherwise zero on bounded overflow.
@@ -183,6 +320,7 @@ static uint8_t motor_runtime_record_parameter_expectation(
     signature.opcode = request->data[2];
     signature.register_address = request->data[3];
     signature.valid = 1U;
+    signature.quarantined = 0U;
     for (entry_index = 0U; entry_index < set->count; ++entry_index)
     {
         const MotorParameterResponseSignature *existing =
@@ -217,9 +355,27 @@ static uint8_t motor_runtime_parameter_quarantine_blocks(
     MotorRuntime *runtime,
     uint64_t timestamp_us)
 {
+    uint8_t entry_index;
+
     motor_runtime_expire_parameter_set(&runtime->parameter_quarantine,
                                        timestamp_us);
-    return (uint8_t)(runtime->parameter_quarantine.count != 0U);
+    motor_runtime_expire_parameter_set(&runtime->parameter_expectations,
+                                       timestamp_us);
+    if (runtime->parameter_quarantine.count != 0U)
+    {
+        return 1U;
+    }
+    for (entry_index = 0U;
+         entry_index < runtime->parameter_expectations.count;
+         ++entry_index)
+    {
+        if (runtime->parameter_expectations.entries[entry_index]
+                .quarantined != 0U)
+        {
+            return 1U;
+        }
+    }
+    return 0U;
 }
 
 /** @brief Advances the mode-switch cursor past every unselected motor. */
@@ -643,7 +799,6 @@ MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
     uint64_t timestamp_us)
 {
     uint8_t mode_switch_is_active;
-    uint8_t entry_index;
 
     if (runtime == NULL)
     {
@@ -659,31 +814,17 @@ MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
                   (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_READY) ||
                   (runtime->mode_switch_state ==
                    MOTOR_MODE_SWITCH_READ_WAITING));
-    motor_runtime_expire_parameter_set(&runtime->parameter_expectations,
-                                       timestamp_us);
-    motor_runtime_expire_parameter_set(&runtime->parameter_quarantine,
-                                       timestamp_us);
-    for (entry_index = 0U;
-         entry_index < runtime->parameter_expectations.count;
-         ++entry_index)
-    {
-        MotorParameterResponseSignature signature =
-            runtime->parameter_expectations.entries[entry_index];
-
-        if (runtime->parameter_quarantine.count >=
-            MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY)
-        {
-            break;
-        }
-        signature.timestamp_us = timestamp_us;
-        runtime->parameter_quarantine.entries[
-            runtime->parameter_quarantine.count] = signature;
-        runtime->parameter_quarantine.sources[
-            runtime->parameter_quarantine.count] =
-            runtime->parameter_expectations.sources[entry_index];
-        ++runtime->parameter_quarantine.count;
-    }
-    motor_runtime_clear_parameter_set(&runtime->parameter_expectations);
+    motor_runtime_mark_parameter_sources_quarantined(
+        &runtime->parameter_expectations,
+        MOTOR_PARAMETER_SOURCE_DISCOVERY,
+        MOTOR_PARAMETER_SOURCE_MODE_READ,
+        timestamp_us,
+        1U);
+    (void)motor_runtime_move_parameter_sources_to_quarantine(
+        runtime,
+        MOTOR_PARAMETER_SOURCE_DISCOVERY,
+        MOTOR_PARAMETER_SOURCE_MODE_READ,
+        timestamp_us);
     if (runtime->discovery_active != 0U)
     {
         runtime->discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
@@ -700,6 +841,7 @@ MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
         runtime->mode_switch_joint_mask = 0U;
         runtime->mode_switch_joint_index = 0U;
         runtime->mode_switch_attempt_count = 0U;
+        runtime->mode_rollover_pending = 0U;
         runtime->mode_request_sent_at_us = 0U;
     }
     return MOTOR_RUNTIME_STATUS_OK;
@@ -730,6 +872,7 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              frame,
              MOTOR_PARAMETER_SOURCE_MODE_READ,
              1U,
+             0U,
              &expectation_index) != 0U) &&
         (motor_runtime_is_mode_readback_response(runtime, frame) != 0U))
     {
@@ -742,6 +885,7 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              frame,
              MOTOR_PARAMETER_SOURCE_MODE_WRITE,
              1U,
+             0U,
              &expectation_index) != 0U) &&
         (frame->data[2] == 0x55U))
     {
@@ -755,6 +899,7 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              frame,
              MOTOR_PARAMETER_SOURCE_DISCOVERY,
              1U,
+             0U,
              &expectation_index) != 0U) &&
         (motor_runtime_is_parameter_response(runtime, frame) != 0U))
     {
@@ -769,9 +914,22 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              frame,
              MOTOR_PARAMETER_SOURCE_DISCOVERY,
              0U,
+             1U,
              &expectation_index) != 0U))
     {
         motor_runtime_remove_parameter_entry(&runtime->parameter_quarantine,
+                                             expectation_index);
+        return MOTOR_RUNTIME_STATUS_OK;
+    }
+    if ((motor_runtime_find_parameter_entry(
+             &runtime->parameter_expectations,
+             frame,
+             MOTOR_PARAMETER_SOURCE_DISCOVERY,
+             0U,
+             1U,
+             &expectation_index) != 0U))
+    {
+        motor_runtime_remove_parameter_entry(&runtime->parameter_expectations,
                                              expectation_index);
         return MOTOR_RUNTIME_STATUS_OK;
     }
@@ -1242,10 +1400,13 @@ MotorRuntimeStatus motor_runtime_begin_control_mode_switch_mask(
     runtime->mode_switch_attempt_count = 0U;
     runtime->mode_request_sent_at_us = 0U;
     runtime->mode_switch_state = MOTOR_MODE_SWITCH_WRITING;
-    motor_runtime_remove_parameter_source(
+    motor_runtime_mark_parameter_sources_quarantined(
         &runtime->parameter_expectations,
         MOTOR_PARAMETER_SOURCE_MODE_WRITE,
-        MOTOR_PARAMETER_SOURCE_MODE_READ);
+        MOTOR_PARAMETER_SOURCE_MODE_READ,
+        0U,
+        0U);
+    runtime->mode_rollover_pending = 1U;
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
         uint8_t joint_bit = (uint8_t)(1U << joint_index);
@@ -1284,9 +1445,17 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
     {
         return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
     }
-    if (motor_runtime_parameter_quarantine_blocks(runtime, timestamp_us) != 0U)
+    if (runtime->mode_rollover_pending != 0U)
     {
-        return MOTOR_RUNTIME_STATUS_WAITING;
+        if (motor_runtime_move_parameter_sources_to_quarantine(
+                runtime,
+                MOTOR_PARAMETER_SOURCE_MODE_WRITE,
+                MOTOR_PARAMETER_SOURCE_MODE_READ,
+                timestamp_us) == 0U)
+        {
+            return MOTOR_RUNTIME_STATUS_WAITING;
+        }
+        runtime->mode_rollover_pending = 0U;
     }
     if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING)
     {
@@ -1323,6 +1492,14 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
             runtime->mode_switch_state = MOTOR_MODE_SWITCH_FAILED;
             return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
         }
+        if (motor_runtime_parameter_request_is_quarantined(
+                runtime,
+                request_joint_index,
+                frame,
+                timestamp_us) != 0U)
+        {
+            return MOTOR_RUNTIME_STATUS_WAITING;
+        }
         ++runtime->mode_switch_joint_index;
         motor_runtime_skip_unselected_mode_joints(runtime);
         if (runtime->mode_switch_joint_index >= ARM_JOINT_COUNT)
@@ -1351,6 +1528,14 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
         {
             runtime->mode_switch_state = MOTOR_MODE_SWITCH_FAILED;
             return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
+        }
+        if (motor_runtime_parameter_request_is_quarantined(
+                runtime,
+                request_joint_index,
+                frame,
+                timestamp_us) != 0U)
+        {
+            return MOTOR_RUNTIME_STATUS_WAITING;
         }
         runtime->mode_request_sent_at_us = timestamp_us;
         runtime->mode_switch_state = MOTOR_MODE_SWITCH_READ_WAITING;

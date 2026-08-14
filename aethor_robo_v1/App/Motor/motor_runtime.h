@@ -78,6 +78,7 @@ typedef struct
     uint8_t opcode;
     uint8_t register_address;
     uint8_t valid;
+    uint8_t quarantined;
 } MotorParameterResponseSignature;
 
 /** @brief Identifies which bounded parameter sequence emitted an expectation. */
@@ -116,6 +117,7 @@ typedef struct
     uint8_t mode_switch_joint_mask;
     uint8_t mode_switch_joint_index;
     uint8_t mode_switch_attempt_count;
+    uint8_t mode_rollover_pending;
     uint8_t discovery_active;
     uint8_t initialized;
     MotorParameterResponseSet parameter_expectations;

@@ -376,11 +376,11 @@ static uint8_t aethor_app_flush_deferred_results(void)
     return flushed;
 }
 
-/**
- * @brief Retains one terminal for a queued command cancelled before execution.
- */
-static uint8_t aethor_app_cancel_queued_command(
+/** @brief Retains one explicit terminal for a queued command. */
+static uint8_t aethor_app_submit_queued_command_result(
     const ProtocolCommand *command,
+    ProtocolCommandResultCode code,
+    uint16_t detail,
     uint64_t timestamp_us)
 {
     ProtocolCommandResult result;
@@ -393,12 +393,74 @@ static uint8_t aethor_app_cancel_queued_command(
     result.request_id = command->request_id;
     result.session_id = command->session_id;
     result.type = command->type;
-    result.code = PROTOCOL_COMMAND_RESULT_CANCELLED;
+    result.code = code;
+    result.detail = detail;
     result.accepted_at_us = command->accepted_at_us;
     result.completed_at_us = timestamp_us;
     result.motor_mask = command->motor_mask;
     result.bench_relative_scope = command->bench_relative_scope;
+    if (code == PROTOCOL_COMMAND_RESULT_FAILED)
+    {
+        result.error = PROTOCOL_COMMAND_ERROR_ACTION_FAILED;
+    }
     return aethor_app_submit_or_defer_result(&result);
+}
+
+/** @brief Retains one cancelled terminal for a queued STOP-preempted command. */
+static uint8_t aethor_app_cancel_queued_command(
+    const ProtocolCommand *command,
+    uint64_t timestamp_us)
+{
+    return aethor_app_submit_queued_command_result(
+        command,
+        PROTOCOL_COMMAND_RESULT_CANCELLED,
+        0U,
+        timestamp_us);
+}
+
+/** @brief Retains a failed terminal for a globally cancelled queued motion. */
+static uint8_t aethor_app_fail_queued_motion(uint16_t detail,
+                                             uint64_t timestamp_us)
+{
+    ProtocolCommand queued_motion;
+    ProtocolCommand pending_stop;
+
+    if (protocol_engine_take_queued_active_motion(
+            &application_protocol_engine,
+            &queued_motion) == 0U)
+    {
+        return 0U;
+    }
+    (void)protocol_engine_widen_pending_stop_mask(
+        &application_protocol_engine,
+        queued_motion.motor_mask,
+        &pending_stop);
+    return aethor_app_submit_queued_command_result(
+        &queued_motion,
+        PROTOCOL_COMMAND_RESULT_FAILED,
+        detail,
+        timestamp_us);
+}
+
+/** @brief Preserves the active one-shot/STOP scope in a pending newer STOP. */
+static void aethor_app_widen_pending_stop_before_global_cancel(void)
+{
+    ProtocolCommand pending_stop;
+    uint8_t inherited_motor_mask = 0U;
+
+    if ((application_action.command.type ==
+         PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+        (application_action.command.type == PROTOCOL_COMMAND_STOP))
+    {
+        inherited_motor_mask = application_action.command.motor_mask;
+    }
+    if (inherited_motor_mask != 0U)
+    {
+        (void)protocol_engine_widen_pending_stop_mask(
+            &application_protocol_engine,
+            inherited_motor_mask,
+            &pending_stop);
+    }
 }
 
 /** @brief Completes the active command and clears its execution gate. */
@@ -2790,6 +2852,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             }
             if (runtime_fault != ARM_FAULT_NONE)
             {
+                aethor_app_widen_pending_stop_before_global_cancel();
                 (void)motor_runtime_abort_active_parameter_sequences(
                     &application_motor_runtime,
                     timestamp_us);
@@ -2809,6 +2872,9 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                         (uint16_t)runtime_fault,
                         timestamp_us);
                 }
+                result_generated |= aethor_app_fail_queued_motion(
+                    (uint16_t)runtime_fault,
+                    timestamp_us);
                 (void)arm_controller_latch_runtime_fault(
                     &application_controller,
                     runtime_fault,
@@ -2818,7 +2884,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                 (void)motor_runtime_build_emergency_disable(
                     &application_motor_runtime,
                     &application_emergency_disable_batch);
-                protocol_engine_cancel_pending_commands(
+                protocol_engine_cancel_pending_normal_commands(
                     &application_protocol_engine);
                 return (uint8_t)(result_generated | deferred_result_flushed);
             }
@@ -2838,6 +2904,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         {
             ProtocolCommandResult timeout_result;
 
+            aethor_app_widen_pending_stop_before_global_cancel();
             (void)motor_runtime_abort_active_parameter_sequences(
                 &application_motor_runtime,
                 timestamp_us);
@@ -2848,9 +2915,13 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                     0U,
                     timestamp_us);
             }
+            result_generated |= aethor_app_fail_queued_motion(
+                (uint16_t)ARM_FAULT_LINK_TIMEOUT,
+                timestamp_us);
             (void)arm_controller_force_stop_disable(&application_controller,
                                                      timestamp_us);
-            protocol_engine_cancel_pending_commands(&application_protocol_engine);
+            protocol_engine_cancel_pending_normal_commands(
+                &application_protocol_engine);
             application_emergency_disable_read_index = 0U;
             (void)motor_runtime_build_emergency_disable(
                 &application_motor_runtime,
@@ -2860,7 +2931,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             timeout_result.type = PROTOCOL_COMMAND_LINK_TIMEOUT;
             timeout_result.code = PROTOCOL_COMMAND_RESULT_STOPPED;
             timeout_result.completed_at_us = timestamp_us;
-            result_generated =
+            result_generated |=
                 aethor_app_submit_or_defer_result(&timeout_result);
         }
         else if (application_action.state != AETHOR_APP_ACTION_IDLE)
@@ -3115,6 +3186,7 @@ static uint8_t aethor_app_apply_transport_fault(uint32_t detail,
 {
     uint8_t result_generated = 0U;
 
+    aethor_app_widen_pending_stop_before_global_cancel();
     if (application_action.state != AETHOR_APP_ACTION_IDLE)
     {
         (void)motor_runtime_abort_active_parameter_sequences(
@@ -3133,11 +3205,15 @@ static uint8_t aethor_app_apply_transport_fault(uint32_t detail,
             (uint16_t)ARM_FAULT_TRANSPORT,
             timestamp_us);
     }
+    result_generated |= aethor_app_fail_queued_motion(
+        (uint16_t)ARM_FAULT_TRANSPORT,
+        timestamp_us);
     (void)arm_controller_latch_runtime_fault(&application_controller,
                                              ARM_FAULT_TRANSPORT,
                                              detail,
                                              timestamp_us);
-    protocol_engine_cancel_pending_commands(&application_protocol_engine);
+    protocol_engine_cancel_pending_normal_commands(
+        &application_protocol_engine);
     application_emergency_disable_read_index = 0U;
     (void)motor_runtime_build_emergency_disable(
         &application_motor_runtime,

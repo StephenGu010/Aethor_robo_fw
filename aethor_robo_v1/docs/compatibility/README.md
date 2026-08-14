@@ -9,9 +9,9 @@
 - `RobotGatewayV1.md`：上位机请求、输出、动作生命周期和验收要求。
 - `state-and-command-lifecycle.md`：正式机械臂、台架动作、请求重放和断线语义。
 - `compatibility-result-template.md`：外部上位机恢复联系后的验收记录模板。
-- `Tests/protocol/aethor-text-v1-vectors.json`：文本行、请求编号、LF/CRLF、分片和粘连向量。
-- `tools/aethor_text_simulator.py`：确定性 `aethor-text-v1` 模拟器。
-- `tools/aethor_reference_client.py`：模拟器或显式 COM 口的只读安全查询客户端。
+- `Tests/protocol/aethor-text-v1-vectors.json`：文本行、请求编号、LF/CRLF、分片/粘连和一次提交 `bench move` 向量。
+- `tools/aethor_text_simulator.py`：包含一次提交 `bench move` 生命周期的确定性 `aethor-text-v1` 模拟器。
+- `tools/aethor_reference_client.py`：模拟器或显式 COM 口的只读查询客户端，并提供一次写入、无保活的 `bench_move_once` 集成方法。
 - `Tests/hardware/debug_com7_aethor_text_v1.ps1`：默认只读、显式 `-RunMotion` 才运动的分阶段台架脚本。
 
 `aethor-arm-ascii-v1-schema.json`、旧 Golden/Compatibility Vectors 和 `tools/aethor_host_simulator.py` 仅用于迁移前协议的回归测试，不是固件正式入口。
@@ -36,4 +36,4 @@ python .\tools\aethor_reference_client.py --port COM7 --output .\aethor-com7-tra
 
 该客户端只发送 `hello`、`show` 查询和 `stream off`，不使能、不运动。
 
-需要进行台架运动时，使用 `debug_com7_aethor_text_v1.ps1` 并逐级放行。动作请求只发送一次，收到 `ok ... accepted=1` 后等待匹配的 `done`；固件内部负责重发未到位的固定 CAN 目标。电机使能或运动期间，上位机仍需每 250 ms 或更快发送 `ping`，通信超过 1000 ms 无有效请求时固件执行停止和失能。
+需要进行台架运动时，使用 `debug_com7_aethor_text_v1.ps1` 并逐级放行。新 `bench move` 使用非零 `uint32` 请求编号，只发送一次；收到匹配的 `ok ... accepted=1` 后等待唯一匹配 `done`，上位机不启动 `ping`，固件内部负责重发未到位的固定 CAN 目标。旧 `bench enable/jog` 不属于该自包含生命周期，带电期间仍需约每 250 ms 发送一次独立 `ping`；不要周期重发动作正文。软件测试通过不能替代机械负载、方向、减速比、七轴联动或真实硬件验证。

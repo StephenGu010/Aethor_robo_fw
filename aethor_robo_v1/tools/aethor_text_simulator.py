@@ -10,6 +10,11 @@ JOINT_COUNT = 7
 ALL_MOTORS_MASK = 0x7F
 REPLAY_CAPACITY = 32
 REPLAY_RETENTION_MS = 60_000
+AETHOR_TEXT_MAX_REQUEST_BODY_BYTES = 160
+FLOAT32_MIN_NORMAL = 1.1754943508222875e-38
+FLOAT32_MAX = 3.4028234663852886e38
+SIMULATED_PMAX_DEG = 180.0
+SIMULATED_MOVE_SPEED_LIMIT_DEG_S = 360.0
 
 
 def encode_line(body: str) -> bytes:
@@ -66,12 +71,40 @@ class AethorTextSimulator:
 
     @staticmethod
     def _parse_motor_list(value: str) -> tuple[list[int], int]:
-        """Parses one unique ascending one-based motor list."""
+        """Parses one unique one-based motor list while preserving its order."""
         motors = [int(item) for item in value.split(",")]
-        if (not motors or motors != sorted(set(motors)) or
+        if (not motors or len(set(motors)) != len(motors) or
                 any(item < 1 or item > JOINT_COUNT for item in motors)):
             raise ValueError("motors")
         return motors, sum(1 << (item - 1) for item in motors)
+
+    @staticmethod
+    def _parse_move_values(value: str, expected_count: int,
+                           allow_zero: bool) -> tuple[str, list[float]]:
+        """Parses one selected value list using firmware float32 admission rules."""
+        tokens = value.split(",")
+        if len(tokens) != expected_count:
+            return "count_mismatch", []
+        values: list[float] = []
+        try:
+            for token in tokens:
+                numeric_value = float(token)
+                if not math.isfinite(numeric_value):
+                    return "bad_argument", []
+                if numeric_value == 0.0:
+                    if allow_zero:
+                        values.append(0.0)
+                        continue
+                    return "out_of_range", []
+                if (abs(numeric_value) < FLOAT32_MIN_NORMAL or
+                        abs(numeric_value) > FLOAT32_MAX):
+                    return "bad_argument", []
+                if not allow_zero and numeric_value < 0.0:
+                    return "out_of_range", []
+                values.append(numeric_value)
+        except (OverflowError, TypeError, ValueError):
+            return "bad_argument", []
+        return "ok", values
 
     @staticmethod
     def _parse_vector(value: str) -> list[float]:
@@ -109,6 +142,10 @@ class AethorTextSimulator:
         if motion.namespace == "bench":
             output = (f"done {motion.request_id} bench jog result=completed "
                       f"elapsed_ms={elapsed_ms} arrived={motion.selected_mask:02x}")
+        elif motion.namespace == "bench_move":
+            self.motor_enabled_mask &= ~motion.selected_mask
+            output = (f"done {motion.request_id} bench move result=completed "
+                      f"elapsed_ms={elapsed_ms} motors={motion.selected_mask:02x}")
         else:
             output = (f"done {motion.request_id} arm move result=completed "
                       f"elapsed_ms={elapsed_ms} max_error_deg=0")
@@ -161,7 +198,11 @@ class AethorTextSimulator:
         self._advance_motion()
         self._publish_stream()
         self._expire_replay()
-        if (self.motor_enabled_mask and not self.watchdog_reported and
+        self_contained_move_active = (
+            self.active_motion is not None and
+            self.active_motion.namespace == "bench_move")
+        if (self.motor_enabled_mask and not self_contained_move_active and
+                not self.watchdog_reported and
                 self.now_ms - self.last_request_ms >= 1000):
             self.watchdog_reported = True
             self.motor_enabled_mask = 0
@@ -213,7 +254,17 @@ class AethorTextSimulator:
         if self.profile != "bench":
             return [f"error {request_id} bench {operation} code=profile "
                     "current=arm required=bench"]
-        motors, mask = self._parse_motor_list(positionals[0])
+        if operation == "move" and request_id == 0:
+            return ["error 0 bench move code=bad_argument field=request_id"]
+        try:
+            if len(positionals) != 1:
+                raise ValueError("motors")
+            motors, mask = self._parse_motor_list(positionals[0])
+        except (IndexError, TypeError, ValueError):
+            return [f"error {request_id} bench {operation} "
+                    "code=bad_argument field=motors"]
+        if self.active_motion is not None and operation != "stop":
+            return [f"error {request_id} bench {operation} code=busy"]
         accepted = f"ok {request_id} bench {operation} accepted=1"
         if operation == "init":
             done = (f"done {request_id} bench init result=completed identity={mask:02x} "
@@ -235,6 +286,44 @@ class AethorTextSimulator:
             self.active_motion = SimulatedMotion(request_id, "bench", mask,
                                                  self.now_ms, duration_ms,
                                                  list(self.joint_position_deg), target)
+            return [accepted]
+        elif operation == "move":
+            if "position" not in fields:
+                return [f"error {request_id} bench move "
+                        "code=bad_argument field=position"]
+            if "speed" not in fields:
+                return [f"error {request_id} bench move "
+                        "code=bad_argument field=speed"]
+            if set(fields) != {"position", "speed"}:
+                return [f"error {request_id} bench move code=bad_argument"]
+            position_status, positions = self._parse_move_values(
+                fields["position"], len(motors), True)
+            if position_status != "ok":
+                return [f"error {request_id} bench move "
+                        f"code={position_status} field=position"]
+            speed_status, speeds = self._parse_move_values(
+                fields["speed"], len(motors), False)
+            if speed_status != "ok":
+                return [f"error {request_id} bench move "
+                        f"code={speed_status} field=speed"]
+            if any(abs(position) > SIMULATED_PMAX_DEG for position in positions):
+                return [f"error {request_id} bench move "
+                        "code=out_of_range field=position"]
+            if any(speed > SIMULATED_MOVE_SPEED_LIMIT_DEG_S for speed in speeds):
+                return [f"error {request_id} bench move "
+                        "code=out_of_range field=speed"]
+            target = list(self.joint_position_deg)
+            duration_ms = 4
+            for motor, position, speed in zip(motors, positions, speeds):
+                duration_ms = max(
+                    duration_ms,
+                    math.ceil(abs(position - target[motor - 1]) / speed * 1000),
+                )
+                target[motor - 1] = position
+            self.motor_enabled_mask |= mask
+            self.active_motion = SimulatedMotion(
+                request_id, "bench_move", mask, self.now_ms, duration_ms,
+                list(self.joint_position_deg), target)
             return [accepted]
         elif operation == "stop":
             self.active_motion = None
@@ -294,12 +383,20 @@ class AethorTextSimulator:
                     if isinstance(line, (bytes, bytearray)) else line).rstrip("\r\n")
         except UnicodeError:
             return ["error 0 parse code=bad_line"]
-        if not text or len(text) > 160 or any(ord(item) < 0x20 or ord(item) > 0x7E
-                                              for item in text):
-            return ["error 0 parse code=line_too_long" if len(text) > 160
+        if (not text or len(text) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES or
+                any(ord(item) < 0x20 or ord(item) > 0x7E
+                    for item in text)):
+            return ["error 0 parse code=line_too_long"
+                    if len(text) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES
                     else "error 0 parse code=bad_line"]
         tokens = text.split()
-        request_id = int(tokens.pop(0)) if tokens[0].isdigit() else 0
+        request_id = 0
+        if tokens[0][0].isascii() and tokens[0][0].isdigit():
+            if not tokens[0].isascii() or not tokens[0].isdigit():
+                return ["error 0 parse code=bad_line"]
+            request_id = int(tokens.pop(0), 10)
+            if request_id > 0xFFFFFFFF:
+                return ["error 0 parse code=bad_line"]
         if not tokens:
             return ["error 0 parse code=bad_line"]
         single_word = tokens[0].lower() in {"hello", "ping", "help"}

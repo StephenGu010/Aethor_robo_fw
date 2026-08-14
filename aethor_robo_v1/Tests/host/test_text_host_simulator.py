@@ -11,9 +11,13 @@ import unittest
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "Tools"))
 
+import aethor_reference_client as reference_client  # noqa: E402
+import aethor_text_simulator as simulator_module  # noqa: E402
 from aethor_text_simulator import AethorTextSimulator, encode_line  # noqa: E402
 from aethor_reference_client import (  # noqa: E402
     AethorReferenceClient,
+    SerialTransport,
+    SimulatorTransport,
     build_one_shot_bench_move,
     parse_one_shot_move_terminal,
 )
@@ -33,10 +37,32 @@ class ScriptedActionTransport:
         self.query_bodies.append(body)
         return []
 
-    def transact_until_done(self, body: str, request_id: int) -> list[str]:
+    def transact_until_done(self, body: str, request_id: int,
+                            action_timeout: float) -> list[str]:
         """Records exactly one action write and returns its scripted lifecycle."""
+        del request_id, action_timeout
         self.action_bodies.append(body)
         return list(self.action_outputs)
+
+
+class RecordingSerialPort:
+    """Records serial writes without requiring a physical COM port."""
+
+    def __init__(self) -> None:
+        """Initializes an empty write log."""
+        self.write_calls: list[bytes] = []
+
+    def write(self, payload: bytes) -> int:
+        """Records one attempted serial write."""
+        self.write_calls.append(payload)
+        return len(payload)
+
+    def flush(self) -> None:
+        """Provides the serial flush interface without side effects."""
+
+    def readline(self) -> bytes:
+        """Returns no input because invalid timeout tests must not read."""
+        return b""
 
 
 class AethorTextSimulatorTests(unittest.TestCase):
@@ -178,6 +204,28 @@ class AethorTextSimulatorTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     build_one_shot_bench_move(50, motors, positions, speeds)
 
+    def test_one_shot_move_builder_enforces_firmware_float32_range(self) -> None:
+        """Accepts normal float32 boundaries and rejects unparseable numeric inputs."""
+        float32_min = 1.1754943508222875e-38
+        float32_max = 3.4028234663852886e38
+        boundary_body = build_one_shot_bench_move(
+            57, [1], [float32_min], [float32_max])
+        numeric_text = boundary_body.split("position=", 1)[1]
+        position_text, speed_text = numeric_text.split(" speed=", 1)
+        self.assertNotIn("e", position_text.lower())
+        self.assertNotIn("e", speed_text.lower())
+
+        invalid_values = (1e-40, 1e39, 10 ** 10000, object())
+        for case_index, invalid_value in enumerate(invalid_values):
+            with self.subTest(case_index=case_index,
+                              value_type=type(invalid_value).__name__):
+                with self.assertRaises(ValueError):
+                    build_one_shot_bench_move(
+                        58, [1], [invalid_value], [1.0])
+                with self.assertRaises(ValueError):
+                    build_one_shot_bench_move(
+                        59, [1], [0.0], [invalid_value])
+
     def test_one_shot_move_builder_uses_plain_decimal_and_normalizes_zero(self) -> None:
         """Emits tiny finite values without exponents and canonicalizes negative zero."""
         self.assertEqual(
@@ -208,11 +256,55 @@ class AethorTextSimulatorTests(unittest.TestCase):
         transport = ScriptedActionTransport([])
         client = AethorReferenceClient(transport)
 
+        float32_max = 3.4028234663852886e38
         with self.assertRaisesRegex(ValueError, "160 ASCII bytes"):
-            client.bench_move_once([1], [5e-324], [1.0])
+            client.bench_move_once(
+                [1, 2, 3, 4, 5, 6, 7],
+                [float32_max] * 7,
+                [float32_max] * 7,
+            )
 
         self.assertEqual(transport.action_bodies, [])
         self.assertEqual(transport.query_bodies, [])
+
+    def test_one_shot_move_requires_nonzero_uint32_request_id(self) -> None:
+        """Rejects sentinel, signed, and overflowing action request identifiers."""
+        for invalid_request_id in (0, -1, 0x100000000, True):
+            with self.subTest(request_id=invalid_request_id):
+                with self.assertRaises(ValueError):
+                    build_one_shot_bench_move(
+                        invalid_request_id, [1], [0.0], [1.0])
+
+        invalid_terminal_cases = (
+            ("done 0 bench move result=cancelled", 0),
+            ("done -1 bench move result=cancelled", 1),
+            ("done +1 bench move result=cancelled", 1),
+            ("done 4294967296 bench move result=cancelled", 1),
+        )
+        for terminal_line, expected_request_id in invalid_terminal_cases:
+            with self.subTest(line=terminal_line):
+                with self.assertRaises(ValueError):
+                    parse_one_shot_move_terminal(
+                        terminal_line, expected_request_id)
+
+        self.assertEqual(
+            self.request(
+                "4294967296 bench move 1 position=0 speed=1"),
+            ["error 0 parse code=bad_line"],
+        )
+
+    def test_one_shot_move_terminal_rejects_unknown_public_tokens(self) -> None:
+        """Rejects failure stages and codes absent from the firmware formatter."""
+        invalid_lines = (
+            "done 50 bench move result=failed stage=other "
+            "code=timeout motor=1",
+            "done 50 bench move result=failed stage=motion "
+            "code=other motor=1",
+        )
+        for invalid_line in invalid_lines:
+            with self.subTest(line=invalid_line):
+                with self.assertRaises(ValueError):
+                    parse_one_shot_move_terminal(invalid_line, 50)
 
     def test_one_shot_move_terminal_vectors(self) -> None:
         """Parses completed, failed, cancelled, and stopped terminal schemas."""
@@ -254,6 +346,84 @@ class AethorTextSimulatorTests(unittest.TestCase):
         self.assertEqual(result.code, "stale_feedback")
         self.assertEqual(result.motor, 3)
 
+    def test_one_shot_move_rejects_invalid_timeout_before_transport(self) -> None:
+        """Rejects nonpositive or nonfinite action timeouts before any write."""
+        invalid_timeouts = (0.0, -1.0, math.nan, math.inf, -math.inf)
+        for invalid_timeout in invalid_timeouts:
+            with self.subTest(timeout=invalid_timeout):
+                scripted_transport = ScriptedActionTransport([])
+                scripted_client = AethorReferenceClient(scripted_transport)
+                with self.assertRaises(ValueError):
+                    scripted_client.bench_move_once(
+                        [1], [0.0], [1.0], action_timeout=invalid_timeout)
+                self.assertEqual(scripted_transport.action_bodies, [])
+
+                simulator_transport = SimulatorTransport()
+                simulator_client = AethorReferenceClient(simulator_transport)
+                with self.assertRaises(ValueError):
+                    simulator_client.bench_move_once(
+                        [1], [0.0], [1.0], action_timeout=invalid_timeout)
+                self.assertEqual(simulator_client.transcript, [])
+                self.assertIsNone(simulator_transport.simulator.active_motion)
+
+                recording_serial = RecordingSerialPort()
+                serial_transport = SerialTransport.__new__(SerialTransport)
+                serial_transport.serial = recording_serial
+                serial_transport.action_timeout = 120.0
+                with self.assertRaises(ValueError):
+                    serial_transport.transact_until_done(
+                        "1 bench move 1 position=0 speed=1",
+                        1,
+                        invalid_timeout,
+                    )
+                self.assertEqual(recording_serial.write_calls, [])
+
+    def test_one_shot_move_validates_lifecycle_order_and_selected_mask(self) -> None:
+        """Rejects reordered, duplicated, or out-of-scope lifecycle output."""
+        output_cases = (
+            [
+                "done 1 bench move result=completed elapsed_ms=1 motors=01",
+                "ok 1 bench move accepted=1",
+            ],
+            [
+                "ok 1 bench move accepted=1",
+                "ok 1 bench move accepted=1",
+                "done 1 bench move result=completed elapsed_ms=1 motors=01",
+            ],
+            [
+                "ok 1 bench move accepted=1",
+                "done 1 bench move result=completed elapsed_ms=1 motors=02",
+            ],
+            [
+                "ok 1 bench move accepted=1",
+                "done 1 bench move result=failed stage=motion "
+                "code=stale_feedback motor=3",
+            ],
+        )
+        for outputs in output_cases:
+            with self.subTest(outputs=outputs):
+                client = AethorReferenceClient(ScriptedActionTransport(outputs))
+                with self.assertRaises(RuntimeError):
+                    client.bench_move_once([1], [0.0], [1.0])
+
+    def test_one_shot_move_round_trips_through_real_simulator(self) -> None:
+        """Completes single- and multi-motor moves through the production simulator."""
+        transport = SimulatorTransport()
+        client = AethorReferenceClient(transport)
+
+        single_result = client.bench_move_once([1], [90.0], [30.0])
+        multi_result = client.bench_move_once(
+            [3, 1], [-45.0, 15.0], [20.0, 10.0])
+
+        self.assertEqual(single_result.result, "completed")
+        self.assertEqual(single_result.motor_mask, 0x01)
+        self.assertEqual(multi_result.result, "completed")
+        self.assertEqual(multi_result.motor_mask, 0x05)
+        self.assertEqual(transport.simulator.motor_enabled_mask, 0)
+        self.assertEqual(transport.simulator.joint_position_deg[0], 15.0)
+        self.assertEqual(transport.simulator.joint_position_deg[2], -45.0)
+        self.assertFalse(any("ping" in line for line in client.transcript))
+
     def test_one_shot_move_requires_matching_ack_and_done(self) -> None:
         """Rejects missing ACKs and terminal lines for another request ID."""
         missing_ack = AethorReferenceClient(ScriptedActionTransport([
@@ -270,19 +440,86 @@ class AethorTextSimulatorTests(unittest.TestCase):
             wrong_done.bench_move_once([1], [1.0], [1.0])
 
     def test_published_replay_and_conflict_sequences_are_explicit(self) -> None:
-        """Keeps exact replay and request-ID conflict outcomes in shared vectors."""
+        """Runs published replay and request-ID conflicts through the real simulator."""
         vector_path = (PROJECT_ROOT / "Tests" / "protocol" /
                        "aethor-text-v1-vectors.json")
         vectors = json.loads(vector_path.read_text(encoding="utf-8"))
-        replay, conflict = vectors["bench_move_request_sequences"]
 
-        self.assertEqual(replay["requests"][0], replay["requests"][1])
-        self.assertEqual(replay["responses"][0], replay["responses"][1])
-        self.assertEqual(replay["responses"][0],
-                         "ok 62 bench move accepted=1")
-        self.assertNotEqual(conflict["requests"][0], conflict["requests"][1])
-        self.assertEqual(conflict["responses"][1],
-                         "error 62 bench move code=request_conflict")
+        for vector in vectors["bench_move_request_sequences"]:
+            simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+            responses = [simulator.process_line(encode_line(request))[0]
+                         for request in vector["requests"]]
+            self.assertEqual(responses, vector["responses"], vector["name"])
+
+    def test_published_move_errors_are_consumed_by_real_simulator(self) -> None:
+        """Runs malformed shared move vectors through the production simulator."""
+        vector_path = (PROJECT_ROOT / "Tests" / "protocol" /
+                       "aethor-text-v1-vectors.json")
+        vectors = json.loads(vector_path.read_text(encoding="utf-8"))
+
+        for vector in vectors["bench_move_invalid_cases"]:
+            simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+            self.assertEqual(
+                simulator.process_line(encode_line(vector["firmware_request"])),
+                [vector["firmware_response"]],
+                vector["name"],
+            )
+
+    def test_real_simulator_reports_busy_during_active_one_shot_move(self) -> None:
+        """Keeps an accepted simulated move active until deterministic completion."""
+        accepted = self.request(
+            "50 bench move 1 position=90 speed=30")
+        busy = self.request(
+            "51 bench move 3 position=-45 speed=20")
+
+        self.assertEqual(accepted, ["ok 50 bench move accepted=1"])
+        self.assertEqual(busy, ["error 51 bench move code=busy"])
+
+    def test_manifest_vectors_client_and_simulator_share_public_tokens(self) -> None:
+        """Cross-checks public command, size, token, and request-ID assets."""
+        manifest_path = (PROJECT_ROOT / "docs" / "compatibility" /
+                         "aethor-text-v1-manifest.json")
+        vector_path = (PROJECT_ROOT / "Tests" / "protocol" /
+                       "aethor-text-v1-vectors.json")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        vectors = json.loads(vector_path.read_text(encoding="utf-8"))
+
+        self.assertIn("move", manifest["profiles"]["bench"]["commands"])
+        self.assertEqual(manifest["transport"]["maximum_request_bytes"],
+                         reference_client.AETHOR_TEXT_MAX_REQUEST_BODY_BYTES)
+        self.assertEqual(manifest["transport"]["maximum_request_bytes"],
+                         simulator_module.AETHOR_TEXT_MAX_REQUEST_BODY_BYTES)
+        self.assertEqual(set(manifest["bench_move_results"]["stages"]),
+                         reference_client.ONE_SHOT_MOVE_STAGES)
+        self.assertEqual(set(manifest["bench_move_results"]["codes"]),
+                         reference_client.ONE_SHOT_MOVE_ERRORS)
+        self.assertEqual(
+            set(manifest["bench_move_results"]["result_tokens"]),
+            reference_client.ONE_SHOT_MOVE_RESULTS,
+        )
+        self.assertEqual(manifest["profiles"]["bench"]["move"]["request_id_min"],
+                         1)
+        self.assertEqual(manifest["profiles"]["bench"]["move"]["request_id_max"],
+                         0xFFFFFFFF)
+        self.assertEqual(
+            manifest["profiles"]["bench"]["move"]["float32_min_normal"],
+            reference_client.FLOAT32_MIN_NORMAL,
+        )
+        self.assertEqual(
+            manifest["profiles"]["bench"]["move"]["float32_max"],
+            reference_client.FLOAT32_MAX,
+        )
+        for vector in vectors["bench_move_build_cases"]:
+            self.assertGreater(vector["request_id"], 0, vector["name"])
+            self.assertLessEqual(vector["request_id"], 0xFFFFFFFF,
+                                 vector["name"])
+        for vector in vectors["bench_move_invalid_cases"]:
+            self.assertGreaterEqual(vector["request_id"], 0, vector["name"])
+            self.assertLessEqual(vector["request_id"], 0xFFFFFFFF,
+                                 vector["name"])
+        for sequence in vectors["bench_move_request_sequences"]:
+            for request in sequence["requests"]:
+                self.assertGreater(int(request.split()[0]), 0, sequence["name"])
 
 
 if __name__ == "__main__":

@@ -47,7 +47,7 @@ show motor 1
 5 bench disable 1
 ```
 
-`bench move` 是绝对输出端角度命令，零点是本次上电零点。`motor/position/speed` 三个列表必须严格等长，按列表顺序一一对应，电机编号必须是唯一的 `1..7`，位置与速度必须是有限值且速度大于 0；不支持广播。固件允许位置等于已发现 `PMAX`、速度等于 `min(VMAX,MAX_SPD)`，越界时拒绝而不截断；任一发现值缺失时不回退默认范围。`show motor <id>` 可查看 `pmax_deg/vmax_deg_s/max_speed_deg_s/move_speed_limit_deg_s`，不可用字段显示 `?`。
+`bench move` 是绝对输出端角度命令，零点是本次上电零点。请求编号必须位于 `1..UINT32_MAX`；`motor/position/speed` 三个列表必须严格等长，按列表顺序一一对应，电机编号必须是唯一的 `1..7`，不支持广播。数值必须是正常 `float32`，位置另允许 `0`，速度必须大于 0。固件允许位置等于已发现 `PMAX`、速度等于 `min(VMAX,MAX_SPD)`，越界时拒绝而不截断；任一发现值缺失时不回退默认范围。`show motor <id>` 可查看 `pmax_deg/vmax_deg_s/max_speed_deg_s/move_speed_limit_deg_s`，不可用字段显示 `?`。
 
 新 `bench move` 只发送一次。收到 `ok <id> bench move accepted=1` 后无需发送 `ping`，固件内部会重发固定 CAN 目标，并继续执行新鲜反馈、驱动故障、控制周期和 Bus-Off 安全检查；到位后依次发送最终位置加零速度的 HOLD、仅对所选电机失能，并在收到全部所选电机的新鲜 disabled 反馈后返回 `done`。旧 `bench enable/jog` 仍需在带电期间约每 250 ms 发送一次独立 `ping`，连续 1000 ms 无有效请求仍会停止和失能。不要周期重发任何动作正文来代替保活。
 

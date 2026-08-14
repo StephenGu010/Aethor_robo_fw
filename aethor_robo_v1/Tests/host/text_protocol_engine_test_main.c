@@ -4,6 +4,7 @@
  */
 
 #include <assert.h>
+#include <float.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -555,6 +556,20 @@ static void test_text_bench_move_ordered_values(void)
 
     response = process_text_request(
         &engine,
+        "77 bench move 1 "
+        "position=0.000000000000000000000000000000000000011754943508222876 "
+        "speed=340282346638528860000000000000000000000\n",
+        3800U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 77 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.values[0] == FLT_MIN);
+    assert(command.speeds[0] == FLT_MAX);
+    complete_parser_one_shot(&engine, &command, 3900U);
+
+    response = process_text_request(
+        &engine,
         "75 bench move 7,6,5,4,3,2,1 "
         "position=70,60,50,40,30,20,10 speed=7,6,5,4,3,2,1\n",
         4000U,
@@ -623,6 +638,16 @@ static void test_text_bench_move_rejections(void)
     const char *response;
 
     protocol_engine_init(&engine, 9189U);
+    response = process_text_request(
+        &engine,
+        "0 bench move 1 position=1 speed=1\n",
+        500U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 0 bench move code=bad_argument field=request_id\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
     response = process_text_request(
         &engine,
         "52 bench move 1,3 position=90 speed=30,20\n",

@@ -23,9 +23,9 @@
 51 bench move 1,3 position=90,-45 speed=30,20
 ```
 
-`bench_move_invalid_cases` 固定数量不匹配的 `count_mismatch` 分类；`bench_move_terminal_cases` 固定 `completed/failed/cancelled/stopped` 四种终态；`bench_move_request_sequences` 固定相同请求重放和相同 ID 不同正文的 `request_conflict`。模拟器测试会加载这些向量，验证参考客户端的严格等长列表生成、本地唯一 1–7/有限值/正速度检查、单次写入、无 `ping` 等待以及终态字段解析。固件 C 协议引擎测试继续直接覆盖解析、入队、重放、冲突、busy 和 STOP 抢占。
+`bench_move_invalid_cases` 固定数量不匹配的 `count_mismatch` 和保留编号 `0` 的 `bad_argument` 分类；`bench_move_terminal_cases` 固定 `completed/failed/cancelled/stopped` 四种终态；`bench_move_request_sequences` 固定相同请求重放和相同 ID 不同正文的 `request_conflict`。模拟器测试会加载这些向量，验证参考客户端的严格等长列表生成、本地唯一 1–7/正常 `float32`/正速度检查、单次写入、无 `ping` 等待以及终态字段解析。固件 C 协议引擎测试继续直接覆盖解析、入队、重放、冲突、busy 和 STOP 抢占。
 
-参考客户端把有限浮点值编码为不含指数的纯十进制定点文本，保留可往返的非零小数并把 `-0` 规范为 `0`。完整 ASCII 请求正文不得超过 160 字节；该限制与 `TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH` 相同且不计 CR/LF。客户端在调用串口写入前拒绝超长的单轴或多轴组合。
+参考客户端把固件 `strtof` 可接收的正常 `float32` 编码为不含指数的纯十进制定点文本，保留可往返的非零小数并把位置 `-0` 规范为 `0`。非零绝对值必须位于 `FLT_MIN..FLT_MAX`，位置另允许 `0`，速度必须大于 `0`；请求编号必须位于 `1..UINT32_MAX`。完整 ASCII 请求正文不得超过 160 字节；该限制与 `TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH` 相同且不计 CR/LF。客户端在调用串口写入前拒绝非法编号/数值、非有限正数动作超时以及超长的单轴或多轴组合。
 
 台架动作只由上位机提交一次；固件在未到位时内部重发固定 CAN 目标。自包含 `bench move` 不启动 `ping`，最终 HOLD、所选电机失能并收到新鲜 disabled 反馈后才完成；旧 `bench enable/jog` 带电期间仍通过约 250 ms 的独立 `ping` 保活。该边界由协议引擎、应用门面和主机测试共同覆盖，不由 JSON 向量单独证明。
 

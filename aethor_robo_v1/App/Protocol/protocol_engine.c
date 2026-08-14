@@ -2773,6 +2773,15 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                                                         "unknown_command");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
+    if ((command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+        (request->request_id == 0U))
+    {
+        (void)protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+            "error 0 bench move code=bad_argument field=request_id");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
     if ((request->positional_count != 1U) ||
         (text_protocol_get_positional(request, 0U, &motors_span) == 0U))
     {

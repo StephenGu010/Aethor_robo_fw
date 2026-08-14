@@ -59,6 +59,14 @@
       "positions_deg": [1e-10],
       "speeds_deg_s": [1e-10],
       "request": "53 bench move 1 position=0.0000000001 speed=0.0000000001"
+    },
+    {
+      "name": "normal_float32_boundaries",
+      "request_id": 57,
+      "motors": [1],
+      "positions_deg": [1.1754943508222875e-38],
+      "speeds_deg_s": [3.4028234663852886e38],
+      "request": "57 bench move 1 position=0.000000000000000000000000000000000000011754943508222876 speed=340282346638528860000000000000000000000"
     }
   ],
   "bench_move_invalid_cases": [
@@ -70,6 +78,15 @@
       "speeds_deg_s": [30, 20],
       "firmware_request": "52 bench move 1,3 position=90 speed=30,20",
       "firmware_response": "error 52 bench move code=count_mismatch field=position"
+    },
+    {
+      "name": "zero_request_id_is_reserved",
+      "request_id": 0,
+      "motors": [1],
+      "positions_deg": [0],
+      "speeds_deg_s": [1],
+      "firmware_request": "0 bench move 1 position=0 speed=1",
+      "firmware_response": "error 0 bench move code=bad_argument field=request_id"
     }
   ],
   "bench_move_terminal_cases": [

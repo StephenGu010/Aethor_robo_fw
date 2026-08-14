@@ -17,6 +17,18 @@ from aethor_text_simulator import AethorTextSimulator, encode_line
 # Matches TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH. Firmware removes CR/LF before
 # applying this limit, so the client checks the ASCII request body only.
 AETHOR_TEXT_MAX_REQUEST_BODY_BYTES = 160
+FLOAT32_MIN_NORMAL = 1.1754943508222875e-38
+FLOAT32_MAX = 3.4028234663852886e38
+ONE_SHOT_MOVE_RESULTS = {"completed", "failed", "cancelled", "stopped"}
+ONE_SHOT_MOVE_STAGES = {
+    "validate", "discovery", "mode", "clear", "enable", "motion", "hold",
+    "disable", "unknown",
+}
+ONE_SHOT_MOVE_ERRORS = {
+    "not_ready", "position_out_of_range", "speed_out_of_range",
+    "fault_present", "stale_feedback", "timeout", "feedback_timeout",
+    "action_failed",
+}
 
 
 class LineTransport(Protocol):
@@ -25,7 +37,8 @@ class LineTransport(Protocol):
     def transact(self, body: str) -> list[str]:
         """Sends one request body and returns available decoded response bodies."""
 
-    def transact_until_done(self, body: str, request_id: int) -> list[str]:
+    def transact_until_done(self, body: str, request_id: int,
+                            action_timeout: float) -> list[str]:
         """Sends one action body once and waits for its matching terminal line."""
 
 
@@ -48,10 +61,50 @@ def _format_finite_number(value: Real) -> str:
     numeric_value = float(value)
     if numeric_value == 0.0:
         return "0"
+    if abs(numeric_value) == FLOAT32_MIN_NORMAL:
+        # The shortest Python spelling lies microscopically below FLT_MIN and
+        # makes MSVCRT strtof set ERANGE. This equally rounding spelling is above.
+        minimum_text = format(Decimal("1.1754943508222876e-38"), "f")
+        return f"-{minimum_text}" if numeric_value < 0.0 else minimum_text
     plain_text = format(Decimal(str(numeric_value)), "f")
     if "." in plain_text:
         plain_text = plain_text.rstrip("0").rstrip(".")
     return plain_text
+
+
+def _coerce_firmware_float32(value: object, field_name: str,
+                             allow_zero: bool) -> float:
+    """Converts one value accepted by the firmware's normal float32 parser."""
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(f"{field_name} must be a real number")
+    try:
+        numeric_value = float(value)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} cannot be converted to float") from exc
+    if not math.isfinite(numeric_value):
+        raise ValueError(f"{field_name} must be finite")
+    if numeric_value == 0.0:
+        if allow_zero:
+            return 0.0
+        raise ValueError(f"{field_name} must be greater than zero")
+    if abs(numeric_value) < FLOAT32_MIN_NORMAL or abs(numeric_value) > FLOAT32_MAX:
+        raise ValueError(f"{field_name} is outside normal float32 range")
+    if not allow_zero and numeric_value < 0.0:
+        raise ValueError(f"{field_name} must be greater than zero")
+    return numeric_value
+
+
+def _validate_action_timeout(action_timeout: object) -> float:
+    """Returns one finite positive timeout before any transport can write."""
+    if isinstance(action_timeout, bool):
+        raise ValueError("action_timeout must be a finite positive number")
+    try:
+        timeout_value = float(action_timeout)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("action_timeout must be a finite positive number") from exc
+    if not math.isfinite(timeout_value) or timeout_value <= 0.0:
+        raise ValueError("action_timeout must be a finite positive number")
+    return timeout_value
 
 
 def build_one_shot_bench_move(
@@ -61,26 +114,24 @@ def build_one_shot_bench_move(
         speeds_deg_s: Sequence[Real]) -> str:
     """Builds one strict absolute bench-move request without broadcasting values."""
     if (isinstance(request_id, bool) or not isinstance(request_id, int) or
-            request_id < 0 or request_id > 0xFFFFFFFF):
-        raise ValueError("request_id must be a uint32 integer")
+            request_id < 1 or request_id > 0xFFFFFFFF):
+        raise ValueError("request_id must be a nonzero uint32 integer")
 
     motors = list(motor_numbers)
-    positions = list(positions_deg)
-    speeds = list(speeds_deg_s)
-    if not motors or len(motors) != len(positions) or len(motors) != len(speeds):
+    positions_input = list(positions_deg)
+    speeds_input = list(speeds_deg_s)
+    if (not motors or len(motors) != len(positions_input) or
+            len(motors) != len(speeds_input)):
         raise ValueError("motor, position, and speed arrays need equal non-empty lengths")
     if any(isinstance(motor, bool) or not isinstance(motor, int) or
            motor < 1 or motor > 7 for motor in motors):
         raise ValueError("motor numbers must be integers from 1 through 7")
     if len(set(motors)) != len(motors):
         raise ValueError("motor numbers must be unique")
-    if any(isinstance(position, bool) or not isinstance(position, Real) or
-           not math.isfinite(float(position)) for position in positions):
-        raise ValueError("positions must be finite numbers")
-    if any(isinstance(speed, bool) or not isinstance(speed, Real) or
-           not math.isfinite(float(speed)) or float(speed) <= 0.0
-           for speed in speeds):
-        raise ValueError("speeds must be finite positive numbers")
+    positions = [_coerce_firmware_float32(value, "position", True)
+                 for value in positions_input]
+    speeds = [_coerce_firmware_float32(value, "speed", False)
+              for value in speeds_input]
 
     motor_text = ",".join(str(motor) for motor in motors)
     position_text = ",".join(_format_finite_number(value) for value in positions)
@@ -103,16 +154,26 @@ def _parse_decimal_field(value: str, field_name: str) -> int:
     return numeric_value
 
 
+def _parse_nonzero_request_id(value: str, field_name: str) -> int:
+    """Parses one unsigned ASCII decimal request ID excluding the zero sentinel."""
+    if not value.isascii() or not value.isdigit():
+        raise ValueError(f"{field_name} must be unsigned ASCII decimal")
+    request_id = _parse_decimal_field(value, field_name)
+    if request_id == 0:
+        raise ValueError(f"{field_name} must be nonzero")
+    return request_id
+
+
 def parse_one_shot_move_terminal(line: str,
                                  request_id: int) -> OneShotMoveResult:
     """Parses one matching completed, failed, cancelled, or stopped move terminal."""
     tokens = line.strip().split()
     if len(tokens) < 5 or tokens[:1] != ["done"] or tokens[2:4] != ["bench", "move"]:
         raise ValueError("line is not a bench move terminal")
-    try:
-        line_request_id = int(tokens[1], 10)
-    except ValueError as exc:
-        raise ValueError("terminal request ID is not decimal") from exc
+    if (isinstance(request_id, bool) or not isinstance(request_id, int) or
+            request_id < 1 or request_id > 0xFFFFFFFF):
+        raise ValueError("expected request ID must be a nonzero uint32")
+    line_request_id = _parse_nonzero_request_id(tokens[1], "terminal request ID")
     if line_request_id != request_id:
         raise ValueError("terminal request ID does not match")
 
@@ -126,7 +187,7 @@ def parse_one_shot_move_terminal(line: str,
         fields[key] = value
 
     result_token = fields.get("result")
-    if result_token not in {"completed", "failed", "cancelled", "stopped"}:
+    if result_token not in ONE_SHOT_MOVE_RESULTS:
         raise ValueError("terminal result token is unsupported")
     if result_token == "completed":
         if set(fields) != {"result", "elapsed_ms", "motors"}:
@@ -149,6 +210,10 @@ def parse_one_shot_move_terminal(line: str,
     if result_token == "failed":
         if set(fields) != {"result", "stage", "code", "motor"}:
             raise ValueError("failed terminal fields do not match the contract")
+        if fields["stage"] not in ONE_SHOT_MOVE_STAGES:
+            raise ValueError("failed terminal stage token is unsupported")
+        if fields["code"] not in ONE_SHOT_MOVE_ERRORS:
+            raise ValueError("failed terminal error token is unsupported")
         motor_value: int | None = None
         if fields["motor"] != "?":
             motor_value = _parse_decimal_field(fields["motor"], "motor")
@@ -184,10 +249,22 @@ class SimulatorTransport:
         outputs.extend(self.simulator.drain_outputs())
         return outputs
 
-    def transact_until_done(self, body: str, request_id: int) -> list[str]:
+    def transact_until_done(self, body: str, request_id: int,
+                            action_timeout: float) -> list[str]:
         """Processes one simulated action write and drains deterministic outputs."""
-        del request_id
-        return self.transact(body)
+        timeout_value = _validate_action_timeout(action_timeout)
+        outputs = self.simulator.process_line(encode_line(body))
+        accepted = f"ok {request_id} bench move accepted=1"
+        if accepted in outputs and self.simulator.active_motion is not None:
+            remaining_ms = max(
+                0,
+                self.simulator.active_motion.duration_ms -
+                (self.simulator.now_ms - self.simulator.active_motion.start_ms),
+            )
+            maximum_wait_ms = int(timeout_value * 1000.0)
+            self.simulator.advance(min(remaining_ms, maximum_wait_ms))
+        outputs.extend(self.simulator.drain_outputs())
+        return outputs
 
 
 class SerialTransport:
@@ -218,14 +295,16 @@ class SerialTransport:
                 break
         return outputs
 
-    def transact_until_done(self, body: str, request_id: int) -> list[str]:
+    def transact_until_done(self, body: str, request_id: int,
+                            action_timeout: float) -> list[str]:
         """Writes one action line once and reads until its matching DONE or timeout."""
+        timeout_value = _validate_action_timeout(action_timeout)
         self.serial.write(encode_line(body))
         self.serial.flush()
         outputs: list[str] = []
         done_prefix = f"done {request_id} bench move "
         error_prefix = f"error {request_id} bench move "
-        deadline = time.monotonic() + self.action_timeout
+        deadline = time.monotonic() + timeout_value
         while time.monotonic() < deadline:
             line = self.serial.readline()
             if not line:
@@ -260,25 +339,42 @@ class AethorReferenceClient:
     def bench_move_once(self,
                         motor_numbers: Sequence[int],
                         positions_deg: Sequence[Real],
-                        speeds_deg_s: Sequence[Real]) -> OneShotMoveResult:
+                        speeds_deg_s: Sequence[Real],
+                        action_timeout: float | None = None) -> OneShotMoveResult:
         """Sends one absolute move once, starts no keepalive, and waits for DONE."""
+        timeout_value = _validate_action_timeout(
+            getattr(self.transport, "action_timeout", 120.0)
+            if action_timeout is None else action_timeout)
         request_id = self.next_request_id
         self.next_request_id += 1
         body = build_one_shot_bench_move(
             request_id, motor_numbers, positions_deg, speeds_deg_s)
-        outputs = self.transport.transact_until_done(body, request_id)
+        outputs = self.transport.transact_until_done(
+            body, request_id, timeout_value)
         self.transcript.append(f"> {body}")
         self.transcript.extend(f"< {output}" for output in outputs)
 
         acceptance = f"ok {request_id} bench move accepted=1"
-        if acceptance not in outputs:
+        acceptance_indexes = [index for index, output in enumerate(outputs)
+                              if output == acceptance]
+        if len(acceptance_indexes) != 1:
             raise RuntimeError("one-shot move did not receive matching acceptance")
         terminal_prefix = f"done {request_id} bench move "
         terminal_lines = [output for output in outputs
                           if output.startswith(terminal_prefix)]
         if len(terminal_lines) != 1:
             raise RuntimeError("one-shot move did not receive one matching terminal")
-        return parse_one_shot_move_terminal(terminal_lines[0], request_id)
+        terminal_index = outputs.index(terminal_lines[0])
+        if acceptance_indexes[0] >= terminal_index:
+            raise RuntimeError("one-shot move terminal arrived before acceptance")
+        result = parse_one_shot_move_terminal(terminal_lines[0], request_id)
+        selected_mask = sum(1 << (motor - 1) for motor in motor_numbers)
+        if result.result == "completed" and result.motor_mask != selected_mask:
+            raise RuntimeError("one-shot move completed mask does not match request")
+        if (result.result == "failed" and result.motor is not None and
+                (selected_mask & (1 << (result.motor - 1))) == 0):
+            raise RuntimeError("one-shot move failed motor is outside request")
+        return result
 
     def run_safe_contract_probe(self) -> None:
         """Runs query-only shared checks that never enable or move hardware."""

@@ -13,7 +13,7 @@
 #define TEXT_PROTOCOL_MAX_TOKEN_COUNT                                      \
     (1U + TEXT_PROTOCOL_MAX_COMMAND_WORDS +                               \
      TEXT_PROTOCOL_MAX_POSITIONAL_COUNT + TEXT_PROTOCOL_MAX_FIELD_COUNT)
-#define TEXT_PROTOCOL_FLOAT_BUFFER_CAPACITY (48U)
+#define TEXT_PROTOCOL_FLOAT_BUFFER_CAPACITY (64U)
 
 /**
  * @brief Converts one ASCII letter to lowercase and preserves other bytes.

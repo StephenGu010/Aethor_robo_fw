@@ -48,7 +48,7 @@ data
 51 bench move 1,3 position=90,-45 speed=30,20
 ```
 
-`bench move` 的位置是 S3519 输出端相对本次上电零点的绝对角度，不是机械臂关节软限位。电机、位置和速度列表必须非空且严格等长，并按列表顺序一一对应；电机编号必须唯一且位于 1–7。位置和速度必须是有限数，速度必须大于 0，不支持单值广播。
+`bench move` 的位置是 S3519 输出端相对本次上电零点的绝对角度，不是机械臂关节软限位。电机、位置和速度列表必须非空且严格等长，并按列表顺序一一对应；电机编号必须唯一且位于 1–7。请求编号必须是 `1..UINT32_MAX`，`0` 被保留且会返回 `bad_argument field=request_id`。位置和速度只接受固件 `strtof` 可解析的正常 `float32`，非零绝对值位于 `FLT_MIN..FLT_MAX`；位置另允许 `0`，速度必须大于 `0`，不支持单值广播。
 
 列表数量不匹配返回 `code=count_mismatch` 并指出 `field=position|speed`；重复、空或超出 1–7 的电机列表返回 `code=bad_argument field=motors`；非数值、NaN 或 Inf 返回对应字段的 `bad_argument`；零速或负速度返回 `code=out_of_range field=speed`。解析或入队失败不会产生后续动作终态。
 
@@ -63,7 +63,7 @@ move_speed_limit_deg_s=<value|?>
 
 这些字段采用三位小数的紧凑输出，例如 20 rad/s 显示为 `1145.916` deg/s；`?` 表示本次上电尚无可用发现值。
 
-主机只发送一次 `bench move`，收到 `ok <id> bench move accepted=1` 后等待匹配的 `done`，不发送 `ping`。固件在内部重发已固定的逐电机 CAN 目标，并依次完成发现、范围校验、POS_VEL 模式、清错、使能、运动、最终位置加零速度 HOLD、所选电机失能；只有收到全部所选电机的新鲜 disabled 反馈后才报告完成。该局部通信超时豁免不影响反馈新鲜度、非零驱动故障、控制周期故障、动作期限或 Bus-Off 安全处理。
+主机只发送一次 `bench move`，收到 `ok <id> bench move accepted=1` 后等待匹配的唯一 `done`，不发送 `ping`。参考客户端要求 ACK 先于 DONE，并在写入前拒绝非有限或非正数动作超时、非法参数及超过 160 ASCII 字节（不计 CR/LF）的请求。固件在内部重发已固定的逐电机 CAN 目标，并依次完成发现、范围校验、POS_VEL 模式、清错、使能、运动、最终位置加零速度 HOLD、所选电机失能；只有收到全部所选电机的新鲜 disabled 反馈后才报告完成。该局部通信超时豁免不影响反馈新鲜度、非零驱动故障、控制周期故障、动作期限或 Bus-Off 安全处理。
 
 旧 `bench enable/jog` 不属于自包含动作，带电或运动期间仍须约每 250 ms 发送一次独立 `ping`。不要周期重发动作正文来替代保活。
 

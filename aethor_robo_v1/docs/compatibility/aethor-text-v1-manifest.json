@@ -32,10 +32,14 @@
       "explicit_motor_list": true,
       "move": {
         "request": "<id> bench move <motors> position=<deg-list> speed=<deg/s-list>",
+        "request_id_min": 1,
+        "request_id_max": 4294967295,
         "coordinates": "absolute S3519 output-shaft angle relative to this power-on zero",
         "mapping": "motor, position, and speed lists have equal nonzero length and map by list order; no broadcasting",
         "motors": "unique integers from 1 through 7",
-        "numbers": "finite position values and finite speed values greater than zero",
+        "numbers": "plain decimal normal IEEE-754 float32 values; position may also be zero and speed must be greater than zero",
+        "float32_min_normal": 1.1754943508222875e-38,
+        "float32_max": 3.4028234663852886e38,
         "position_limit": "abs(position_deg) <= discovered PMAX converted to degrees",
         "speed_limit": "speed_deg_s <= min(discovered VMAX, discovered MAX_SPD) converted to degrees per second",
         "boundary_policy": "equal is accepted; over-limit values are rejected without clamping",
@@ -80,6 +84,7 @@
     "format": "compact three-decimal formatting; for example 20 rad/s is 1145.916 deg/s"
   },
   "bench_move_results": {
+    "result_tokens": ["completed", "failed", "cancelled", "stopped"],
     "accepted": "ok <id> bench move accepted=1",
     "completed": "done <id> bench move result=completed elapsed_ms=<uint32> motors=<two-digit-hex-mask>",
     "failed": "done <id> bench move result=failed stage=<stage> code=<code> motor=<1..7|?>",

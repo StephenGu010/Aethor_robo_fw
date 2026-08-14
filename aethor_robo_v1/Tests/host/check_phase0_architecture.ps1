@@ -167,6 +167,13 @@ function Invoke-Phase0ArchitectureCheck {
         Add-ArchitectureFailure -FailureList $failureList -Message 'Legacy aethor_application entry point is still referenced.'
     }
 
+    # Cleanup HOLD is allowed only after this one-shot confirmed every selected
+    # motor enabled; keep this lifecycle gate explicit in the application layer.
+    $aethorAppText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\aethor_app.c') -Raw
+    Assert-TextContains -FailureList $failureList -Text $aethorAppText `
+        -Pattern 'application_action\.enabled_by_action_mask\s*&\s*application_action\.cleanup_disable_mask\)\s*==\s*application_action\.cleanup_disable_mask' `
+        -Message 'One-shot cleanup HOLD does not require enabled_by_action_mask to cover the cleanup mask.'
+
     $keilProjectPath = Join-Path $projectRoot 'MDK-ARM\CtrBoard-H7_FDCAN.uvprojx'
     $keilProjectXml = [xml](Get-Content -LiteralPath $keilProjectPath -Raw)
     $keilFileNames = @($keilProjectXml.SelectNodes('//FileName') | ForEach-Object { $_.'#text' })
@@ -233,6 +240,7 @@ function Invoke-Phase0ArchitectureCheck {
     Write-Host '[PASS] Executable motor frame generation is confined to App/Motor.'
     Write-Host '[PASS] CubeMX retains six static application tasks and the USER_KEY label.'
     Write-Host '[PASS] main.c and freertos.c use the Phase 0 application entry.'
+    Write-Host '[PASS] One-shot cleanup HOLD requires completed ENABLE ownership.'
     Write-Host '[PASS] Keil compiles one copy of each required source and no legacy controller.'
     Write-Host '[PASS] Phase 0 architecture contracts are satisfied.'
 }

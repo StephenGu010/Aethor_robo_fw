@@ -37,6 +37,49 @@ static uint8_t motor_runtime_find_joint(const MotorRuntime *runtime,
     return 0U;
 }
 
+/**
+ * @brief Identifies a configured S3519 parameter response by ID and register.
+ * @param runtime Initialized runtime owning the fixed ESC/master mapping.
+ * @param frame Candidate eight-byte CAN frame.
+ * @return One only for a configured read/write parameter response signature.
+ */
+static uint8_t motor_runtime_is_parameter_frame_signature(
+    const MotorRuntime *runtime,
+    const CanFrame *frame)
+{
+    uint8_t joint_index;
+
+    if ((frame->length != CAN_CLASSIC_MAX_DATA_LENGTH) ||
+        ((frame->data[2] != 0x33U) && (frame->data[2] != 0x55U)) ||
+        (motor_runtime_find_joint(runtime,
+                                  frame->identifier,
+                                  &joint_index) == 0U) ||
+        (frame->data[0] !=
+         (uint8_t)runtime->configuration->joints[joint_index].esc_id))
+    {
+        return 0U;
+    }
+
+    switch ((S3519Register)frame->data[3])
+    {
+        case S3519_REGISTER_ACCELERATION:
+        case S3519_REGISTER_DECELERATION:
+        case S3519_REGISTER_MAXIMUM_SPEED:
+        case S3519_REGISTER_MASTER_ID:
+        case S3519_REGISTER_ESC_ID:
+        case S3519_REGISTER_CONTROL_MODE:
+        case S3519_REGISTER_HARDWARE_VERSION:
+        case S3519_REGISTER_SOFTWARE_VERSION:
+        case S3519_REGISTER_POSITION_RANGE:
+        case S3519_REGISTER_VELOCITY_RANGE:
+        case S3519_REGISTER_TORQUE_RANGE:
+        case S3519_REGISTER_SUB_VERSION:
+            return 1U;
+        default:
+            return 0U;
+    }
+}
+
 /** @brief Advances the mode-switch cursor past every unselected motor. */
 static void motor_runtime_skip_unselected_mode_joints(MotorRuntime *runtime)
 {
@@ -49,7 +92,7 @@ static void motor_runtime_skip_unselected_mode_joints(MotorRuntime *runtime)
 }
 
 /**
- * @brief Checks that every selected motor retains a complete verified discovery result.
+ * @brief Checks that every selected motor retains verified non-mode discovery data.
  * @param runtime Initialized runtime owning discovery results.
  * @param motor_mask Nonzero selected J1-J7 mask.
  * @return One when every selected result is complete, otherwise zero.
@@ -68,10 +111,11 @@ static uint8_t motor_runtime_selected_discovery_is_ready(
         {
             continue;
         }
-        if (((runtime->discovery.verified_joint_mask & joint_bit) == 0U) ||
-            ((runtime->discovery.results[joint_index].verified_fields_mask &
-              MOTOR_DISCOVERY_ALL_FIELDS_MASK) !=
-             MOTOR_DISCOVERY_ALL_FIELDS_MASK))
+        if ((runtime->discovery.results[joint_index].verified_fields_mask &
+             (uint16_t)(MOTOR_DISCOVERY_ALL_FIELDS_MASK &
+                        (uint16_t)~MOTOR_DISCOVERY_MODE_FIELDS_MASK)) !=
+            (uint16_t)(MOTOR_DISCOVERY_ALL_FIELDS_MASK &
+                       (uint16_t)~MOTOR_DISCOVERY_MODE_FIELDS_MASK))
         {
             return 0U;
         }
@@ -423,11 +467,12 @@ MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
     return motor_runtime_map_discovery_status(discovery_status);
 }
 
-/** @brief Aborts only active discovery and mode-switch parameter sequences. */
+/**
+ * @brief Aborts active parameter sequences without revalidating selected mode fields.
+ */
 MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
     MotorRuntime *runtime)
 {
-    uint8_t joint_index;
     uint8_t mode_switch_is_active;
 
     if (runtime == NULL)
@@ -457,26 +502,6 @@ MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
                    MOTOR_MODE_SWITCH_READ_WAITING));
     if (mode_switch_is_active != 0U)
     {
-        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
-        {
-            uint8_t joint_bit = (uint8_t)(1U << joint_index);
-            MotorDiscoveryResult *result =
-                &runtime->discovery.results[joint_index];
-
-            if (((runtime->mode_switch_joint_mask & joint_bit) != 0U) &&
-                ((result->observed_control_mode == 1U) ||
-                 (result->observed_control_mode == 2U)))
-            {
-                result->verified_fields_mask |=
-                    MOTOR_DISCOVERY_MODE_FIELDS_MASK;
-                if ((result->verified_fields_mask &
-                     MOTOR_DISCOVERY_ALL_FIELDS_MASK) ==
-                    MOTOR_DISCOVERY_ALL_FIELDS_MASK)
-                {
-                    runtime->discovery.verified_joint_mask |= joint_bit;
-                }
-            }
-        }
         runtime->mode_switch_state = MOTOR_MODE_SWITCH_IDLE;
         runtime->mode_switch_joint_mask = 0U;
         runtime->mode_switch_joint_index = 0U;
@@ -518,6 +543,10 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
     if (motor_runtime_is_parameter_response(runtime, frame) != 0U)
     {
         return motor_runtime_accept_parameter_response(runtime, frame);
+    }
+    if (motor_runtime_is_parameter_frame_signature(runtime, frame) != 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_OK;
     }
     return motor_runtime_accept_control_feedback(runtime, frame, timestamp_us);
 }

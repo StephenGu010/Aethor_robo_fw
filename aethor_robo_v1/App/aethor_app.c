@@ -602,8 +602,9 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
         application_action.frame_read_index = 0U;
         application_action.feedback_not_before_us = 0U;
     }
-    else if ((application_action.failed_stage ==
-              PROTOCOL_COMMAND_STAGE_MOTION) &&
+    else if (((application_action.enabled_by_action_mask &
+               application_action.cleanup_disable_mask) ==
+              application_action.cleanup_disable_mask) &&
              (motor_runtime_get_snapshot(
                   &application_motor_runtime,
                   timestamp_us,
@@ -1221,8 +1222,6 @@ static uint8_t aethor_app_advance_one_shot_setup(
              (aethor_app_selected_motors_are_fault_free(motor_snapshot,
                                                         motor_mask) != 0U))
     {
-        uint8_t joint_index;
-
         runtime_status = motor_runtime_build_mode_command_batch(
             &application_motor_runtime,
             S3519_CONTROL_MODE_POSITION_VELOCITY,
@@ -1236,18 +1235,6 @@ static uint8_t aethor_app_advance_one_shot_setup(
                 aethor_app_map_runtime_error(runtime_status),
                 0U,
                 timestamp_us);
-        }
-        application_action.enabled_by_action_mask = 0U;
-        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
-        {
-            uint8_t joint_bit = (uint8_t)(1U << joint_index);
-
-            if (((motor_mask & joint_bit) != 0U) &&
-                (motor_snapshot->joints[joint_index].driver_state !=
-                 S3519_DRIVER_STATE_ENABLED))
-            {
-                application_action.enabled_by_action_mask |= joint_bit;
-            }
         }
         application_action.state = AETHOR_APP_ACTION_ONE_SHOT_ENABLE_WAIT;
         application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
@@ -1279,6 +1266,7 @@ static uint8_t aethor_app_advance_one_shot_setup(
                   motor_mask,
                   S3519_DRIVER_STATE_ENABLED) != 0U))
     {
+        application_action.enabled_by_action_mask = motor_mask;
         return aethor_app_start_one_shot_motion(motor_snapshot,
                                                 timestamp_us);
     }
@@ -1876,10 +1864,8 @@ static uint8_t aethor_app_start_lifecycle_action(
                 return 0U;
             }
         }
-        runtime_status = motor_runtime_build_mode_command_batch(
+        runtime_status = motor_runtime_build_emergency_disable_subset(
             &application_motor_runtime,
-            S3519_CONTROL_MODE_POSITION_VELOCITY,
-            S3519_MODE_COMMAND_DISABLE,
             command->motor_mask,
             &application_action.frames);
         if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
@@ -2690,8 +2676,14 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                                                  &stop_command) != 0U)
             {
                 uint8_t cancel_generated;
+                uint8_t original_action_mask =
+                    (application_action.command.type ==
+                     PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+                        ? application_action.command.motor_mask
+                        : 0U;
                 uint8_t stop_generated;
 
+                stop_command.motor_mask |= original_action_mask;
                 (void)motor_runtime_abort_active_parameter_sequences(
                     &application_motor_runtime);
                 cancel_generated = aethor_app_complete_action(

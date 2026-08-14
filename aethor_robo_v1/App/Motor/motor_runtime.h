@@ -119,7 +119,9 @@ MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
 
 /**
  * @brief Aborts only active discovery and mode-switch parameter sequences.
- * @param runtime Initialized runtime whose verified results and feedback remain intact.
+ * @param runtime Initialized runtime whose feedback and completed discovery
+ *        data remain intact; selected mode fields invalidated by an active
+ *        switch stay unverified.
  * @return OK, INVALID_ARGUMENT, or NOT_INITIALIZED; repeated calls are idempotent.
  */
 MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(

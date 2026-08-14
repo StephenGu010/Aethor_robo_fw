@@ -4634,8 +4634,13 @@ static uint8_t protocol_engine_format_text_result(
                              result_text,
                              (result->type == PROTOCOL_COMMAND_CLEAR_FAULT)
                                  ? "fault"
-                                 : "enabled",
-                             (unsigned int)((result->type == PROTOCOL_COMMAND_ENABLE)
+                                 : ((result->type == PROTOCOL_COMMAND_STOP)
+                                        ? "stopped"
+                                        : "enabled"),
+                             (unsigned int)(((result->type ==
+                                              PROTOCOL_COMMAND_ENABLE) ||
+                                             (result->type ==
+                                              PROTOCOL_COMMAND_STOP))
                                                 ? result->motor_mask
                                                 : 0U)) ==
                          PROTOCOL_ENGINE_STATUS_OK);

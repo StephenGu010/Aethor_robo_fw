@@ -13,6 +13,8 @@
 
 #define MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US (100000ULL)
 #define MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES (14U)
+/* One discovery read, seven mode writes, and one mode read may be in flight. */
+#define MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY (ARM_JOINT_COUNT + 2U)
 
 /** @brief Owns the fail-safe disable frames for all seven configured motors. */
 typedef struct
@@ -78,6 +80,24 @@ typedef struct
     uint8_t valid;
 } MotorParameterResponseSignature;
 
+/** @brief Identifies which bounded parameter sequence emitted an expectation. */
+typedef enum
+{
+    MOTOR_PARAMETER_SOURCE_DISCOVERY = 0,
+    MOTOR_PARAMETER_SOURCE_MODE_WRITE,
+    MOTOR_PARAMETER_SOURCE_MODE_READ
+} MotorParameterExpectationSource;
+
+/** @brief Stores every unique parameter response that can still arrive. */
+typedef struct
+{
+    MotorParameterResponseSignature
+        entries[MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY];
+    MotorParameterExpectationSource
+        sources[MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY];
+    uint8_t count;
+} MotorParameterResponseSet;
+
 /**
  * @brief Owns all static receive-side state for the first seven-axis arm.
  */
@@ -98,9 +118,8 @@ typedef struct
     uint8_t mode_switch_attempt_count;
     uint8_t discovery_active;
     uint8_t initialized;
-    MotorParameterResponseSignature discovery_parameter_expectation;
-    MotorParameterResponseSignature mode_parameter_expectation;
-    MotorParameterResponseSignature parameter_quarantine;
+    MotorParameterResponseSet parameter_expectations;
+    MotorParameterResponseSet parameter_quarantine;
 } MotorRuntime;
 
 /**

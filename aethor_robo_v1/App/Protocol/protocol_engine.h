@@ -202,6 +202,7 @@ typedef struct
     uint32_t telemetry_sequence;
     uint32_t event_sequence;
     uint32_t active_motion_request_id;
+    uint32_t active_stop_request_id;
     uint32_t cancelled_queued_motion_request_id;
     uint32_t last_motion_actual_duration_ms;
     uint32_t last_motion_max_following_error_mdeg;
@@ -266,6 +267,18 @@ uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
  */
 uint8_t protocol_engine_pop_stop_command(ProtocolEngine *engine,
                                          ProtocolCommand *command);
+
+/**
+ * @brief Widens but does not consume the published priority STOP command.
+ * @param engine Initialized engine with an optional pending STOP slot.
+ * @param inherited_motor_mask Safety scope already owned by the active STOP.
+ * @param command Destination snapshot containing the monotonic union mask.
+ * @return One when a pending STOP was widened and copied, otherwise zero.
+ */
+uint8_t protocol_engine_widen_pending_stop_mask(
+    ProtocolEngine *engine,
+    uint8_t inherited_motor_mask,
+    ProtocolCommand *command);
 
 /**
  * @brief Takes the accepted one-shot motion still waiting in the normal ring.

@@ -461,9 +461,9 @@ void StartDiagnosticsTask(void const * argument)
            (aethor_app_report_transport_fault(
                 transportFaultDetail,
                 AethorMonotonicTimestampUs()) != 0U) &&
-          (ProtocolTaskHandle != NULL))
+          (ArmControlTaskHandle != NULL))
       {
-        (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
+        (void)xTaskNotifyGive((TaskHandle_t)ArmControlTaskHandle);
       }
     }
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(100U));

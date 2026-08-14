@@ -162,6 +162,15 @@ function Invoke-Phase0ArchitectureCheck {
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'ulTaskNotifyTake\s*\(' `
         -Message 'RX-driven tasks do not wait on bounded task notifications.'
+    # DiagnosticsTask may only publish transport faults; ArmControlTask owns
+    # lifecycle mutation and ProtocolTask notification after service.
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_report_transport_fault[\s\S]{0,500}ArmControlTaskHandle[\s\S]{0,200}xTaskNotifyGive\s*\(\s*\(TaskHandle_t\)ArmControlTaskHandle' `
+        -Message 'DiagnosticsTask does not wake ArmControlTask after publishing a transport fault.'
+    if ($freertosText -match 'aethor_app_report_transport_fault[\s\S]{0,500}xTaskNotifyGive\s*\(\s*\(TaskHandle_t\)ProtocolTaskHandle')
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'DiagnosticsTask must not notify ProtocolTask directly for a transport fault.'
+    }
     if (($mainText -match 'aethor_application') -or ($freertosText -match 'aethor_application'))
     {
         Add-ArchitectureFailure -FailureList $failureList -Message 'Legacy aethor_application entry point is still referenced.'
@@ -170,9 +179,15 @@ function Invoke-Phase0ArchitectureCheck {
     # Cleanup HOLD is allowed only after this one-shot confirmed every selected
     # motor enabled; keep this lifecycle gate explicit in the application layer.
     $aethorAppText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\aethor_app.c') -Raw
+    $protocolEngineText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\Protocol\protocol_engine.c') -Raw
     Assert-TextContains -FailureList $failureList -Text $aethorAppText `
         -Pattern 'application_action\.enabled_by_action_mask\s*&\s*application_action\.cleanup_disable_mask\)\s*==\s*application_action\.cleanup_disable_mask' `
         -Message 'One-shot cleanup HOLD does not require enabled_by_action_mask to cover the cleanup mask.'
+    # STOP ownership is part of priority-slot publication, so the consumer may
+    # never observe a STOP before its admission gate has become visible.
+    Assert-TextContains -FailureList $failureList -Text $protocolEngineText `
+        -Pattern 'active_stop_request_id\s*=\s*command->request_id;[\s\S]{0,160}\+\+engine->stop_write_sequence' `
+        -Message 'STOP lifecycle ownership is published after its priority command slot.'
 
     $keilProjectPath = Join-Path $projectRoot 'MDK-ARM\CtrBoard-H7_FDCAN.uvprojx'
     $keilProjectXml = [xml](Get-Content -LiteralPath $keilProjectPath -Raw)

@@ -20,6 +20,7 @@
 #define AETHOR_APP_DEG_TO_RAD (0.017453292519943295F)
 /* Covers one MOVE cancellation, one superseded STOP, and the current STOP. */
 #define AETHOR_APP_DEFERRED_RESULT_CAPACITY (3U)
+#define AETHOR_APP_TRANSPORT_FAULT_CAPACITY (2U)
 
 /**
  * @brief Describes legacy and self-contained motor action phases owned by ArmControlTask.
@@ -73,6 +74,13 @@ typedef struct
     uint8_t missing_discovery_mask;
 } AethorAppAction;
 
+/** @brief Stores one fully published cross-task transport fault event. */
+typedef struct
+{
+    uint64_t timestamp_us;
+    uint32_t detail;
+} AethorAppTransportFaultEvent;
+
 static Diagnostics application_diagnostics;
 static ArmController application_controller;
 static JointReference application_joint_reference;
@@ -85,10 +93,69 @@ static ProtocolCommandResult
     application_deferred_results[AETHOR_APP_DEFERRED_RESULT_CAPACITY];
 static uint8_t application_deferred_result_read_sequence;
 static uint8_t application_deferred_result_write_sequence;
+static AethorAppTransportFaultEvent
+    application_transport_faults[AETHOR_APP_TRANSPORT_FAULT_CAPACITY];
+static volatile uint8_t application_transport_fault_read_sequence;
+static volatile uint8_t application_transport_fault_write_sequence;
 static uint64_t application_last_service_timestamp_us;
 static uint8_t application_initialized;
 
 static void aethor_app_update_protocol_context(uint64_t timestamp_us);
+
+/** @brief Prevents compiler reordering across SPSC mailbox ownership edges. */
+static void aethor_app_compiler_barrier(void)
+{
+#if defined(__CC_ARM)
+    __schedule_barrier();
+#elif defined(__GNUC__) || defined(__clang__)
+    __asm__ volatile ("" ::: "memory");
+#else
+    volatile uint32_t barrier_value = 0U;
+    (void)barrier_value;
+#endif
+}
+
+/**
+ * @brief Applies one transport fault from the ArmControlTask ownership domain.
+ */
+static uint8_t aethor_app_apply_transport_fault(uint32_t detail,
+                                                uint64_t timestamp_us);
+
+/**
+ * @brief Consumes and merges every fully published transport fault event.
+ */
+static uint8_t aethor_app_take_transport_fault(uint32_t *detail,
+                                               uint64_t *timestamp_us)
+{
+    uint8_t event_count = 0U;
+
+    if ((detail == NULL) || (timestamp_us == NULL))
+    {
+        return 0U;
+    }
+    *detail = 0U;
+    *timestamp_us = 0U;
+    while (application_transport_fault_read_sequence !=
+           application_transport_fault_write_sequence)
+    {
+        uint8_t slot_index;
+        AethorAppTransportFaultEvent event;
+
+        aethor_app_compiler_barrier();
+        slot_index = (uint8_t)(application_transport_fault_read_sequence %
+                               AETHOR_APP_TRANSPORT_FAULT_CAPACITY);
+        event = application_transport_faults[slot_index];
+        aethor_app_compiler_barrier();
+        ++application_transport_fault_read_sequence;
+        *detail |= event.detail;
+        if (event_count == 0U)
+        {
+            *timestamp_us = event.timestamp_us;
+        }
+        ++event_count;
+    }
+    return (uint8_t)(event_count != 0U);
+}
 
 /**
  * @brief Calculates a finite representable travel, settle, and safety timeout.
@@ -1617,6 +1684,11 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
            sizeof(application_deferred_results));
     application_deferred_result_read_sequence = 0U;
     application_deferred_result_write_sequence = 0U;
+    memset(application_transport_faults,
+           0,
+           sizeof(application_transport_faults));
+    application_transport_fault_read_sequence = 0U;
+    application_transport_fault_write_sequence = 0U;
     application_initialized =
         (uint8_t)(motor_status == MOTOR_RUNTIME_STATUS_OK);
 }
@@ -2634,6 +2706,7 @@ static uint8_t aethor_app_service_active_action(
 uint8_t aethor_app_service(uint64_t timestamp_us)
 {
     uint8_t result_generated = 0U;
+    uint8_t deferred_result_flushed = 0U;
 
     if (application_initialized != 0U)
     {
@@ -2642,8 +2715,18 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         MotorRuntimeStatus snapshot_status;
         ArmSnapshot arm_snapshot;
         uint8_t one_shot_motor_failure_detected;
+        uint32_t transport_fault_detail;
+        uint64_t transport_fault_timestamp_us;
 
-        (void)aethor_app_flush_deferred_results();
+        deferred_result_flushed = aethor_app_flush_deferred_results();
+        if (aethor_app_take_transport_fault(&transport_fault_detail,
+                                            &transport_fault_timestamp_us) != 0U)
+        {
+            result_generated = aethor_app_apply_transport_fault(
+                transport_fault_detail,
+                transport_fault_timestamp_us);
+            return (uint8_t)(result_generated | deferred_result_flushed);
+        }
 
         if ((application_last_service_timestamp_us != 0U) &&
             (timestamp_us >= application_last_service_timestamp_us))
@@ -2737,7 +2820,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                     &application_emergency_disable_batch);
                 protocol_engine_cancel_pending_commands(
                     &application_protocol_engine);
-                return result_generated;
+                return (uint8_t)(result_generated | deferred_result_flushed);
             }
         }
         result_generated = aethor_app_check_one_shot_motor_safety(
@@ -2746,7 +2829,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             &one_shot_motor_failure_detected);
         if (one_shot_motor_failure_detected != 0U)
         {
-            return result_generated;
+            return (uint8_t)(result_generated | deferred_result_flushed);
         }
 
         if ((aethor_app_active_action_owns_link_lifecycle() == 0U) &&
@@ -2814,6 +2897,40 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
 
                 result_generated = (uint8_t)(cancel_generated | stop_generated);
             }
+            else if ((application_action.command.type ==
+                      PROTOCOL_COMMAND_STOP) &&
+                     (aethor_app_deferred_result_has_capacity() == 0U))
+            {
+                ProtocolCommand pending_stop_command;
+
+                if ((protocol_engine_widen_pending_stop_mask(
+                         &application_protocol_engine,
+                         application_action.command.motor_mask,
+                         &pending_stop_command) != 0U) &&
+                    (pending_stop_command.motor_mask !=
+                     application_action.command.motor_mask))
+                {
+                    ProtocolCommand widened_active_stop =
+                        application_action.command;
+
+                    widened_active_stop.motor_mask =
+                        pending_stop_command.motor_mask;
+                    (void)motor_runtime_abort_active_parameter_sequences(
+                        &application_motor_runtime,
+                        timestamp_us);
+                    result_generated = aethor_app_start_lifecycle_action(
+                        &widened_active_stop,
+                        &motor_snapshot,
+                        snapshot_status,
+                        timestamp_us);
+                }
+                else
+                {
+                    result_generated = aethor_app_service_active_action(
+                        &motor_snapshot,
+                        timestamp_us);
+                }
+            }
             else
             {
                 result_generated = aethor_app_service_active_action(
@@ -2860,7 +2977,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             }
         }
     }
-    return result_generated;
+    return (uint8_t)(result_generated | deferred_result_flushed);
 }
 
 /**
@@ -2963,17 +3080,41 @@ void aethor_app_update_runtime_diagnostics(
 }
 
 /**
- * @brief Latches a severe platform transport fault and schedules all-axis disable.
+ * @brief Publishes a severe transport fault for ArmControlTask ownership.
  */
 uint8_t aethor_app_report_transport_fault(uint32_t detail,
                                           uint64_t timestamp_us)
 {
-    uint8_t result_generated = 0U;
+    uint8_t used_count;
+    uint8_t slot_index;
 
-    if (application_initialized == 0U)
+    if ((application_initialized == 0U) || (detail == 0U))
     {
         return 0U;
     }
+    used_count = (uint8_t)(application_transport_fault_write_sequence -
+                           application_transport_fault_read_sequence);
+    if (used_count >= AETHOR_APP_TRANSPORT_FAULT_CAPACITY)
+    {
+        return 1U;
+    }
+    slot_index = (uint8_t)(application_transport_fault_write_sequence %
+                           AETHOR_APP_TRANSPORT_FAULT_CAPACITY);
+    application_transport_faults[slot_index].detail = detail;
+    application_transport_faults[slot_index].timestamp_us = timestamp_us;
+    aethor_app_compiler_barrier();
+    ++application_transport_fault_write_sequence;
+    return 1U;
+}
+
+/**
+ * @brief Latches one consumed transport fault and schedules all-axis disable.
+ */
+static uint8_t aethor_app_apply_transport_fault(uint32_t detail,
+                                                uint64_t timestamp_us)
+{
+    uint8_t result_generated = 0U;
+
     if (application_action.state != AETHOR_APP_ACTION_IDLE)
     {
         (void)motor_runtime_abort_active_parameter_sequences(

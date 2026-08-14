@@ -1065,14 +1065,30 @@ static void test_motor_runtime_parameter_quarantine_is_bounded(void)
     assert(motor_runtime_next_control_mode_frame(&runtime,
                                                  4080U,
                                                  &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+    response_payload[2] = 0x55U;
+    assert(can_frame_init(&late_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &late_frame, 4081U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4082U,
+                                                 &request_frame) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(motor_runtime_next_control_mode_frame(&runtime,
-                                                 4081U,
+                                                 4083U,
                                                  &request_frame) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
 
     assert(motor_runtime_abort_active_parameter_sequences(&runtime, 4090U) ==
            MOTOR_RUNTIME_STATUS_OK);
+    response_payload[2] = 0x33U;
+    assert(can_frame_init(&late_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
     accepted_feedback_count = runtime.accepted_feedback_count;
     assert(motor_runtime_accept_frame(
                &runtime,
@@ -1080,6 +1096,250 @@ static void test_motor_runtime_parameter_quarantine_is_bounded(void)
                4090U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US + 1U) ==
            MOTOR_RUNTIME_STATUS_OK);
     assert(runtime.accepted_feedback_count == accepted_feedback_count + 1U);
+}
+
+/**
+ * @brief Verifies early mode-write acknowledgements remain parameter traffic.
+ */
+static void test_motor_runtime_tracks_multiple_mode_parameter_expectations(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    uint32_t accepted_feedback_count;
+    uint32_t rejected_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x55U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x05U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5000U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 1U);
+    assert(request_frame.data[2] == 0x55U);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5001U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 3U);
+    assert(request_frame.data[2] == 0x55U);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5002U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 1U);
+    assert(request_frame.data[2] == 0x33U);
+
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    rejected_feedback_count = runtime.rejected_feedback_count;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5003U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+    assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING);
+    assert(runtime.parameter_expectations.count == 2U);
+}
+
+/**
+ * @brief Verifies a bounded write acknowledgement stays parameter traffic
+ *        after the corresponding readback has completed the mode sequence.
+ */
+static void test_motor_runtime_accepts_late_mode_write_ack_after_readback(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    uint32_t accepted_feedback_count;
+    uint32_t rejected_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5500U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5501U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5502U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    rejected_feedback_count = runtime.rejected_feedback_count;
+    response_payload[2] = 0x55U;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5503U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+    assert(runtime.parameter_expectations.count == 0U);
+}
+
+/**
+ * @brief Verifies abort quarantines the maximum discovery-plus-mode burst.
+ */
+static void test_motor_runtime_quarantines_every_outstanding_parameter_response(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    MotorDiscoveryResult preserved_discovery_result;
+    MotorJointFeedback preserved_feedback[ARM_JOINT_COUNT];
+    uint32_t accepted_feedback_count;
+    uint32_t rejected_feedback_count;
+    uint8_t joint_index;
+    uint8_t discovery_response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_MASTER_ID,
+        0x11U,
+        0U,
+        0U,
+        0U
+    };
+    uint8_t mode_response_payload[8] = {
+        0U,
+        0U,
+        0x55U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+    runtime.discovery.verified_joint_mask = 0x7FU;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        runtime.discovery.results[joint_index].verified_fields_mask =
+            MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    }
+    assert(motor_runtime_begin_control_mode_switch(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_begin_discovery(&runtime, 0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_discovery_frame(&runtime,
+                                              6000U,
+                                              &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[3] == S3519_REGISTER_MASTER_ID);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        assert(motor_runtime_next_control_mode_frame(
+                   &runtime,
+                   (uint64_t)(6001U + joint_index),
+                   &request_frame) == MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(request_frame.data[0] == (uint8_t)(joint_index + 1U));
+        assert(request_frame.data[2] == 0x55U);
+    }
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 6010U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 1U);
+    assert(request_frame.data[2] == 0x33U);
+    assert(runtime.parameter_expectations.count ==
+           MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 6050U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.parameter_expectations.count == 0U);
+    assert(runtime.parameter_quarantine.count ==
+           MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY);
+
+    preserved_discovery_result = runtime.discovery.results[0];
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        preserved_feedback[joint_index] =
+            runtime.bank.motors[joint_index].feedback;
+    }
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    rejected_feedback_count = runtime.rejected_feedback_count;
+
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          discovery_response_payload,
+                          sizeof(discovery_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 6060U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        mode_response_payload[0] = (uint8_t)(joint_index + 1U);
+        assert(can_frame_init(&response_frame,
+                              (uint16_t)(0x11U + joint_index),
+                              mode_response_payload,
+                              sizeof(mode_response_payload)) ==
+               CAN_FRAME_STATUS_OK);
+        assert(motor_runtime_accept_frame(
+                   &runtime,
+                   &response_frame,
+                   (uint64_t)(6061U + joint_index)) == MOTOR_RUNTIME_STATUS_OK);
+    }
+    mode_response_payload[0] = 1U;
+    mode_response_payload[2] = 0x33U;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          mode_response_payload,
+                          sizeof(mode_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 6070U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+    assert(runtime.parameter_quarantine.count == 0U);
+    assert(memcmp(&runtime.discovery.results[0],
+                  &preserved_discovery_result,
+                  sizeof(preserved_discovery_result)) == 0);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        assert(memcmp(&runtime.bank.motors[joint_index].feedback,
+                      &preserved_feedback[joint_index],
+                      sizeof(preserved_feedback[joint_index])) == 0);
+    }
 }
 
 /**
@@ -1612,6 +1872,9 @@ int main(void)
     test_motor_runtime_aborts_active_parameter_sequences();
     test_motor_runtime_discards_late_parameter_responses_after_abort();
     test_motor_runtime_parameter_quarantine_is_bounded();
+    test_motor_runtime_tracks_multiple_mode_parameter_expectations();
+    test_motor_runtime_accepts_late_mode_write_ack_after_readback();
+    test_motor_runtime_quarantines_every_outstanding_parameter_response();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();

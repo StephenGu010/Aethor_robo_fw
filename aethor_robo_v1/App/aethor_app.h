@@ -153,10 +153,10 @@ void aethor_app_update_runtime_diagnostics(
     const RuntimeDiagnosticSample *sample);
 
 /**
- * @brief Latches a severe platform transport fault and schedules all-axis disable.
+ * @brief Publishes a severe transport fault to the ArmControlTask SPSC mailbox.
  * @param detail Stable platform-specific fault detail bits.
  * @param timestamp_us Fault timestamp.
- * @return One when an active command result was queued, otherwise zero.
+ * @return One when published or an earlier global fault remains pending.
  */
 uint8_t aethor_app_report_transport_fault(uint32_t detail,
                                           uint64_t timestamp_us);

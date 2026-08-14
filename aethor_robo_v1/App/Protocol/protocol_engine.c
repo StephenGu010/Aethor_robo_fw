@@ -358,6 +358,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_arm_move(
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
     if ((engine->active_motion_request_id != 0U) ||
+        (engine->active_stop_request_id != 0U) ||
         (engine->query_context.arm.state == ARM_STATE_MOVING))
     {
         (void)protocol_engine_append_text_command_error(output_batch,
@@ -806,6 +807,12 @@ static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
                                    engine->command_read_sequence);
     uint8_t slot_index;
 
+    if ((command->type != PROTOCOL_COMMAND_STOP) &&
+        (engine->active_stop_request_id != 0U))
+    {
+        return 0U;
+    }
+
     if (command->type == PROTOCOL_COMMAND_STOP)
     {
         if (engine->stop_write_sequence != engine->stop_read_sequence)
@@ -813,6 +820,7 @@ static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
             return 0U;
         }
         engine->stop_command = *command;
+        engine->active_stop_request_id = command->request_id;
         protocol_engine_compiler_barrier();
         ++engine->stop_write_sequence;
         return 1U;
@@ -1841,7 +1849,8 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
     static const char profile[] = "arm";
 #endif
 
-    if (engine->active_motion_request_id != 0U)
+    if ((engine->active_motion_request_id != 0U) ||
+        (engine->active_stop_request_id != 0U))
     {
         (void)protocol_engine_append_text_command_error(output_batch,
                                                         request,
@@ -2755,7 +2764,8 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
             request->command_words[1].data);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if ((engine->active_motion_request_id != 0U) &&
+    if (((engine->active_motion_request_id != 0U) ||
+         (engine->active_stop_request_id != 0U)) &&
         (command_type != PROTOCOL_COMMAND_STOP))
     {
         (void)protocol_engine_append_text_command_error(output_batch,
@@ -3076,6 +3086,16 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     AsciiProtocolSpan client;
     AsciiProtocolSpan protocol;
     const BuildInfo *build_info = build_info_get();
+
+    if ((engine->active_motion_request_id != 0U) ||
+        (engine->active_stop_request_id != 0U))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BUSY lifecycle=active",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
 
     if ((ascii_protocol_find_field(request, "client", &client) == 0U) ||
         (client.length == 0U) ||
@@ -3950,7 +3970,8 @@ static ProtocolEngineStatus protocol_engine_handle_move_joints(
                                             (unsigned long)request->request_id);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if (engine->active_motion_request_id != 0U)
+    if ((engine->active_motion_request_id != 0U) ||
+        (engine->active_stop_request_id != 0U))
     {
         (void)protocol_engine_append_format(
             output_batch,
@@ -4309,6 +4330,26 @@ uint8_t protocol_engine_pop_stop_command(ProtocolEngine *engine,
 }
 
 /**
+ * @brief Merges active STOP scope into the still-published priority slot.
+ */
+uint8_t protocol_engine_widen_pending_stop_mask(
+    ProtocolEngine *engine,
+    uint8_t inherited_motor_mask,
+    ProtocolCommand *command)
+{
+    if ((engine == NULL) || (command == NULL) ||
+        (engine->stop_read_sequence == engine->stop_write_sequence))
+    {
+        return 0U;
+    }
+    protocol_engine_compiler_barrier();
+    engine->stop_command.motor_mask |= inherited_motor_mask;
+    *command = engine->stop_command;
+    protocol_engine_compiler_barrier();
+    return 1U;
+}
+
+/**
  * @brief Tombstones the exact active one-shot still waiting in the normal ring.
  */
 uint8_t protocol_engine_take_queued_active_motion(ProtocolEngine *engine,
@@ -4356,6 +4397,7 @@ void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
         engine->command_read_sequence = engine->command_write_sequence;
         engine->stop_read_sequence = engine->stop_write_sequence;
         engine->active_motion_request_id = 0U;
+        engine->active_stop_request_id = 0U;
         engine->cancelled_queued_motion_request_id = 0U;
     }
 }
@@ -4391,6 +4433,11 @@ uint8_t protocol_engine_submit_command_result(
         engine->active_motion_request_id = 0U;
         engine->active_motion_accepted_at_us = 0U;
         engine->active_motion_planned_duration_us = 0U;
+    }
+    if ((result->type == PROTOCOL_COMMAND_STOP) &&
+        (result->request_id == engine->active_stop_request_id))
+    {
+        engine->active_stop_request_id = 0U;
     }
     return 1U;
 }

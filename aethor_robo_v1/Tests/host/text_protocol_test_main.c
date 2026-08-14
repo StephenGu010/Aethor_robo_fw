@@ -175,6 +175,9 @@ static void test_text_protocol_float_conversion_is_strict(void)
         "0.000000000000000000000000000000000000011754943";
     static const char subnormal_rounding_threshold_text[] =
         "0.0000000000000000000000000000000000000117549428";
+    static const char rounds_to_zero_text[] =
+        "0.0000000000000000000000000000000000000000000001";
+    static const char signed_zero_text[] = "-0.0";
     TextProtocolSpan scientific = {scientific_text, sizeof(scientific_text) - 1U};
     TextProtocolSpan nan_value = {nan_text, sizeof(nan_text) - 1U};
     TextProtocolSpan signed_decimal = {
@@ -220,6 +223,18 @@ static void test_text_protocol_float_conversion_is_strict(void)
     TextProtocolSpan minimum_rounds_to_normal = {
         minimum_rounds_to_normal_text,
         sizeof(minimum_rounds_to_normal_text) - 1U
+    };
+    TextProtocolSpan subnormal_rounding_threshold = {
+        subnormal_rounding_threshold_text,
+        sizeof(subnormal_rounding_threshold_text) - 1U
+    };
+    TextProtocolSpan rounds_to_zero = {
+        rounds_to_zero_text,
+        sizeof(rounds_to_zero_text) - 1U
+    };
+    TextProtocolSpan signed_zero = {
+        signed_zero_text,
+        sizeof(signed_zero_text) - 1U
     };
     char maximum_token[64];
     char overlength_token[65];
@@ -294,6 +309,14 @@ static void test_text_protocol_float_conversion_is_strict(void)
                                  sizeof(subnormal_rounding_threshold_text) - 1U]);
     assert(errno == 0);
     assert(value_bits == 0x007FFFFFU);
+    assert(text_protocol_span_to_float(&subnormal_rounding_threshold, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
+    assert(text_protocol_span_to_float(&rounds_to_zero, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
+    assert(text_protocol_span_to_float(&signed_zero, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    memcpy(&value_bits, &value, sizeof(value_bits));
+    assert(value_bits == 0x80000000U);
     assert(text_protocol_span_to_float(&maximum_length_decimal, &value) ==
            TEXT_PROTOCOL_STATUS_OK);
     assert(value == 1.0F);

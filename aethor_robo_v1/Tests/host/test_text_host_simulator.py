@@ -178,6 +178,42 @@ class AethorTextSimulatorTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     build_one_shot_bench_move(50, motors, positions, speeds)
 
+    def test_one_shot_move_builder_uses_plain_decimal_and_normalizes_zero(self) -> None:
+        """Emits tiny finite values without exponents and canonicalizes negative zero."""
+        self.assertEqual(
+            build_one_shot_bench_move(53, [1], [1e-10], [1e-10]),
+            "53 bench move 1 position=0.0000000001 speed=0.0000000001",
+        )
+        self.assertEqual(
+            build_one_shot_bench_move(54, [1], [-0.0], [1.0]),
+            "54 bench move 1 position=0 speed=1",
+        )
+
+    def test_one_shot_move_builder_enforces_final_ascii_line_length(self) -> None:
+        """Checks the complete multi-axis body against the firmware line limit."""
+        valid_body = build_one_shot_bench_move(
+            55, [1, 3, 7], [1e-10, -1e-10, 0.0], [1e-10, 1e-10, 1e-10])
+        self.assertLessEqual(len(valid_body.encode("ascii")), 160)
+
+        with self.assertRaisesRegex(ValueError, "160 ASCII bytes"):
+            build_one_shot_bench_move(
+                56,
+                [1, 2, 3, 4, 5, 6, 7],
+                [1e-10] * 7,
+                [1e-10] * 7,
+            )
+
+    def test_one_shot_move_length_failure_writes_nothing(self) -> None:
+        """Rejects an overlong action before invoking its serial transport."""
+        transport = ScriptedActionTransport([])
+        client = AethorReferenceClient(transport)
+
+        with self.assertRaisesRegex(ValueError, "160 ASCII bytes"):
+            client.bench_move_once([1], [5e-324], [1.0])
+
+        self.assertEqual(transport.action_bodies, [])
+        self.assertEqual(transport.query_bodies, [])
+
     def test_one_shot_move_terminal_vectors(self) -> None:
         """Parses completed, failed, cancelled, and stopped terminal schemas."""
         vector_path = (PROJECT_ROOT / "Tests" / "protocol" /

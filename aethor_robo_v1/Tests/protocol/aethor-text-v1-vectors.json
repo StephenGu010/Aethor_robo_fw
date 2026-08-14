@@ -51,6 +51,14 @@
       "positions_deg": [90, -45],
       "speeds_deg_s": [30, 20],
       "request": "51 bench move 1,3 position=90,-45 speed=30,20"
+    },
+    {
+      "name": "tiny_plain_decimal_move",
+      "request_id": 53,
+      "motors": [1],
+      "positions_deg": [1e-10],
+      "speeds_deg_s": [1e-10],
+      "request": "53 bench move 1 position=0.0000000001 speed=0.0000000001"
     }
   ],
   "bench_move_invalid_cases": [

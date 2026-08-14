@@ -8,10 +8,15 @@ import pathlib
 import sys
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from numbers import Real
 from typing import Protocol, Sequence
 
 from aethor_text_simulator import AethorTextSimulator, encode_line
+
+# Matches TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH. Firmware removes CR/LF before
+# applying this limit, so the client checks the ASCII request body only.
+AETHOR_TEXT_MAX_REQUEST_BODY_BYTES = 160
 
 
 class LineTransport(Protocol):
@@ -39,11 +44,14 @@ class OneShotMoveResult:
 
 
 def _format_finite_number(value: Real) -> str:
-    """Formats one already-validated finite number without redundant zeros."""
+    """Formats one finite float as round-trip-safe plain decimal text."""
     numeric_value = float(value)
     if numeric_value == 0.0:
         return "0"
-    return format(numeric_value, ".15g")
+    plain_text = format(Decimal(str(numeric_value)), "f")
+    if "." in plain_text:
+        plain_text = plain_text.rstrip("0").rstrip(".")
+    return plain_text
 
 
 def build_one_shot_bench_move(
@@ -77,8 +85,12 @@ def build_one_shot_bench_move(
     motor_text = ",".join(str(motor) for motor in motors)
     position_text = ",".join(_format_finite_number(value) for value in positions)
     speed_text = ",".join(_format_finite_number(value) for value in speeds)
-    return (f"{request_id} bench move {motor_text} "
+    body = (f"{request_id} bench move {motor_text} "
             f"position={position_text} speed={speed_text}")
+    if len(body.encode("ascii")) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES:
+        raise ValueError(
+            "bench move request exceeds 160 ASCII bytes excluding CR/LF")
+    return body
 
 
 def _parse_decimal_field(value: str, field_name: str) -> int:

@@ -541,6 +541,20 @@ static void test_text_bench_move_ordered_values(void)
 
     response = process_text_request(
         &engine,
+        "76 bench move 1 position=0.0000000001 speed=0.0000000001\n",
+        3600U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 76 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED);
+    assert(command.motor_mask == 0x01U);
+    assert(command.values[0] == 0.0000000001F);
+    assert(command.speeds[0] == 0.0000000001F);
+    complete_parser_one_shot(&engine, &command, 3700U);
+
+    response = process_text_request(
+        &engine,
         "75 bench move 7,6,5,4,3,2,1 "
         "position=70,60,50,40,30,20,10 speed=7,6,5,4,3,2,1\n",
         4000U,

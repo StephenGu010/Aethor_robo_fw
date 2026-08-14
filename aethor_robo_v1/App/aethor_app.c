@@ -544,6 +544,87 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
 }
 
 /**
+ * @brief Fails energized one-shot phases on the first selected stale or faulted motor.
+ * @param motor_snapshot Current freshness-filtered motor feedback.
+ * @param timestamp_us Current monotonic timestamp.
+ * @param failure_detected Destination set when cleanup or a terminal result started.
+ * @return One when failure handling queued a terminal result, otherwise zero.
+ */
+static uint8_t aethor_app_check_one_shot_motor_safety(
+    const MotorFeedbackSnapshot *motor_snapshot,
+    uint64_t timestamp_us,
+    uint8_t *failure_detected)
+{
+    ProtocolCommandStage failed_stage;
+    uint8_t joint_index;
+
+    if (failure_detected == NULL)
+    {
+        return 0U;
+    }
+    *failure_detected = 0U;
+    switch (application_action.state)
+    {
+        case AETHOR_APP_ACTION_ONE_SHOT_MOVE_WAIT:
+            failed_stage = PROTOCOL_COMMAND_STAGE_MOTION;
+            break;
+        case AETHOR_APP_ACTION_ONE_SHOT_HOLD_WAIT:
+            failed_stage = PROTOCOL_COMMAND_STAGE_HOLD;
+            break;
+        case AETHOR_APP_ACTION_ONE_SHOT_DISABLE_WAIT:
+            failed_stage = PROTOCOL_COMMAND_STAGE_DISABLE;
+            break;
+        case AETHOR_APP_ACTION_IDLE:
+        case AETHOR_APP_ACTION_MODE_SWITCH:
+        case AETHOR_APP_ACTION_DISCOVERY:
+        case AETHOR_APP_ACTION_BENCH_MODE_SWITCH:
+        case AETHOR_APP_ACTION_ENABLE_WAIT:
+        case AETHOR_APP_ACTION_BENCH_MOVE_WAIT:
+        case AETHOR_APP_ACTION_DISABLE_WAIT:
+        case AETHOR_APP_ACTION_CLEAR_FAULT_WAIT:
+        case AETHOR_APP_ACTION_MOTION:
+        case AETHOR_APP_ACTION_CONTROLLED_STOP:
+        case AETHOR_APP_ACTION_ONE_SHOT_DISCOVERY:
+        case AETHOR_APP_ACTION_ONE_SHOT_MODE_SWITCH:
+        case AETHOR_APP_ACTION_ONE_SHOT_CLEAR_WAIT:
+        case AETHOR_APP_ACTION_ONE_SHOT_ENABLE_WAIT:
+        case AETHOR_APP_ACTION_ONE_SHOT_CLEANUP_DISABLE_WAIT:
+        default:
+            return 0U;
+    }
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+
+        if ((application_action.command.motor_mask & joint_bit) == 0U)
+        {
+            continue;
+        }
+        if ((motor_snapshot == NULL) ||
+            ((motor_snapshot->valid_joint_mask & joint_bit) == 0U))
+        {
+            *failure_detected = 1U;
+            return aethor_app_begin_one_shot_cleanup(
+                failed_stage,
+                PROTOCOL_COMMAND_ERROR_STALE_FEEDBACK,
+                (uint8_t)(joint_index + 1U),
+                timestamp_us);
+        }
+        if (motor_snapshot->joints[joint_index].fault_flags != 0U)
+        {
+            *failure_detected = 1U;
+            return aethor_app_begin_one_shot_cleanup(
+                failed_stage,
+                PROTOCOL_COMMAND_ERROR_FAULT_PRESENT,
+                (uint8_t)(joint_index + 1U),
+                timestamp_us);
+        }
+    }
+    return 0U;
+}
+
+/**
  * @brief Validates fixed one-shot targets and begins the selected POS_VEL mode cycle.
  * @param motor_snapshot Current freshness-filtered feedback snapshot.
  * @param timestamp_us Current monotonic timestamp.
@@ -2215,6 +2296,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         ProtocolCommand command;
         MotorRuntimeStatus snapshot_status;
         ArmSnapshot arm_snapshot;
+        uint8_t one_shot_motor_failure_detected;
 
         if ((application_last_service_timestamp_us != 0U) &&
             (timestamp_us >= application_last_service_timestamp_us))
@@ -2245,21 +2327,34 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         memset(&arm_snapshot, 0, sizeof(arm_snapshot));
         (void)arm_controller_get_snapshot(&application_controller,
                                           &arm_snapshot);
-        if ((arm_snapshot.enabled != 0U) || (arm_snapshot.moving != 0U))
+        result_generated = aethor_app_check_one_shot_motor_safety(
+            &motor_snapshot,
+            timestamp_us,
+            &one_shot_motor_failure_detected);
+        if (one_shot_motor_failure_detected != 0U)
+        {
+            return result_generated;
+        }
+        if ((arm_snapshot.enabled != 0U) || (arm_snapshot.moving != 0U) ||
+            (aethor_app_active_action_owns_link_lifecycle() != 0U))
         {
             uint32_t driver_fault_detail =
                 aethor_app_first_driver_fault_detail(&motor_snapshot);
             ArmFault runtime_fault = ARM_FAULT_NONE;
             uint32_t runtime_fault_detail = 0U;
 
-            if (driver_fault_detail != 0U)
+            if (((arm_snapshot.enabled != 0U) ||
+                 (arm_snapshot.moving != 0U)) &&
+                (driver_fault_detail != 0U))
             {
                 runtime_fault = ARM_FAULT_DRIVER;
                 runtime_fault_detail = driver_fault_detail;
             }
-            else if ((snapshot_status != MOTOR_RUNTIME_STATUS_OK) ||
-                     (motor_snapshot.valid_joint_mask !=
-                      AETHOR_APP_ALL_JOINTS_MASK))
+            else if (((arm_snapshot.enabled != 0U) ||
+                      (arm_snapshot.moving != 0U)) &&
+                     ((snapshot_status != MOTOR_RUNTIME_STATUS_OK) ||
+                      (motor_snapshot.valid_joint_mask !=
+                       AETHOR_APP_ALL_JOINTS_MASK)))
             {
                 runtime_fault = ARM_FAULT_FEEDBACK_STALE;
                 runtime_fault_detail = motor_snapshot.valid_joint_mask;

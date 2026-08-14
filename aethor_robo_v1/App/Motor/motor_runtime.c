@@ -53,7 +53,7 @@ static uint8_t motor_runtime_frame_matches_parameter_signature(
 /**
  * @brief Removes one entry while preserving FIFO order and bounded count.
  */
-uint8_t motor_runtime_remove_parameter_response(
+static uint8_t motor_runtime_remove_parameter_response(
     MotorParameterResponseSet *set,
     uint8_t entry_index)
 {

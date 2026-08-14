@@ -317,6 +317,14 @@ void StartProtocolTask(void const * argument)
       }
     } while ((lineStatus == USB_CDC_STREAM_STATUS_OK) ||
              (lineStatus == USB_CDC_STREAM_STATUS_LINE_TOO_LONG));
+    {
+      uint64_t timestampUs = AethorMonotonicTimestampUs();
+
+      if (aethor_app_generate_stream_output(timestampUs, &outputBatch) != 0U)
+      {
+        QueueProtocolOutputBatch(&outputBatch);
+      }
+    }
   }
 }
 
@@ -351,13 +359,9 @@ void StartTelemetryTask(void const * argument)
   (void)argument;
   for(;;)
   {
-    ProtocolOutputBatch outputBatch;
-
-    if (aethor_app_generate_stream_output(
-            AethorMonotonicTimestampUs(),
-            &outputBatch) != 0U)
+    if (ProtocolTaskHandle != NULL)
     {
-      QueueProtocolOutputBatch(&outputBatch);
+      (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
     }
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(10U));
   }

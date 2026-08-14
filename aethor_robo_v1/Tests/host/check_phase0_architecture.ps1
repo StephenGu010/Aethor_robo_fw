@@ -155,7 +155,7 @@ function Invoke-Phase0ArchitectureCheck {
     # time and perform platform/blocking work outside it.
     $canRxTaskMatch = [regex]::Match(
         $freertosText,
-        'void\s+StartCanRxTask\s*\([^)]*\)[\s\S]*?(?=/\* USER CODE BEGIN Header_StartProtocolTask \*/)')
+        'void\s+StartCanRxTask\s*\([^)]*\)\s*\{[\s\S]*?(?=/\* USER CODE BEGIN Header_StartProtocolTask \*/)')
     if (-not $canRxTaskMatch.Success)
     {
         Add-ArchitectureFailure -FailureList $failureList -Message 'CanRxTask body could not be isolated for concurrency checks.'
@@ -180,6 +180,51 @@ function Invoke-Phase0ArchitectureCheck {
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'aethor_app_process_protocol_line\s*\(' `
         -Message 'ProtocolTask does not dispatch parsed requests to the protocol engine.'
+    # ProtocolTask is the sole ProtocolEngine formatter. TelemetryTask only
+    # supplies a 10 ms wakeup so USB commands are applied before stream output.
+    $protocolTaskMatch = [regex]::Match(
+        $freertosText,
+        'void\s+StartProtocolTask\s*\([^)]*\)\s*\{[\s\S]*?(?=/\* USER CODE BEGIN Header_StartUsbTxTask \*/)')
+    $telemetryTaskMatch = [regex]::Match(
+        $freertosText,
+        'void\s+StartTelemetryTask\s*\([^)]*\)\s*\{[\s\S]*?(?=/\* USER CODE BEGIN Header_StartDiagnosticsTask \*/)')
+    if (-not $protocolTaskMatch.Success)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'ProtocolTask body could not be isolated for owner checks.'
+    }
+    else
+    {
+        Assert-TextContains -FailureList $failureList -Text $protocolTaskMatch.Value `
+            -Pattern 'aethor_app_pop_protocol_result_output[\s\S]*stm32_platform_usb_next_line[\s\S]*while\s*\(\s*\(lineStatus[\s\S]*AethorMonotonicTimestampUs\s*\(\s*\)[\s\S]{0,240}aethor_app_generate_stream_output[\s\S]{0,240}QueueProtocolOutputBatch' `
+            -Message 'ProtocolTask does not drain results and USB lines before telemetry formatting.'
+    }
+    if (-not $telemetryTaskMatch.Success)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'TelemetryTask body could not be isolated for owner checks.'
+    }
+    else
+    {
+        Assert-TextContains -FailureList $failureList -Text $telemetryTaskMatch.Value `
+            -Pattern 'xTaskNotifyGive\s*\(\s*\(TaskHandle_t\)ProtocolTaskHandle\s*\)' `
+            -Message 'TelemetryTask does not wake the sole ProtocolTask owner.'
+        if ($telemetryTaskMatch.Value -match 'aethor_app_generate_stream_output|QueueProtocolOutputBatch|AethorMonotonicTimestampUs')
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'TelemetryTask still reads or formats ProtocolEngine state directly.'
+        }
+    }
+    if ($protocolTaskMatch.Success)
+    {
+        $allQueueOwnerReferences = [regex]::Matches(
+            $freertosText,
+            'QueueProtocolOutputBatch\s*\(').Count
+        $protocolQueueReferences = [regex]::Matches(
+            $protocolTaskMatch.Value,
+            'QueueProtocolOutputBatch\s*\(').Count
+        if ($allQueueOwnerReferences -ne ($protocolQueueReferences + 2))
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'A task other than ProtocolTask queues formatted protocol output.'
+        }
+    }
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'pdMS_TO_TICKS\s*\(\s*4U\s*\)' `
         -Message 'ArmControlTask period is not 4 ms.'
@@ -221,6 +266,15 @@ function Invoke-Phase0ArchitectureCheck {
     # motor enabled; keep this lifecycle gate explicit in the application layer.
     $aethorAppText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\aethor_app.c') -Raw
     $protocolEngineText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\Protocol\protocol_engine.c') -Raw
+    $motorRuntimeHeaderText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\Motor\motor_runtime.h') -Raw
+    $motorRuntimeText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\Motor\motor_runtime.c') -Raw
+    if ($motorRuntimeHeaderText -match 'motor_runtime_remove_parameter_response')
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'Internal parameter-set mutation escaped through the public MotorRuntime header.'
+    }
+    Assert-TextContains -FailureList $failureList -Text $motorRuntimeText `
+        -Pattern 'static\s+uint8_t\s+motor_runtime_remove_parameter_response[\s\S]{0,320}entry_index\s*>=\s*set->count[\s\S]{0,120}return\s+0U' `
+        -Message 'Internal parameter removal is not static and defensively bounded.'
     $protocolContextMatch = [regex]::Match(
         $aethorAppText,
         'static\s+void\s+aethor_app_update_protocol_context\s*\([^)]*\)[\s\S]*?(?=/\*\*[\r\n]+ \* @brief Initializes all static Phase 0 application state\.)')

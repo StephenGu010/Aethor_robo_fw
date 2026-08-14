@@ -1403,14 +1403,14 @@ static void test_motor_runtime_mode_rollover_fails_closed_at_capacity(void)
 }
 
 /**
- * @brief Verifies invalid parameter removals preserve count and mode state.
+ * @brief Verifies missing, expired, and unrelated expectations cannot advance mode.
  */
-static void test_motor_runtime_parameter_remove_is_defensive(void)
+static void test_motor_runtime_parameter_routes_are_defensive(void)
 {
-    MotorParameterResponseSet parameter_set = {0};
     MotorRuntime runtime;
     CanFrame response_frame;
     MotorModeSwitchState mode_state_before_response;
+    uint8_t verified_mask_before_response;
     uint8_t response_payload[8] = {
         1U,
         0U,
@@ -1422,31 +1422,53 @@ static void test_motor_runtime_parameter_remove_is_defensive(void)
         0U
     };
 
-    assert(motor_runtime_remove_parameter_response(NULL, 0U) == 0U);
-    assert(motor_runtime_remove_parameter_response(&parameter_set, 0U) == 0U);
-    assert(parameter_set.count == 0U);
-    parameter_set.count = 1U;
-    parameter_set.entries[0].valid = 1U;
-    parameter_set.entries[0].identifier = 0x11U;
-    assert(motor_runtime_remove_parameter_response(&parameter_set, 1U) == 0U);
-    assert(parameter_set.count == 1U);
-    assert(parameter_set.entries[0].valid == 1U);
-    assert(parameter_set.entries[0].identifier == 0x11U);
-    assert(motor_runtime_remove_parameter_response(&parameter_set, 0U) == 1U);
-    assert(parameter_set.count == 0U);
-    assert(parameter_set.entries[0].valid == 0U);
-
     prepare_runtime_with_two_discovered_motors(&runtime);
     runtime.mode_switch_state = MOTOR_MODE_SWITCH_READ_WAITING;
-    runtime.parameter_expectations.count = 0U;
     mode_state_before_response = runtime.mode_switch_state;
+    verified_mask_before_response = runtime.discovery.verified_joint_mask;
     assert(can_frame_init(&response_frame,
                           0x11U,
                           response_payload,
                           sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+
+    runtime.parameter_expectations.count = 0U;
     (void)motor_runtime_accept_frame(&runtime, &response_frame, 5900U);
     assert(runtime.parameter_expectations.count == 0U);
     assert(runtime.mode_switch_state == mode_state_before_response);
+    assert(runtime.discovery.verified_joint_mask ==
+           verified_mask_before_response);
+
+    runtime.parameter_expectations.count = 1U;
+    runtime.parameter_expectations.entries[0].timestamp_us = 0U;
+    runtime.parameter_expectations.entries[0].identifier = 0x11U;
+    runtime.parameter_expectations.entries[0].joint_index = 0U;
+    runtime.parameter_expectations.entries[0].esc_id = 1U;
+    runtime.parameter_expectations.entries[0].opcode = 0x33U;
+    runtime.parameter_expectations.entries[0].register_address =
+        S3519_REGISTER_CONTROL_MODE;
+    runtime.parameter_expectations.entries[0].valid = 1U;
+    runtime.parameter_expectations.sources[0] = MOTOR_PARAMETER_SOURCE_MODE_READ;
+    (void)motor_runtime_accept_frame(&runtime, &response_frame, 26000U);
+    assert(runtime.parameter_expectations.count == 0U);
+    assert(runtime.mode_switch_state == mode_state_before_response);
+    assert(runtime.discovery.verified_joint_mask ==
+           verified_mask_before_response);
+
+    runtime.parameter_expectations.count = 1U;
+    runtime.parameter_expectations.entries[0].timestamp_us = 27000U;
+    runtime.parameter_expectations.entries[0].identifier = 0x13U;
+    runtime.parameter_expectations.entries[0].joint_index = 2U;
+    runtime.parameter_expectations.entries[0].esc_id = 3U;
+    runtime.parameter_expectations.entries[0].opcode = 0x33U;
+    runtime.parameter_expectations.entries[0].register_address =
+        S3519_REGISTER_CONTROL_MODE;
+    runtime.parameter_expectations.entries[0].valid = 1U;
+    runtime.parameter_expectations.sources[0] = MOTOR_PARAMETER_SOURCE_MODE_READ;
+    (void)motor_runtime_accept_frame(&runtime, &response_frame, 27001U);
+    assert(runtime.parameter_expectations.count == 1U);
+    assert(runtime.mode_switch_state == mode_state_before_response);
+    assert(runtime.discovery.verified_joint_mask ==
+           verified_mask_before_response);
 }
 
 /**
@@ -2113,7 +2135,7 @@ int main(void)
     test_motor_runtime_mode_rollover_preserves_prior_generation();
     test_motor_runtime_mode_rollover_allows_different_tuple();
     test_motor_runtime_mode_rollover_fails_closed_at_capacity();
-    test_motor_runtime_parameter_remove_is_defensive();
+    test_motor_runtime_parameter_routes_are_defensive();
     test_motor_runtime_quarantines_every_outstanding_parameter_response();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();

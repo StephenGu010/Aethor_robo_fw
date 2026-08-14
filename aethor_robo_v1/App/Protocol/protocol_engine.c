@@ -1102,6 +1102,14 @@ static uint8_t protocol_engine_parse_text_u32(const TextProtocolSpan *span,
 }
 
 #if (AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE)
+/** @brief Identifies why a strict text motor/value list was rejected. */
+typedef enum
+{
+    PROTOCOL_TEXT_LIST_PARSE_OK = 0,
+    PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT,
+    PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH
+} ProtocolTextListParseStatus;
+
 /** @brief Parses a unique ascending comma list of public motor numbers. */
 static uint8_t protocol_engine_parse_text_motor_mask(
     const TextProtocolSpan *span,
@@ -1139,6 +1147,138 @@ static uint8_t protocol_engine_parse_text_motor_mask(
     }
     *motor_mask = parsed_mask;
     return (uint8_t)(parsed_mask != 0U);
+}
+
+/**
+ * @brief Parses unique public motor numbers while preserving caller order.
+ * @param span Comma-separated public motor numbers in the range 1..7.
+ * @param motor_mask Destination selected-motor bit mask.
+ * @param joint_order Destination zero-based joint indices in caller order.
+ * @param motor_count Destination number of parsed motors.
+ * @return OK for a non-empty unique list, otherwise BAD_ARGUMENT.
+ */
+static ProtocolTextListParseStatus protocol_engine_parse_text_motor_list(
+    const TextProtocolSpan *span,
+    uint8_t *motor_mask,
+    uint8_t joint_order[ARM_JOINT_COUNT],
+    uint8_t *motor_count)
+{
+    size_t token_start = 0U;
+    size_t character_index;
+    uint8_t parsed_mask = 0U;
+    uint8_t parsed_count = 0U;
+
+    if ((span == NULL) || (motor_mask == NULL) || (joint_order == NULL) ||
+        (motor_count == NULL) || (span->length == 0U))
+    {
+        return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+    }
+    memset(joint_order, 0, sizeof(uint8_t) * ARM_JOINT_COUNT);
+    for (character_index = 0U; character_index <= span->length; ++character_index)
+    {
+        if ((character_index == span->length) ||
+            (span->data[character_index] == ','))
+        {
+            TextProtocolSpan token;
+            uint32_t motor_number;
+            uint8_t motor_bit;
+
+            token.data = &span->data[token_start];
+            token.length = character_index - token_start;
+            if ((protocol_engine_parse_text_u32(&token, &motor_number) == 0U) ||
+                (motor_number < 1U) || (motor_number > ARM_JOINT_COUNT))
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            motor_bit = (uint8_t)(1U << (motor_number - 1U));
+            if ((parsed_mask & motor_bit) != 0U)
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            joint_order[parsed_count] = (uint8_t)(motor_number - 1U);
+            parsed_mask |= motor_bit;
+            ++parsed_count;
+            token_start = character_index + 1U;
+        }
+    }
+    *motor_mask = parsed_mask;
+    *motor_count = parsed_count;
+    return PROTOCOL_TEXT_LIST_PARSE_OK;
+}
+
+/**
+ * @brief Parses exactly one finite float per caller-ordered selected motor.
+ * @param span Comma-separated strict decimal values.
+ * @param joint_order Zero-based joint indices in caller motor order.
+ * @param motor_count Required value count.
+ * @param values Destination joint-indexed values.
+ * @return OK, BAD_ARGUMENT, or COUNT_MISMATCH for the parsed list.
+ */
+static ProtocolTextListParseStatus
+protocol_engine_parse_text_selected_motor_values(
+    const TextProtocolSpan *span,
+    const uint8_t joint_order[ARM_JOINT_COUNT],
+    uint8_t motor_count,
+    float values[ARM_JOINT_COUNT])
+{
+    size_t token_start = 0U;
+    size_t character_index;
+    size_t token_count = 1U;
+    uint8_t value_index = 0U;
+
+    if ((span == NULL) || (joint_order == NULL) || (values == NULL) ||
+        (span->length == 0U) || (motor_count == 0U) ||
+        (motor_count > ARM_JOINT_COUNT))
+    {
+        return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+    }
+    for (character_index = 0U; character_index < span->length; ++character_index)
+    {
+        if (span->data[character_index] == ',')
+        {
+            if (character_index == token_start)
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            ++token_count;
+            token_start = character_index + 1U;
+        }
+    }
+    if (token_start == span->length)
+    {
+        return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+    }
+    if (token_count != motor_count)
+    {
+        return PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH;
+    }
+
+    memset(values, 0, sizeof(float) * ARM_JOINT_COUNT);
+    token_start = 0U;
+    for (character_index = 0U; character_index <= span->length; ++character_index)
+    {
+        if ((character_index == span->length) ||
+            (span->data[character_index] == ','))
+        {
+            TextProtocolSpan token;
+            uint8_t joint_index = joint_order[value_index];
+
+            if (joint_index >= ARM_JOINT_COUNT)
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            token.data = &span->data[token_start];
+            token.length = character_index - token_start;
+            if (text_protocol_span_to_float(&token, &values[joint_index]) !=
+                TEXT_PROTOCOL_STATUS_OK)
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            ++value_index;
+            token_start = character_index + 1U;
+        }
+    }
+    return PROTOCOL_TEXT_LIST_PARSE_OK;
 }
 #endif
 
@@ -2549,6 +2689,10 @@ static uint8_t protocol_engine_text_bench_command_type(
     {
         *command_type = PROTOCOL_COMMAND_MOVE_RELATIVE;
     }
+    else if (text_protocol_request_path_equals(request, "bench", "move") != 0U)
+    {
+        *command_type = PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED;
+    }
     else if (text_protocol_request_path_equals(request, "bench", "stop") != 0U)
     {
         *command_type = PROTOCOL_COMMAND_STOP;
@@ -2578,6 +2722,8 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
     TextProtocolSpan motors_span;
     ProtocolCommand command;
     ProtocolCommandType command_type;
+    uint8_t joint_order[ARM_JOINT_COUNT];
+    uint8_t motor_count = 0U;
     uint8_t joint_index;
 
     memset(&command, 0, sizeof(command));
@@ -2589,9 +2735,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
     if ((request->positional_count != 1U) ||
-        (text_protocol_get_positional(request, 0U, &motors_span) == 0U) ||
-        (protocol_engine_parse_text_motor_mask(&motors_span,
-                                               &command.motor_mask) == 0U))
+        (text_protocol_get_positional(request, 0U, &motors_span) == 0U))
     {
         (void)protocol_engine_append_text_format(
             output_batch,
@@ -2602,7 +2746,110 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
             request->command_words[1].data);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE)
+    if (command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+    {
+        TextProtocolSpan position_span;
+        TextProtocolSpan speed_span;
+        ProtocolTextListParseStatus list_status;
+
+        if (protocol_engine_parse_text_motor_list(&motors_span,
+                                                  &command.motor_mask,
+                                                  joint_order,
+                                                  &motor_count) !=
+            PROTOCOL_TEXT_LIST_PARSE_OK)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=bad_argument field=motors",
+                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (text_protocol_find_field(request, "position", &position_span) == 0U)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=bad_argument field=position",
+                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (text_protocol_find_field(request, "speed", &speed_span) == 0U)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=bad_argument field=speed",
+                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (request->field_count != 2U)
+        {
+            (void)protocol_engine_append_text_command_error(output_batch,
+                                                            request,
+                                                            "bad_argument");
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        list_status = protocol_engine_parse_text_selected_motor_values(
+            &position_span,
+            joint_order,
+            motor_count,
+            command.values);
+        if (list_status != PROTOCOL_TEXT_LIST_PARSE_OK)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=%s field=position",
+                (unsigned long)request->request_id,
+                (list_status == PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH)
+                    ? "count_mismatch"
+                    : "bad_argument");
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        list_status = protocol_engine_parse_text_selected_motor_values(
+            &speed_span,
+            joint_order,
+            motor_count,
+            command.speeds);
+        if (list_status != PROTOCOL_TEXT_LIST_PARSE_OK)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=%s field=speed",
+                (unsigned long)request->request_id,
+                (list_status == PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH)
+                    ? "count_mismatch"
+                    : "bad_argument");
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        for (joint_index = 0U; joint_index < motor_count; ++joint_index)
+        {
+            if (command.speeds[joint_order[joint_index]] <= 0.0F)
+            {
+                (void)protocol_engine_append_text_format(
+                    output_batch,
+                    PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                    "error %lu bench move code=out_of_range field=speed",
+                    (unsigned long)request->request_id);
+                return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+            }
+        }
+    }
+    else if (protocol_engine_parse_text_motor_mask(&motors_span,
+                                                   &command.motor_mask) == 0U)
+    {
+        (void)protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+            "error %lu bench %.*s code=bad_argument field=motors",
+            (unsigned long)request->request_id,
+            (int)request->command_words[1].length,
+            request->command_words[1].data);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    else if (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE)
     {
         TextProtocolSpan delta_span;
         TextProtocolSpan speed_span;
@@ -2621,16 +2868,6 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                 (unsigned long)request->request_id);
             return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
         }
-        if ((delta_degrees < -AETHOR_BENCH_MAX_RELATIVE_DEGREES) ||
-            (delta_degrees > AETHOR_BENCH_MAX_RELATIVE_DEGREES))
-        {
-            (void)protocol_engine_append_text_format(
-                output_batch,
-                PROTOCOL_OUTPUT_HIGH_PRIORITY,
-                "error %lu bench jog code=out_of_range field=delta",
-                (unsigned long)request->request_id);
-            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
-        }
         if ((text_protocol_find_field(request, "speed", &speed_span) == 0U) ||
             (text_protocol_span_to_float(&speed_span, &speed_degrees_s) !=
              TEXT_PROTOCOL_STATUS_OK))
@@ -2642,8 +2879,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                 (unsigned long)request->request_id);
             return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
         }
-        if ((speed_degrees_s <= 0.0F) ||
-            (speed_degrees_s > AETHOR_BENCH_MAX_SPEED_DEGREES_S))
+        if (speed_degrees_s <= 0.0F)
         {
             (void)protocol_engine_append_text_format(
                 output_batch,

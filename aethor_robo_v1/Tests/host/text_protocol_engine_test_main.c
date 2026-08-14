@@ -447,7 +447,209 @@ static void test_text_bench_commands(void)
     assert(command.motor_mask == 0x05U);
 }
 
-/** @brief Verifies bench safety bounds, list rules, and compile-time profile gate. */
+/** @brief Verifies one-shot bench moves preserve caller motor/value ordering. */
+static void test_text_bench_move_ordered_values(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    const char *response;
+    uint8_t joint_index;
+
+    protocol_engine_init(&engine, 9178U);
+    response = process_text_request(&engine,
+                                    "50 bench move 1 position=90 speed=30\n",
+                                    1000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 50 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED);
+    assert(command.motor_mask == 0x01U);
+    assert(command.values[0] == 90.0F);
+    assert(command.speeds[0] == 30.0F);
+
+    response = process_text_request(
+        &engine,
+        "51 bench move 1,3 position=90,-45 speed=30,20\n",
+        2000U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 51 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED);
+    assert(command.motor_mask == 0x05U);
+    assert(command.values[0] == 90.0F);
+    assert(command.values[2] == -45.0F);
+    assert(command.speeds[0] == 30.0F);
+    assert(command.speeds[2] == 20.0F);
+
+    response = process_text_request(
+        &engine,
+        "58 bench move 3,1 position=-45,90 speed=20,30\n",
+        3000U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 58 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED);
+    assert(command.motor_mask == 0x05U);
+    assert(command.values[0] == 90.0F);
+    assert(command.values[2] == -45.0F);
+    assert(command.speeds[0] == 30.0F);
+    assert(command.speeds[2] == 20.0F);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if ((command.motor_mask & (uint8_t)(1U << joint_index)) == 0U)
+        {
+            assert(command.values[joint_index] == 0.0F);
+            assert(command.speeds[joint_index] == 0.0F);
+        }
+    }
+}
+
+/** @brief Verifies one-shot bench moves reject malformed one-to-one lists. */
+static void test_text_bench_move_rejections(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    const char *response;
+
+    protocol_engine_init(&engine, 9189U);
+    response = process_text_request(
+        &engine,
+        "52 bench move 1,3 position=90 speed=30,20\n",
+        1000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 52 bench move code=count_mismatch field=position\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "53 bench move 1,3 position=90,-45 speed=30\n",
+        2000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 53 bench move code=count_mismatch field=speed\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "54 bench move 1,1 position=10,20 speed=1,1\n",
+        3000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 54 bench move code=bad_argument field=motors\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "55 bench move 1 position=nan speed=1\n",
+                                    4000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 55 bench move code=bad_argument field=position\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "56 bench move 1 position=1 speed=0\n",
+                                    5000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 56 bench move code=out_of_range field=speed\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "59 bench move 1 position=1 speed=-1\n",
+                                    6000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 59 bench move code=out_of_range field=speed\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "60 bench move 1,3 position=90, speed=30,20\n",
+        7000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 60 bench move code=bad_argument field=position\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "61 bench move 1 position=inf speed=1\n",
+                                    8000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 61 bench move code=bad_argument field=position\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "63 bench move 1 position=90, speed=30\n",
+                                    9000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 63 bench move code=bad_argument field=position\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "64 bench move 1 position=1\n",
+                                    10000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 64 bench move code=bad_argument field=speed\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "65 bench move 1,,3 position=10,20 speed=1,1\n",
+        11000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 65 bench move code=bad_argument field=motors\n") == 0);
+}
+
+/** @brief Verifies accepted bench moves replay without a second queue entry. */
+static void test_text_bench_move_replay(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    const char *response;
+
+    protocol_engine_init(&engine, 9190U);
+    response = process_text_request(
+        &engine,
+        "62 bench move 3,1 position=-45,90 speed=20,30\n",
+        1000U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 62 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(protocol_engine_pop_command(&engine, &command) == 0U);
+
+    response = process_text_request(
+        &engine,
+        "62 bench move 3,1 position=-45,90 speed=20,30\n",
+        2000U,
+        PROTOCOL_ENGINE_STATUS_REPLAYED,
+        &output_batch);
+    assert(strcmp(response, "ok 62 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) == 0U);
+
+    response = process_text_request(
+        &engine,
+        "62 bench move 3,1 position=-44,90 speed=20,30\n",
+        3000U,
+        PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 62 bench move code=request_conflict\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) == 0U);
+}
+
+/** @brief Verifies bench structural rules and compile-time profile gate. */
 static void test_text_bench_rejections(void)
 {
     ProtocolEngine engine;
@@ -456,12 +658,11 @@ static void test_text_bench_rejections(void)
 
     protocol_engine_init(&engine, 9234U);
     response = process_text_request(&engine,
-                                    "30 bench jog 1,3 delta=3.1 speed=1\n",
+                                    "57 bench jog 1 delta=90 speed=30\n",
                                     1000U,
-                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    PROTOCOL_ENGINE_STATUS_OK,
                                     &output_batch);
-    assert(strcmp(response,
-                  "error 30 bench jog code=out_of_range field=delta\n") == 0);
+    assert(strcmp(response, "ok 57 bench jog accepted=1\n") == 0);
 
     response = process_text_request(&engine,
                                     "31 bench enable 3,1\n",
@@ -603,6 +804,9 @@ int main(void)
     test_text_detailed_show_queries();
     test_text_bench_commands();
     test_text_bench_rejections();
+    test_text_bench_move_ordered_values();
+    test_text_bench_move_rejections();
+    test_text_bench_move_replay();
     test_text_bench_done_output();
     test_text_watchdog_scope();
     test_unknown_text_command_does_not_keep_motors_energized();

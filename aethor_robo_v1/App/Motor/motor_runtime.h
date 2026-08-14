@@ -22,6 +22,17 @@ typedef struct
 } MotorEmergencyFrameBatch;
 
 /**
+ * @brief Stores discovered dynamic limits for S3519 POS_VEL commands.
+ */
+typedef struct
+{
+    float position_max_rad;
+    float velocity_mapping_max_rad_s;
+    float maximum_speed_rad_s;
+    float move_speed_limit_rad_s;
+} MotorPositionVelocityLimits;
+
+/**
  * @brief Reports deterministic discovery and receive-routing outcomes.
  */
 typedef enum
@@ -38,7 +49,10 @@ typedef enum
     MOTOR_RUNTIME_STATUS_ID_MISMATCH,
     MOTOR_RUNTIME_STATUS_STALE_FEEDBACK,
     MOTOR_RUNTIME_STATUS_ACTION_COMPLETE,
-    MOTOR_RUNTIME_STATUS_ACTION_FAILED
+    MOTOR_RUNTIME_STATUS_ACTION_FAILED,
+    MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE,
+    MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE,
+    MOTOR_RUNTIME_STATUS_FAULT_PRESENT
 } MotorRuntimeStatus;
 
 /** @brief Describes the bounded seven-motor control-mode write/readback cycle. */
@@ -151,6 +165,36 @@ MotorRuntimeStatus motor_runtime_build_control_group(
     const float motor_position_rad[ARM_JOINT_COUNT],
     const float motor_velocity_rad_s[ARM_JOINT_COUNT],
     CanFrame frames[ARM_JOINT_COUNT]);
+
+/**
+ * @brief Gets complete discovered POS_VEL limits for one motor.
+ * @param runtime Initialized runtime owning the current discovery results.
+ * @param joint_index Zero-based target joint index.
+ * @param limits Destination dynamic limit contract.
+ * @return OK or an argument, initialization, or unavailable-range error.
+ */
+MotorRuntimeStatus motor_runtime_get_position_velocity_limits(
+    const MotorRuntime *runtime,
+    uint8_t joint_index,
+    MotorPositionVelocityLimits *limits);
+
+/**
+ * @brief Validates a selected fault-free positive-speed POS_VEL move.
+ * @param runtime Initialized runtime owning current discovered limits.
+ * @param feedback_snapshot Freshness-filtered feedback snapshot.
+ * @param motor_mask Nonzero J1-J7 selection mask.
+ * @param motor_position_rad Joint-indexed motor targets.
+ * @param motor_speed_rad_s Joint-indexed positive motor speed limits.
+ * @param failed_joint_index Destination first failing zero-based joint index.
+ * @return OK or a stable argument, discovery, feedback, fault, or range error.
+ */
+MotorRuntimeStatus motor_runtime_validate_position_velocity_move_subset(
+    const MotorRuntime *runtime,
+    const MotorFeedbackSnapshot *feedback_snapshot,
+    uint8_t motor_mask,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_speed_rad_s[ARM_JOINT_COUNT],
+    uint8_t *failed_joint_index);
 
 /**
  * @brief Encodes selected POS_VEL targets without altering unselected motors.

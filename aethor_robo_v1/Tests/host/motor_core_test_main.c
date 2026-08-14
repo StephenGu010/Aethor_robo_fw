@@ -4,6 +4,7 @@
  */
 
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -33,6 +34,284 @@ static CanFrame make_test_frame(uint16_t identifier, uint8_t marker)
                           payload,
                           CAN_CLASSIC_MAX_DATA_LENGTH) == CAN_FRAME_STATUS_OK);
     return frame;
+}
+
+/**
+ * @brief Initializes two discovered motors with deliberately different limits.
+ * @param runtime Destination initialized runtime.
+ */
+static void prepare_runtime_with_two_discovered_motors(MotorRuntime *runtime)
+{
+    assert(motor_runtime_init(runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime->discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+    runtime->discovery.target_joint_mask = 0x05U;
+    runtime->discovery.verified_joint_mask = 0x05U;
+
+    runtime->discovery.results[0].ranges.position_max_rad = 2.0F;
+    runtime->discovery.results[0].ranges.velocity_max_rad_s = 4.0F;
+    runtime->discovery.results[0].ranges.torque_max_nm = 18.0F;
+    runtime->discovery.results[0].maximum_speed_rad_s = 3.0F;
+    runtime->discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+
+    runtime->discovery.results[2].ranges.position_max_rad = 1.75F;
+    runtime->discovery.results[2].ranges.velocity_max_rad_s = 2.5F;
+    runtime->discovery.results[2].ranges.torque_max_nm = 16.0F;
+    runtime->discovery.results[2].maximum_speed_rad_s = 5.0F;
+    runtime->discovery.results[2].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+}
+
+/**
+ * @brief Creates a fault-free feedback snapshot for the two discovered motors.
+ * @return Snapshot whose valid mask covers J1 and J3.
+ */
+static MotorFeedbackSnapshot make_two_motor_feedback_snapshot(void)
+{
+    MotorFeedbackSnapshot feedback_snapshot = {0};
+
+    feedback_snapshot.valid_joint_mask = 0x05U;
+    return feedback_snapshot;
+}
+
+/**
+ * @brief Verifies every byte in an output batch has been cleared.
+ * @param batch Batch expected to contain no partial frame.
+ */
+static void assert_motor_frame_batch_is_zeroed(
+    const MotorEmergencyFrameBatch *batch)
+{
+    const uint8_t *batch_bytes = (const uint8_t *)batch;
+    size_t byte_index;
+
+    assert(batch != NULL);
+    for (byte_index = 0U; byte_index < sizeof(*batch); ++byte_index)
+    {
+        assert(batch_bytes[byte_index] == 0U);
+    }
+}
+
+/**
+ * @brief Verifies dynamic POS_VEL limits come only from complete discovery data.
+ */
+static void test_motor_runtime_reports_discovered_position_velocity_limits(void)
+{
+    MotorRuntime runtime;
+    MotorPositionVelocityLimits limits = {0};
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 0U, &limits) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(limits.position_max_rad == 2.0F);
+    assert(limits.velocity_mapping_max_rad_s == 4.0F);
+    assert(limits.maximum_speed_rad_s == 3.0F);
+    assert(limits.move_speed_limit_rad_s == 3.0F);
+
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 2U, &limits) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(limits.position_max_rad == 1.75F);
+    assert(limits.velocity_mapping_max_rad_s == 2.5F);
+    assert(limits.maximum_speed_rad_s == 5.0F);
+    assert(limits.move_speed_limit_rad_s == 2.5F);
+
+    memset(&limits, 0xA5, sizeof(limits));
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 1U, &limits) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+
+    runtime.discovery.results[0].ranges.position_max_rad = NAN;
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 0U, &limits) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+    runtime.discovery.results[0].ranges.position_max_rad = 2.0F;
+    runtime.discovery.results[0].ranges.velocity_max_rad_s = 0.0F;
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 0U, &limits) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+    runtime.discovery.results[0].ranges.velocity_max_rad_s = 4.0F;
+    runtime.discovery.results[0].maximum_speed_rad_s = -1.0F;
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 0U, &limits) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+}
+
+/**
+ * @brief Verifies move validation accepts ninety degrees and exact boundaries.
+ */
+static void test_motor_runtime_accepts_valid_position_velocity_move_limits(void)
+{
+    MotorRuntime runtime;
+    MotorFeedbackSnapshot feedback_snapshot = make_two_motor_feedback_snapshot();
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+    uint8_t failed_joint_index = 0xFFU;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_position_rad[0] = 1.57079632679F;
+    motor_position_rad[2] = -1.57079632679F;
+    motor_speed_rad_s[0] = 2.0F;
+    motor_speed_rad_s[2] = 2.0F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime,
+               &feedback_snapshot,
+               0x05U,
+               motor_position_rad,
+               motor_speed_rad_s,
+               &failed_joint_index) == MOTOR_RUNTIME_STATUS_OK);
+    assert(failed_joint_index == 0xFFU);
+
+    motor_position_rad[0] = 2.0F;
+    motor_position_rad[2] = -1.75F;
+    motor_speed_rad_s[0] = 3.0F;
+    motor_speed_rad_s[2] = 2.5F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime,
+               &feedback_snapshot,
+               0x05U,
+               motor_position_rad,
+               motor_speed_rad_s,
+               &failed_joint_index) == MOTOR_RUNTIME_STATUS_OK);
+}
+
+/**
+ * @brief Verifies move validation reports the first selected motor failure.
+ */
+static void test_motor_runtime_rejects_invalid_position_velocity_moves(void)
+{
+    MotorRuntime runtime;
+    MotorFeedbackSnapshot feedback_snapshot = make_two_motor_feedback_snapshot();
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+    uint8_t failed_joint_index = 0xFFU;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_position_rad[0] = 1.0F;
+    motor_position_rad[2] = 1.0F;
+    motor_speed_rad_s[0] = 1.0F;
+    motor_speed_rad_s[2] = 1.0F;
+
+    motor_position_rad[0] = 2.01F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_position_rad[0] = 1.0F;
+
+    motor_position_rad[2] = -1.76F;
+    failed_joint_index = 0xFFU;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE);
+    assert(failed_joint_index == 2U);
+    motor_position_rad[2] = 1.0F;
+
+    motor_speed_rad_s[0] = 3.01F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_speed_rad_s[0] = 1.0F;
+
+    motor_speed_rad_s[2] = 2.51F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 2U);
+    motor_speed_rad_s[2] = 1.0F;
+
+    motor_position_rad[0] = NAN;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_position_rad[0] = 1.0F;
+
+    motor_speed_rad_s[0] = INFINITY;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_speed_rad_s[0] = 0.0F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_speed_rad_s[0] = -0.1F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+}
+
+/**
+ * @brief Verifies move validation requires fresh, fault-free selected feedback.
+ */
+static void test_motor_runtime_rejects_missing_or_faulted_move_feedback(void)
+{
+    MotorRuntime runtime;
+    MotorFeedbackSnapshot feedback_snapshot = make_two_motor_feedback_snapshot();
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+    uint8_t failed_joint_index = 0xFFU;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_speed_rad_s[0] = 1.0F;
+    motor_speed_rad_s[2] = 1.0F;
+
+    feedback_snapshot.valid_joint_mask = 0x01U;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_STALE_FEEDBACK);
+    assert(failed_joint_index == 2U);
+
+    feedback_snapshot.valid_joint_mask = 0x05U;
+    feedback_snapshot.joints[2].fault_flags = 0x08U;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_FAULT_PRESENT);
+    assert(failed_joint_index == 2U);
+}
+
+/**
+ * @brief Verifies subset encoding allows HOLD and never exposes partial frames.
+ */
+static void test_motor_runtime_builds_position_velocity_subset_atomically(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_position_rad[0] = 1.0F;
+    motor_position_rad[2] = -1.0F;
+    assert(motor_runtime_build_position_velocity_subset(
+               &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
+               &batch) == MOTOR_RUNTIME_STATUS_OK);
+    assert(batch.count == 2U);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    motor_position_rad[2] = 1.76F;
+    assert(motor_runtime_build_position_velocity_subset(
+               &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
+               &batch) == MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    motor_position_rad[2] = -1.0F;
+    motor_speed_rad_s[2] = NAN;
+    assert(motor_runtime_build_position_velocity_subset(
+               &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
+               &batch) == MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert_motor_frame_batch_is_zeroed(&batch);
 }
 
 /**
@@ -768,6 +1047,11 @@ static void test_motor_runtime_routes_discovery_and_feedback(void)
  */
 int main(void)
 {
+    test_motor_runtime_reports_discovered_position_velocity_limits();
+    test_motor_runtime_accepts_valid_position_velocity_move_limits();
+    test_motor_runtime_rejects_invalid_position_velocity_moves();
+    test_motor_runtime_rejects_missing_or_faulted_move_feedback();
+    test_motor_runtime_builds_position_velocity_subset_atomically();
     test_motor_bank_uses_frozen_seven_axis_mapping();
     test_motor_bank_publishes_coherent_feedback_snapshots();
     test_motor_bank_rejects_snapshot_during_publish();

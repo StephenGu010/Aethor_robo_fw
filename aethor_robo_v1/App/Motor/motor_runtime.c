@@ -563,6 +563,153 @@ MotorRuntimeStatus motor_runtime_build_control_group(
 }
 
 /**
+ * @brief Gets complete discovered POS_VEL limits for one motor.
+ */
+MotorRuntimeStatus motor_runtime_get_position_velocity_limits(
+    const MotorRuntime *runtime,
+    uint8_t joint_index,
+    MotorPositionVelocityLimits *limits)
+{
+    const MotorDiscoveryResult *discovery_result;
+    uint8_t joint_bit;
+
+    if ((runtime == NULL) || (limits == NULL) ||
+        (joint_index >= ARM_JOINT_COUNT))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    memset(limits, 0, sizeof(*limits));
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+
+    joint_bit = (uint8_t)(1U << joint_index);
+    discovery_result = &runtime->discovery.results[joint_index];
+    if (((runtime->discovery.verified_joint_mask & joint_bit) == 0U) ||
+        ((discovery_result->verified_fields_mask &
+          MOTOR_DISCOVERY_ALL_FIELDS_MASK) != MOTOR_DISCOVERY_ALL_FIELDS_MASK) ||
+        !isfinite(discovery_result->ranges.position_max_rad) ||
+        !isfinite(discovery_result->ranges.velocity_max_rad_s) ||
+        !isfinite(discovery_result->maximum_speed_rad_s) ||
+        (discovery_result->ranges.position_max_rad <= 0.0F) ||
+        (discovery_result->ranges.velocity_max_rad_s <= 0.0F) ||
+        (discovery_result->maximum_speed_rad_s <= 0.0F))
+    {
+        return MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE;
+    }
+
+    limits->position_max_rad = discovery_result->ranges.position_max_rad;
+    limits->velocity_mapping_max_rad_s =
+        discovery_result->ranges.velocity_max_rad_s;
+    limits->maximum_speed_rad_s = discovery_result->maximum_speed_rad_s;
+    limits->move_speed_limit_rad_s =
+        fminf(limits->velocity_mapping_max_rad_s,
+              limits->maximum_speed_rad_s);
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
+ * @brief Validates finite POS_VEL values against one discovered motor contract.
+ * @param runtime Initialized runtime owning current discovered limits.
+ * @param joint_index Zero-based target joint index.
+ * @param position_rad Requested motor position.
+ * @param speed_rad_s Requested nonnegative or positive speed limit.
+ * @param require_positive_speed One for move commands, zero for HOLD-capable encoding.
+ * @return OK or a discovery, position, or speed range error.
+ */
+static MotorRuntimeStatus motor_runtime_validate_position_velocity_values(
+    const MotorRuntime *runtime,
+    uint8_t joint_index,
+    float position_rad,
+    float speed_rad_s,
+    uint8_t require_positive_speed)
+{
+    MotorPositionVelocityLimits limits;
+    MotorRuntimeStatus runtime_status =
+        motor_runtime_get_position_velocity_limits(runtime,
+                                                   joint_index,
+                                                   &limits);
+
+    if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
+    {
+        return runtime_status;
+    }
+    if (!isfinite(position_rad) ||
+        (fabsf(position_rad) > limits.position_max_rad))
+    {
+        return MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE;
+    }
+    if (!isfinite(speed_rad_s) ||
+        ((require_positive_speed != 0U) && (speed_rad_s <= 0.0F)) ||
+        ((require_positive_speed == 0U) && (speed_rad_s < 0.0F)) ||
+        (speed_rad_s > limits.move_speed_limit_rad_s))
+    {
+        return MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE;
+    }
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
+ * @brief Validates a selected fault-free positive-speed POS_VEL move.
+ */
+MotorRuntimeStatus motor_runtime_validate_position_velocity_move_subset(
+    const MotorRuntime *runtime,
+    const MotorFeedbackSnapshot *feedback_snapshot,
+    uint8_t motor_mask,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_speed_rad_s[ARM_JOINT_COUNT],
+    uint8_t *failed_joint_index)
+{
+    uint8_t joint_index;
+
+    if ((runtime == NULL) || (feedback_snapshot == NULL) ||
+        (motor_position_rad == NULL) || (motor_speed_rad_s == NULL) ||
+        (failed_joint_index == NULL) || (motor_mask == 0U) ||
+        ((motor_mask & (uint8_t)~0x7FU) != 0U))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+        MotorRuntimeStatus runtime_status;
+
+        if ((motor_mask & joint_bit) == 0U)
+        {
+            continue;
+        }
+        if ((feedback_snapshot->valid_joint_mask & joint_bit) == 0U)
+        {
+            *failed_joint_index = joint_index;
+            return MOTOR_RUNTIME_STATUS_STALE_FEEDBACK;
+        }
+        if (feedback_snapshot->joints[joint_index].fault_flags != 0U)
+        {
+            *failed_joint_index = joint_index;
+            return MOTOR_RUNTIME_STATUS_FAULT_PRESENT;
+        }
+        runtime_status = motor_runtime_validate_position_velocity_values(
+            runtime,
+            joint_index,
+            motor_position_rad[joint_index],
+            motor_speed_rad_s[joint_index],
+            1U);
+        if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
+        {
+            *failed_joint_index = joint_index;
+            return runtime_status;
+        }
+    }
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
  * @brief Encodes selected POS_VEL targets without altering unselected motors.
  */
 MotorRuntimeStatus motor_runtime_build_position_velocity_subset(
@@ -572,8 +719,13 @@ MotorRuntimeStatus motor_runtime_build_position_velocity_subset(
     const float motor_velocity_rad_s[ARM_JOINT_COUNT],
     MotorEmergencyFrameBatch *batch)
 {
+    MotorEmergencyFrameBatch validated_batch;
     uint8_t joint_index;
 
+    if (batch != NULL)
+    {
+        memset(batch, 0, sizeof(*batch));
+    }
     if ((runtime == NULL) || (motor_position_rad == NULL) ||
         (motor_velocity_rad_s == NULL) || (batch == NULL) ||
         (motor_mask == 0U) || ((motor_mask & (uint8_t)~0x7FU) != 0U))
@@ -584,24 +736,37 @@ MotorRuntimeStatus motor_runtime_build_position_velocity_subset(
     {
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
-    memset(batch, 0, sizeof(*batch));
+    memset(&validated_batch, 0, sizeof(validated_batch));
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
+        MotorRuntimeStatus runtime_status;
+
         if ((motor_mask & (uint8_t)(1U << joint_index)) == 0U)
         {
             continue;
         }
+        runtime_status = motor_runtime_validate_position_velocity_values(
+            runtime,
+            joint_index,
+            motor_position_rad[joint_index],
+            motor_velocity_rad_s[joint_index],
+            0U);
+        if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
+        {
+            return runtime_status;
+        }
         if (s3519_pack_position_velocity(
                 (uint8_t)runtime->configuration->joints[joint_index].esc_id,
                 motor_position_rad[joint_index],
-                fabsf(motor_velocity_rad_s[joint_index]),
-                &batch->frames[batch->count]) != S3519_CODEC_STATUS_OK)
+                motor_velocity_rad_s[joint_index],
+                &validated_batch.frames[validated_batch.count]) !=
+            S3519_CODEC_STATUS_OK)
         {
-            memset(batch, 0, sizeof(*batch));
             return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
         }
-        ++batch->count;
+        ++validated_batch.count;
     }
+    memcpy(batch, &validated_batch, sizeof(*batch));
     return MOTOR_RUNTIME_STATUS_OK;
 }
 

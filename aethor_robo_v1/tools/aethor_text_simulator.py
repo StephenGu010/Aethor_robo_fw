@@ -108,7 +108,12 @@ class AethorTextSimulator:
     def _parse_motor_list(value: str,
                           require_ascending: bool) -> tuple[list[int], int]:
         """Parses one unique motor list with optional legacy ascending order."""
-        motors = [int(item) for item in value.split(",")]
+        motor_tokens = value.split(",")
+        if any(not token or any(character < "0" or character > "9"
+                                for character in token)
+               for token in motor_tokens):
+            raise ValueError("motors")
+        motors = [int(token, 10) for token in motor_tokens]
         if (not motors or len(set(motors)) != len(motors) or
                 any(item < 1 or item > JOINT_COUNT for item in motors) or
                 (require_ascending and
@@ -355,15 +360,23 @@ class AethorTextSimulator:
             if speed_status != "ok":
                 return [f"error {request_id} bench move "
                         f"code={speed_status} field=speed"]
-            for motor, position in zip(motors, positions):
-                if abs(position) > SIMULATED_PMAX_DEG:
+            positions_by_joint = [0.0] * JOINT_COUNT
+            speeds_by_joint = [0.0] * JOINT_COUNT
+            for motor, position, speed in zip(motors, positions, speeds):
+                positions_by_joint[motor - 1] = position
+                speeds_by_joint[motor - 1] = speed
+            for joint_index in range(JOINT_COUNT):
+                motor = joint_index + 1
+                if (mask & (1 << joint_index)) == 0:
+                    continue
+                if abs(positions_by_joint[joint_index]) > SIMULATED_PMAX_DEG:
                     failed = (f"done {request_id} bench move result=failed "
                               "stage=validate code=position_out_of_range "
                               f"motor={motor}")
                     self._pending_outputs.append(failed)
                     return [accepted]
-            for motor, speed in zip(motors, speeds):
-                if speed > SIMULATED_MOVE_SPEED_LIMIT_DEG_S:
+                if (speeds_by_joint[joint_index] >
+                        SIMULATED_MOVE_SPEED_LIMIT_DEG_S):
                     failed = (f"done {request_id} bench move result=failed "
                               "stage=validate code=speed_out_of_range "
                               f"motor={motor}")

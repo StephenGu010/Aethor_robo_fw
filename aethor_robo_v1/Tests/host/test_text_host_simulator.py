@@ -575,6 +575,53 @@ class AethorTextSimulatorTests(unittest.TestCase):
         self.assertEqual(self.simulator.active_motion.target_deg[2], -45.0)
         self.assertEqual(self.simulator.active_motion.target_deg[0], 90.0)
 
+    def test_real_simulator_motor_tokens_match_firmware_ascii_u32_rules(
+            self) -> None:
+        """Accepts leading zeroes but rejects non-ASCII or signed motor tokens."""
+        valid_requests = (
+            "107 bench enable 01,03",
+            "108 bench move 03,01 position=-45,90 speed=20,30",
+        )
+        for request_body in valid_requests:
+            with self.subTest(request=request_body):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                self.assertEqual(
+                    simulator.process_line(encode_line(request_body)),
+                    [f"ok {request_body.split()[0]} bench "
+                     f"{request_body.split()[2]} accepted=1"],
+                )
+
+        operation_fields = {
+            "init": "",
+            "enable": "",
+            "jog": " delta=1 speed=1",
+            "move": " position=1 speed=1",
+            "stop": "",
+            "disable": "",
+            "clear": "",
+        }
+        invalid_motor_lists = ("+1", "-1", "1,,3", "")
+        request_id = 109
+        for operation, fields in operation_fields.items():
+            for motor_list in invalid_motor_lists:
+                with self.subTest(operation=operation, motors=motor_list):
+                    simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                    request_body = (f"{request_id} bench {operation} "
+                                    f"{motor_list}{fields}")
+                    self.assertEqual(
+                        simulator.process_line(encode_line(request_body)),
+                        [f"error {request_id} bench {operation} "
+                         "code=bad_argument field=motors"],
+                    )
+                    request_id += 1
+
+        with self.assertRaisesRegex(ValueError, "motors"):
+            AethorTextSimulator._parse_motor_list("１", require_ascending=False)
+        self.assertEqual(
+            self.simulator.process_line("144 bench move １ position=1 speed=1"),
+            ["error 0 parse code=bad_line"],
+        )
+
     def test_real_simulator_legacy_jog_uses_firmware_numeric_grammar(self) -> None:
         """Accepts unrestricted valid jog values and rejects exponent syntax."""
         valid_jogs = (
@@ -635,6 +682,35 @@ class AethorTextSimulatorTests(unittest.TestCase):
                 )
                 self.assertIsNone(transport.simulator.active_motion)
                 self.assertEqual(transport.simulator.motor_enabled_mask, 0)
+
+    def test_real_simulator_move_validation_uses_joint_order_and_replays_terminal(
+            self) -> None:
+        """Reports the first per-joint position-then-speed validation failure."""
+        cases = (
+            ("150 bench move 3,1 position=800,0 speed=30,1200",
+             "speed_out_of_range", 1),
+            ("151 bench move 5,2 position=800,800 speed=1200,30",
+             "position_out_of_range", 2),
+            ("152 bench move 3 position=800 speed=1200",
+             "position_out_of_range", 3),
+        )
+        for request_body, expected_code, expected_motor in cases:
+            with self.subTest(request=request_body):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                request_id = request_body.split()[0]
+                expected_accepted = f"ok {request_id} bench move accepted=1"
+                expected_terminal = (f"done {request_id} bench move result=failed "
+                                     f"stage=validate code={expected_code} "
+                                     f"motor={expected_motor}")
+                self.assertEqual(
+                    simulator.process_line(encode_line(request_body)),
+                    [expected_accepted],
+                )
+                self.assertEqual(simulator.drain_outputs(), [expected_terminal])
+                self.assertEqual(
+                    simulator.process_line(encode_line(request_body)),
+                    [expected_terminal],
+                )
 
     def test_real_simulator_stop_preempts_move_and_replays_terminals(self) -> None:
         """Cancels one move before completing STOP with the union motor mask."""

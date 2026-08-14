@@ -542,6 +542,21 @@ static void test_text_bench_move_ordered_values(void)
 
     response = process_text_request(
         &engine,
+        "78 bench move 03,01 position=-45,90 speed=20,30\n",
+        3550U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 78 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.motor_mask == 0x05U);
+    assert(command.values[0] == 90.0F);
+    assert(command.values[2] == -45.0F);
+    assert(command.speeds[0] == 30.0F);
+    assert(command.speeds[2] == 20.0F);
+    complete_parser_one_shot(&engine, &command, 3575U);
+
+    response = process_text_request(
+        &engine,
         "76 bench move 1 position=0.0000000001 speed=0.0000000001\n",
         3600U,
         PROTOCOL_ENGINE_STATUS_OK,
@@ -837,6 +852,34 @@ static void test_text_bench_move_rejections(void)
     assert(strcmp(response,
                   "error 74 bench move code=bad_argument field=motors\n") == 0);
     assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(&engine,
+                                    "79 bench move +1 position=1 speed=1\n",
+                                    21000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 79 bench move code=bad_argument field=motors\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(&engine,
+                                    "80 bench move -1 position=1 speed=1\n",
+                                    22000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 80 bench move code=bad_argument field=motors\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(
+        &engine,
+        "81 bench move \xEF\xBC\x91 position=1 speed=1\n",
+        23000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 0 parse code=bad_line\n") == 0);
+    assert_normal_command_queue_empty(&engine);
 }
 
 /** @brief Verifies accepted bench moves replay without a second queue entry. */
@@ -1015,6 +1058,21 @@ static void test_text_bench_rejections(void)
                                     &output_batch);
     assert(strcmp(response,
                   "error 31 bench enable code=bad_argument field=motors\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "33 bench enable +1\n",
+                                    2500U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 33 bench enable code=bad_argument field=motors\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "34 bench enable 01,03\n",
+                                    2750U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 34 bench enable accepted=1\n") == 0);
 
     response = process_text_request(&engine,
                                     "32 arm enable\n",

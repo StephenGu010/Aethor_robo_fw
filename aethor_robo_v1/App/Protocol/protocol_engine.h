@@ -131,6 +131,34 @@ typedef enum
     PROTOCOL_COMMAND_RESULT_CANCELLED
 } ProtocolCommandResultCode;
 
+/** @brief Identifies the fixed execution stage that produced a terminal result. */
+typedef enum
+{
+    PROTOCOL_COMMAND_STAGE_NONE = 0,
+    PROTOCOL_COMMAND_STAGE_VALIDATE = 1,
+    PROTOCOL_COMMAND_STAGE_DISCOVERY = 2,
+    PROTOCOL_COMMAND_STAGE_MODE = 3,
+    PROTOCOL_COMMAND_STAGE_CLEAR = 4,
+    PROTOCOL_COMMAND_STAGE_ENABLE = 5,
+    PROTOCOL_COMMAND_STAGE_MOTION = 6,
+    PROTOCOL_COMMAND_STAGE_HOLD = 7,
+    PROTOCOL_COMMAND_STAGE_DISABLE = 8
+} ProtocolCommandStage;
+
+/** @brief Identifies the fixed public failure reason for a terminal result. */
+typedef enum
+{
+    PROTOCOL_COMMAND_ERROR_NONE = 0,
+    PROTOCOL_COMMAND_ERROR_NOT_READY = 1,
+    PROTOCOL_COMMAND_ERROR_POSITION_OUT_OF_RANGE = 2,
+    PROTOCOL_COMMAND_ERROR_SPEED_OUT_OF_RANGE = 3,
+    PROTOCOL_COMMAND_ERROR_FAULT_PRESENT = 4,
+    PROTOCOL_COMMAND_ERROR_STALE_FEEDBACK = 5,
+    PROTOCOL_COMMAND_ERROR_TIMEOUT = 6,
+    PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT = 7,
+    PROTOCOL_COMMAND_ERROR_ACTION_FAILED = 8
+} ProtocolCommandError;
+
 /** @brief Owns one bounded terminal command result transferred to ProtocolTask. */
 typedef struct
 {
@@ -142,9 +170,15 @@ typedef struct
     uint32_t session_id;
     ProtocolCommandType type;
     ProtocolCommandResultCode code;
+    /** @brief Fixed execution stage associated with a failure. */
+    ProtocolCommandStage stage;
+    /** @brief Fixed public error associated with a failure. */
+    ProtocolCommandError error;
     uint16_t detail;
     uint8_t motor_mask;
     uint8_t bench_relative_scope;
+    /** @brief Public one-based failed motor number, or zero when not specific. */
+    uint8_t failed_motor_number;
 } ProtocolCommandResult;
 
 /** @brief Owns the fixed current session and bounded recent-result cache. */

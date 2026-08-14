@@ -843,6 +843,71 @@ static void test_text_bench_done_output(void)
                   "done 40 bench jog result=completed elapsed_ms=3050 arrived=05\n") == 0);
 }
 
+/** @brief Verifies one-shot bench move terminal results use stable public tokens. */
+static void test_text_bench_move_done_output(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    ProtocolCommandResult result;
+
+    protocol_engine_init(&engine, 9401U);
+    (void)process_text_request(&engine,
+                               "50 bench move 1 position=90 speed=30\n",
+                               1000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    assert(protocol_engine_pop_command(&engine, &command) != 0U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED);
+
+    memset(&result, 0, sizeof(result));
+    result.request_id = command.request_id;
+    result.session_id = command.session_id;
+    result.type = command.type;
+    result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
+    result.accepted_at_us = command.accepted_at_us;
+    result.completed_at_us = 3201000U;
+    result.motor_mask = command.motor_mask;
+    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
+    assert(strcmp(output_batch.messages[0].data,
+                  "done 50 bench move result=completed elapsed_ms=3200 motors=01\n") == 0);
+
+    result.code = PROTOCOL_COMMAND_RESULT_FAILED;
+    result.stage = PROTOCOL_COMMAND_STAGE_VALIDATE;
+    result.error = PROTOCOL_COMMAND_ERROR_POSITION_OUT_OF_RANGE;
+    result.failed_motor_number = 1U;
+    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
+    assert(strcmp(output_batch.messages[0].data,
+                  "done 50 bench move result=failed stage=validate "
+                  "code=position_out_of_range motor=1\n") == 0);
+
+    result.stage = PROTOCOL_COMMAND_STAGE_DISCOVERY;
+    result.error = PROTOCOL_COMMAND_ERROR_NOT_READY;
+    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
+    assert(strcmp(output_batch.messages[0].data,
+                  "done 50 bench move result=failed stage=discovery "
+                  "code=not_ready motor=1\n") == 0);
+
+    result.stage = PROTOCOL_COMMAND_STAGE_MOTION;
+    result.error = PROTOCOL_COMMAND_ERROR_TIMEOUT;
+    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
+    assert(strcmp(output_batch.messages[0].data,
+                  "done 50 bench move result=failed stage=motion "
+                  "code=timeout motor=1\n") == 0);
+
+    result.stage = PROTOCOL_COMMAND_STAGE_DISABLE;
+    result.error = PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT;
+    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
+    assert(strcmp(output_batch.messages[0].data,
+                  "done 50 bench move result=failed stage=disable "
+                  "code=feedback_timeout motor=1\n") == 0);
+}
+
 /** @brief Verifies the communication watchdog is active only while energized. */
 static void test_text_watchdog_scope(void)
 {
@@ -940,6 +1005,7 @@ int main(void)
     test_text_bench_move_rejections();
     test_text_bench_move_replay();
     test_text_bench_done_output();
+    test_text_bench_move_done_output();
     test_text_watchdog_scope();
     test_unknown_text_command_does_not_keep_motors_energized();
     test_text_help();

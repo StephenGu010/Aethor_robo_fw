@@ -4351,6 +4351,70 @@ static const char *protocol_engine_text_result(ProtocolCommandResultCode code)
     }
 }
 
+/**
+ * @brief Returns the stable lowercase public token for an execution stage.
+ * @param stage Fixed execution stage.
+ * @return Static stage token, including deterministic none and unknown tokens.
+ */
+static const char *protocol_engine_command_stage_text(ProtocolCommandStage stage)
+{
+    switch (stage)
+    {
+        case PROTOCOL_COMMAND_STAGE_NONE:
+            return "none";
+        case PROTOCOL_COMMAND_STAGE_VALIDATE:
+            return "validate";
+        case PROTOCOL_COMMAND_STAGE_DISCOVERY:
+            return "discovery";
+        case PROTOCOL_COMMAND_STAGE_MODE:
+            return "mode";
+        case PROTOCOL_COMMAND_STAGE_CLEAR:
+            return "clear";
+        case PROTOCOL_COMMAND_STAGE_ENABLE:
+            return "enable";
+        case PROTOCOL_COMMAND_STAGE_MOTION:
+            return "motion";
+        case PROTOCOL_COMMAND_STAGE_HOLD:
+            return "hold";
+        case PROTOCOL_COMMAND_STAGE_DISABLE:
+            return "disable";
+        default:
+            return "unknown";
+    }
+}
+
+/**
+ * @brief Returns the stable lowercase public token for a command error.
+ * @param error Fixed public command error.
+ * @return Static error token, including deterministic none and unknown tokens.
+ */
+static const char *protocol_engine_command_error_text(ProtocolCommandError error)
+{
+    switch (error)
+    {
+        case PROTOCOL_COMMAND_ERROR_NONE:
+            return "none";
+        case PROTOCOL_COMMAND_ERROR_NOT_READY:
+            return "not_ready";
+        case PROTOCOL_COMMAND_ERROR_POSITION_OUT_OF_RANGE:
+            return "position_out_of_range";
+        case PROTOCOL_COMMAND_ERROR_SPEED_OUT_OF_RANGE:
+            return "speed_out_of_range";
+        case PROTOCOL_COMMAND_ERROR_FAULT_PRESENT:
+            return "fault_present";
+        case PROTOCOL_COMMAND_ERROR_STALE_FEEDBACK:
+            return "stale_feedback";
+        case PROTOCOL_COMMAND_ERROR_TIMEOUT:
+            return "timeout";
+        case PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT:
+            return "feedback_timeout";
+        case PROTOCOL_COMMAND_ERROR_ACTION_FAILED:
+            return "action_failed";
+        default:
+            return "unknown";
+    }
+}
+
 /** @brief Formats one aethor-text-v1 terminal command result. */
 static uint8_t protocol_engine_format_text_result(
     ProtocolEngine *engine,
@@ -4373,6 +4437,42 @@ static uint8_t protocol_engine_format_text_result(
                              "event %lu link_timeout elapsed_ms=1000 action=stop_disable",
                              (unsigned long)engine->event_sequence) ==
                          PROTOCOL_ENGINE_STATUS_OK);
+    }
+    if (result->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+    {
+        if (result->code == PROTOCOL_COMMAND_RESULT_COMPLETED)
+        {
+            return (uint8_t)(protocol_engine_append_text_format(
+                                 output_batch,
+                                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                 "done %lu bench move result=completed elapsed_ms=%lu motors=%02x",
+                                 (unsigned long)result->request_id,
+                                 (unsigned long)elapsed_ms,
+                                 (unsigned int)result->motor_mask) ==
+                             PROTOCOL_ENGINE_STATUS_OK);
+        }
+        if ((result->code == PROTOCOL_COMMAND_RESULT_FAILED) &&
+            ((result->stage != PROTOCOL_COMMAND_STAGE_NONE) ||
+             (result->error != PROTOCOL_COMMAND_ERROR_NONE) ||
+             (result->failed_motor_number != 0U)))
+        {
+            return (uint8_t)(protocol_engine_append_text_format(
+                                 output_batch,
+                                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                 "done %lu bench move result=%s stage=%s code=%s motor=%u",
+                                 (unsigned long)result->request_id,
+                                 result_text,
+                                 protocol_engine_command_stage_text(result->stage),
+                                 protocol_engine_command_error_text(result->error),
+                                 (unsigned int)result->failed_motor_number) ==
+                             PROTOCOL_ENGINE_STATUS_OK);
+        }
+        return (uint8_t)(protocol_engine_append_text_format(
+                             output_batch,
+                             PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                             "done %lu bench move result=%s",
+                             (unsigned long)result->request_id,
+                             result_text) == PROTOCOL_ENGINE_STATUS_OK);
     }
     if (result->bench_relative_scope != 0U)
     {

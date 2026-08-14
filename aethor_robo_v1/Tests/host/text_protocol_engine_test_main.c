@@ -435,6 +435,63 @@ static void test_text_public_command_shape_table(void)
     }
 }
 
+/** @brief Runs the shared parser and dispatch differential corpus against C. */
+static void test_text_protocol_differential_corpus(void)
+{
+    static const struct
+    {
+        const char *case_id;
+        const char *request;
+        const char *expected_response;
+        ProtocolEngineStatus expected_status;
+        uint8_t refreshes_watchdog;
+        uint8_t response_is_exact;
+    } cases[] = {
+#define TEXT_PROTOCOL_DIFFERENTIAL_CASE(case_id, request, response, status, refresh, exact) \
+        {case_id, request, response, status, refresh, exact},
+#include "text_protocol_differential_corpus.inc"
+#undef TEXT_PROTOCOL_DIFFERENTIAL_CASE
+    };
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolQueryContext query_context = make_query_context();
+    size_t case_index;
+
+    for (case_index = 0U; case_index < (sizeof(cases) / sizeof(cases[0]));
+         ++case_index)
+    {
+        const char *response;
+        size_t response_length;
+        size_t expected_length = strlen(cases[case_index].expected_response);
+
+        (void)cases[case_index].case_id;
+        protocol_engine_init(&engine, 8000U + (uint32_t)case_index);
+        protocol_engine_update_query_context(&engine, &query_context);
+        (void)process_text_request(&engine,
+                                   "1 hello\n",
+                                   1000U,
+                                   PROTOCOL_ENGINE_STATUS_OK,
+                                   &output_batch);
+        response = process_text_request(&engine,
+                                        cases[case_index].request,
+                                        901000U,
+                                        cases[case_index].expected_status,
+                                        &output_batch);
+        response_length = strlen(response);
+        assert(response_length > 0U);
+        assert(response[response_length - 1U] == '\n');
+        if (cases[case_index].response_is_exact != 0U)
+        {
+            assert(response_length == (expected_length + 1U));
+        }
+        assert(strncmp(response,
+                       cases[case_index].expected_response,
+                       expected_length) == 0);
+        assert(protocol_engine_watchdog_expired(&engine, 1001000U) ==
+               (uint8_t)(cases[case_index].refreshes_watchdog == 0U));
+    }
+}
+
 /** @brief Verifies the concise state, joint, and motor snapshot queries. */
 static void test_text_show_queries(void)
 {
@@ -1628,6 +1685,7 @@ int main(void)
     test_text_errors();
     test_text_request_shape_rejections();
     test_text_public_command_shape_table();
+    test_text_protocol_differential_corpus();
     test_text_show_queries();
     test_text_streaming();
     test_text_detailed_show_queries();

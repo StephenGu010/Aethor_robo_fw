@@ -13,6 +13,12 @@ REPLAY_CAPACITY = 32
 REPLAY_RETENTION_MS = 60_000
 AETHOR_TEXT_MAX_REQUEST_BODY_BYTES = 160
 AETHOR_TEXT_MAX_FLOAT_TOKEN_CHARACTERS = 63
+AETHOR_TEXT_MAX_COMMAND_WORDS = 2
+AETHOR_TEXT_MAX_POSITIONAL_COUNT = 2
+AETHOR_TEXT_MAX_FIELD_COUNT = 8
+AETHOR_TEXT_MAX_TOKEN_COUNT = (1 + AETHOR_TEXT_MAX_COMMAND_WORDS +
+                               AETHOR_TEXT_MAX_POSITIONAL_COUNT +
+                               AETHOR_TEXT_MAX_FIELD_COUNT)
 FLOAT32_MIN_NORMAL = 1.1754943508222875e-38
 FLOAT32_MAX = 3.4028234663852886e38
 SIMULATED_PMAX_DEG = 180.0
@@ -63,6 +69,17 @@ def parse_strict_ascii_u32_token(token: str) -> int:
     if numeric_value > 0xFFFFFFFF:
         raise ValueError("u32")
     return numeric_value
+
+
+def is_text_identifier(token: str) -> bool:
+    """Checks the firmware's ASCII letter-led command and field-key grammar."""
+    if not token or not (("A" <= token[0] <= "Z") or
+                         ("a" <= token[0] <= "z")):
+        return False
+    return all(("A" <= character <= "Z") or
+               ("a" <= character <= "z") or
+               ("0" <= character <= "9") or character == "_"
+               for character in token[1:])
 
 
 def encode_line(body: str) -> bytes:
@@ -276,6 +293,9 @@ class AethorTextSimulator:
     def _show(self, request_id: int, target: str, positionals: list[str],
               fields: dict[str, str]) -> tuple[list[str], bool]:
         """Formats one public query and reports whether C accepts it as valid."""
+        if target not in {"info", "state", "joints", "motors", "motor",
+                          "config", "diag"}:
+            return [f"error {request_id} show {target} code=unknown_command"], False
         if fields:
             return [f"error {request_id} show {target} code=bad_argument"], False
         if target == "motor":
@@ -599,16 +619,22 @@ class AethorTextSimulator:
         """Parses and processes one optional-ID plain text request line."""
         try:
             text = (bytes(line).decode("ascii")
-                    if isinstance(line, (bytes, bytearray)) else line).rstrip("\r\n")
+                    if isinstance(line, (bytes, bytearray)) else line)
         except UnicodeError:
             return ["error 0 parse code=bad_line"]
-        if (not text or len(text) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES or
-                any(ord(item) < 0x20 or ord(item) > 0x7E
-                    for item in text)):
+        if text.endswith("\n"):
+            text = text[:-1]
+        if text.endswith("\r"):
+            text = text[:-1]
+        if (len(text) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES or
+                any(ord(character) < 0x20 or ord(character) > 0x7E
+                    for character in text)):
             return ["error 0 parse code=line_too_long"
                     if len(text) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES
                     else "error 0 parse code=bad_line"]
         tokens = text.split()
+        if not tokens or len(tokens) > AETHOR_TEXT_MAX_TOKEN_COUNT:
+            return ["error 0 parse code=bad_line"]
         request_id = 0
         if tokens[0][0].isascii() and tokens[0][0].isdigit():
             if not tokens[0].isascii() or not tokens[0].isdigit():
@@ -618,35 +644,44 @@ class AethorTextSimulator:
                 return ["error 0 parse code=bad_line"]
         if not tokens:
             return ["error 0 parse code=bad_line"]
-        single_word = tokens[0].lower() in {"hello", "ping", "help"}
-        command = [tokens.pop(0).lower()]
+        if not is_text_identifier(tokens[0]):
+            return ["error 0 parse code=bad_line"]
+        first_command_word = tokens.pop(0).lower()
+        single_word = first_command_word in {"hello", "ping", "help"}
+        command = [first_command_word]
         if not single_word and tokens and "=" not in tokens[0]:
+            if not is_text_identifier(tokens[0]):
+                return ["error 0 parse code=bad_line"]
             command.append(tokens.pop(0).lower())
         positionals: list[str] = []
         fields: dict[str, str] = {}
+        for token in tokens:
+            if "=" in token:
+                if token.count("=") != 1:
+                    return ["error 0 parse code=bad_line"]
+                key, value = token.split("=", 1)
+                normalized_key = key.lower()
+                if (not value or not is_text_identifier(key) or
+                        len(fields) >= AETHOR_TEXT_MAX_FIELD_COUNT or
+                        normalized_key in fields):
+                    return ["error 0 parse code=bad_line"]
+                fields[normalized_key] = value
+            else:
+                if fields or len(positionals) >= AETHOR_TEXT_MAX_POSITIONAL_COUNT:
+                    return ["error 0 parse code=bad_line"]
+                positionals.append(token)
+        canonical_parts = command + positionals + [f"{key}={value}"
+                                                    for key, value in fields.items()]
+        canonical = " ".join(canonical_parts)
+        cached = self._replay.get(request_id) if request_id else None
+        if cached is not None:
+            if cached[0] != canonical:
+                return [f"error {request_id} {' '.join(command)} "
+                        "code=request_conflict"]
+            self.last_request_ms = self.now_ms
+            self.watchdog_reported = False
+            return list(cached[1])
         try:
-            for token in tokens:
-                if "=" in token:
-                    key, value = token.split("=", 1)
-                    key = key.lower()
-                    if not key or not value or key in fields:
-                        raise ValueError("field")
-                    fields[key] = value
-                elif fields:
-                    raise ValueError("positional order")
-                else:
-                    positionals.append(token)
-            canonical_parts = command + positionals + [f"{key}={value}"
-                                                        for key, value in fields.items()]
-            canonical = " ".join(canonical_parts)
-            cached = self._replay.get(request_id) if request_id else None
-            if cached is not None:
-                if cached[0] != canonical:
-                    return [f"error {request_id} {' '.join(command)} "
-                            "code=request_conflict"]
-                self.last_request_ms = self.now_ms
-                self.watchdog_reported = False
-                return list(cached[1])
             outputs, accepted_for_watchdog = self._dispatch(
                 request_id, command, positionals, fields)
         except (IndexError, KeyError, ValueError):

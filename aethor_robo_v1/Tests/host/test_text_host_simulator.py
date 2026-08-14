@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import pathlib
+import re
 import sys
 import unittest
 
@@ -21,6 +23,38 @@ from aethor_reference_client import (  # noqa: E402
     build_one_shot_bench_move,
     parse_one_shot_move_terminal,
 )
+
+
+def load_text_protocol_differential_corpus(
+        ) -> list[tuple[str, str, str, str, bool, bool]]:
+    """Loads the C macro corpus without maintaining a second Python copy."""
+    corpus_path = (PROJECT_ROOT / "Tests" / "host" /
+                   "text_protocol_differential_corpus.inc")
+    case_pattern = re.compile(
+        r'^TEXT_PROTOCOL_DIFFERENTIAL_CASE\('
+        r'("(?:[^"\\]|\\.)*"),\s*'
+        r'("(?:[^"\\]|\\.)*"),\s*'
+        r'("(?:[^"\\]|\\.)*"),\s*'
+        r'(PROTOCOL_ENGINE_STATUS_[A-Z_]+),\s*'
+        r'([01])U,\s*([01])U\)$')
+    cases: list[tuple[str, str, str, str, bool, bool]] = []
+    for source_line in corpus_path.read_text(encoding="ascii").splitlines():
+        if not source_line.startswith("TEXT_PROTOCOL_DIFFERENTIAL_CASE"):
+            continue
+        match = case_pattern.fullmatch(source_line)
+        if match is None:
+            raise AssertionError(f"invalid differential corpus row: {source_line}")
+        cases.append((
+            ast.literal_eval(match.group(1)),
+            ast.literal_eval(match.group(2)),
+            ast.literal_eval(match.group(3)),
+            match.group(4),
+            match.group(5) == "1",
+            match.group(6) == "1",
+        ))
+    if not cases:
+        raise AssertionError("differential corpus is empty")
+    return cases
 
 
 class ScriptedActionTransport:
@@ -320,6 +354,36 @@ class AethorTextSimulatorTests(unittest.TestCase):
                 responses = simulator.process_line(encode_line(request_body))
                 self.assertTrue(responses[0].startswith(expected_prefix), responses)
                 self.assertEqual(simulator.last_request_ms, 900)
+
+    def test_shared_text_parser_differential_corpus(self) -> None:
+        """Matches C classification, request IDs, and watchdog admission."""
+        for (case_id, request_body, expected_response, expected_status,
+             refreshes_watchdog, response_is_exact) in (
+                 load_text_protocol_differential_corpus()):
+            with self.subTest(case=case_id):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                simulator.process_line(encode_line("1 hello"))
+                simulator.process_line(encode_line("2 bench enable 1"))
+                simulator.drain_outputs()
+                simulator.advance(900)
+
+                responses = simulator.process_line(request_body)
+                self.assertEqual(len(responses), 1)
+                if response_is_exact:
+                    self.assertEqual(responses[0], expected_response)
+                else:
+                    self.assertTrue(
+                        responses[0].startswith(expected_response), responses)
+                self.assertEqual(
+                    responses[0].startswith("ok "),
+                    expected_status == "PROTOCOL_ENGINE_STATUS_OK",
+                )
+                self.assertEqual(simulator.last_request_ms,
+                                 900 if refreshes_watchdog else 0)
+                simulator.advance(100)
+                timed_out = any("link_timeout" in output
+                                for output in simulator.drain_outputs())
+                self.assertEqual(timed_out, not refreshes_watchdog)
 
     def test_valid_ping_show_and_replay_refresh_energized_watchdog(self) -> None:
         """Refreshes watchdog time only for valid commands and exact replay."""

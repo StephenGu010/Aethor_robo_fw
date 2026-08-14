@@ -290,6 +290,22 @@ static void test_text_request_shape_rejections(void)
          "error 61 bench disable code=bad_argument\n"},
         {"62 bench clear 1 unexpected=1\n",
          "error 62 bench clear code=bad_argument\n"},
+        {"63 show config +1\n",
+         "error 63 show config code=bad_argument\n"},
+        {"64 show config abc\n",
+         "error 64 show config code=bad_argument\n"},
+        {"65 show config 0\n",
+         "error 65 show config code=out_of_range field=joint\n"},
+        {"66 show config 8\n",
+         "error 66 show config code=out_of_range field=joint\n"},
+        {"67 show config 4294967296\n",
+         "error 67 show config code=bad_argument\n"},
+        {"68 stream\n",
+         "error 68 stream code=unknown_command\n"},
+        {"69 bench\n",
+         "error 69 bench code=unknown_command\n"},
+        {"70 show\n",
+         "error 70 show code=unknown_command\n"},
     };
     ProtocolEngine engine;
     ProtocolOutputBatch output_batch;
@@ -464,6 +480,20 @@ static void test_text_detailed_show_queries(void)
     assert(strcmp(response,
                   "ok 0 show config joint=1 esc=01 master=11 dir=? gear=? "
                   "min_deg=? max_deg=? vmax_deg_s=? amax_deg_s2=? verified=00\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "show config 01\n",
+                                    183925000ULL,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strncmp(response, "ok 0 show config joint=1 ", 25U) == 0);
+
+    response = process_text_request(&engine,
+                                    "show config 7\n",
+                                    183925000ULL,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strncmp(response, "ok 0 show config joint=7 ", 25U) == 0);
 
     response = process_text_request(&engine,
                                     "show config\n",

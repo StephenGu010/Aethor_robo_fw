@@ -208,6 +208,22 @@ class AethorTextSimulatorTests(unittest.TestCase):
              "error 50 bench disable code=bad_argument"),
             ("50 bench clear 1 unexpected=1",
              "error 50 bench clear code=bad_argument"),
+            ("50 show config +1",
+             "error 50 show config code=bad_argument"),
+            ("50 show config abc",
+             "error 50 show config code=bad_argument"),
+            ("50 show config 0",
+             "error 50 show config code=out_of_range field=joint"),
+            ("50 show config 8",
+             "error 50 show config code=out_of_range field=joint"),
+            ("50 show config 4294967296",
+             "error 50 show config code=bad_argument"),
+            ("50 stream",
+             "error 50 stream code=unknown_command"),
+            ("50 bench",
+             "error 50 bench code=unknown_command"),
+            ("50 show",
+             "error 50 show code=unknown_command"),
         )
         for request_body, expected_error in invalid_cases:
             with self.subTest(request=request_body):
@@ -231,6 +247,9 @@ class AethorTextSimulatorTests(unittest.TestCase):
         keepalive_requests = (
             ("3 ping", None),
             ("3 show state", None),
+            ("3 show config 1", None),
+            ("3 show config 7", None),
+            ("3 show config 01", None),
             ("50 show state", "50 show state"),
         )
         for request_body, replay_seed in keepalive_requests:

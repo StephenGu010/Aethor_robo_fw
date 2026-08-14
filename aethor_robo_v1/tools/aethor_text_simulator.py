@@ -317,6 +317,15 @@ class AethorTextSimulator:
         if target == "config":
             if len(positionals) > 1:
                 return [f"error {request_id} show config code=bad_argument"], False
+            if positionals:
+                try:
+                    joint_number = parse_strict_ascii_u32_token(positionals[0])
+                except ValueError:
+                    return ([f"error {request_id} show config "
+                             "code=bad_argument"], False)
+                if not 1 <= joint_number <= JOINT_COUNT:
+                    return ([f"error {request_id} show config "
+                             "code=out_of_range field=joint"], False)
         elif positionals:
             return [f"error {request_id} show {target} code=bad_argument"], False
         if target == "info":
@@ -499,6 +508,8 @@ class AethorTextSimulator:
                   fields: dict[str, str]) -> tuple[list[str], bool]:
         """Dispatches one request and returns explicit C watchdog acceptance."""
         path = " ".join(command)
+        if len(command) == 1 and command[0] in {"show", "stream", "bench"}:
+            return [f"error {request_id} {path} code=unknown_command"], False
         if path == "hello":
             if positionals or fields:
                 return [f"error {request_id} hello code=bad_argument"], False

@@ -1,6 +1,6 @@
 # 协议测试资产
 
-当前固件正式入口是 `aethor-text-v1`。`aethor-text-v1-vectors.json` 固定可打印 ASCII 请求、可选十进制请求编号、LF/CRLF、分片/粘连和统一 `ok/done/error/event/data` 输出示例；正式传输不包含应用层 CRC。
+当前固件正式入口是 `aethor-text-v1`。`aethor-text-v1-vectors.json` 固定可打印 ASCII 请求、可选十进制请求编号、LF/CRLF、分片/粘连、一次提交的 `bench move` 和统一 `ok/done/error/event/data` 输出示例；正式传输不包含应用层 CRC。
 
 对应的主机测试：
 
@@ -16,7 +16,16 @@
 - `run_text_protocol_arm_profile_tests.ps1` 验证正式七轴 Profile、七值关节命令和配置安全门控。
 - `run_simulator_tests.ps1` 验证确定性文本模拟器和只读参考客户端。
 
-台架动作只由上位机提交一次；固件在未到位时内部重发固定 CAN 目标。电机使能或运动期间，上位机通过独立 `ping` 保活。该边界由协议引擎、应用门面和 COM7 调试脚本测试共同覆盖，不由 JSON 帧向量单独证明。
+共享向量中的 `bench_move_build_cases` 固定以下一一映射请求：
+
+```text
+50 bench move 1 position=90 speed=30
+51 bench move 1,3 position=90,-45 speed=30,20
+```
+
+`bench_move_invalid_cases` 固定数量不匹配的 `count_mismatch` 分类；`bench_move_terminal_cases` 固定 `completed/failed/cancelled/stopped` 四种终态；`bench_move_request_sequences` 固定相同请求重放和相同 ID 不同正文的 `request_conflict`。模拟器测试会加载这些向量，验证参考客户端的严格等长列表生成、本地唯一 1–7/有限值/正速度检查、单次写入、无 `ping` 等待以及终态字段解析。固件 C 协议引擎测试继续直接覆盖解析、入队、重放、冲突、busy 和 STOP 抢占。
+
+台架动作只由上位机提交一次；固件在未到位时内部重发固定 CAN 目标。自包含 `bench move` 不启动 `ping`，最终 HOLD、所选电机失能并收到新鲜 disabled 反馈后才完成；旧 `bench enable/jog` 带电期间仍通过约 250 ms 的独立 `ping` 保活。该边界由协议引擎、应用门面和主机测试共同覆盖，不由 JSON 向量单独证明。
 
 以下资产属于迁移前 `aethor-arm-ascii-v1`，保留用于回归，不是固件正式协议入口：
 
@@ -27,4 +36,4 @@
 
 旧资产继续固定 CRC-16/CRC-32、`REQ` 操作名、键值字段和旧输出封帧，避免重构意外破坏兼容代码。修改旧回归资产不等于修改 `aethor-text-v1` 协议版本。
 
-所有主机测试均在 `Tests/host/build` 下生成临时产物；生成文件不是协议源，不应手工编辑。测试通过只证明软件契约，不代表 USB CDC、CAN、电机或机械臂实机验收完成。
+所有主机测试均在 `Tests/host/build` 下生成临时产物；生成文件不是协议源，不应手工编辑。测试通过只证明软件契约，不代表机械软限位、方向、减速比、实际角速度、USB CDC、CAN、电机负载、七轴联动或机械臂实机验收完成。

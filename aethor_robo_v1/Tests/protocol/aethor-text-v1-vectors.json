@@ -34,5 +34,89 @@
       "chunks_ascii": ["show state\nping\n"],
       "response_prefixes": ["ok 0 show state ", "ok 0 ping "]
     }
+  ],
+  "bench_move_build_cases": [
+    {
+      "name": "single_motor_one_shot_move",
+      "request_id": 50,
+      "motors": [1],
+      "positions_deg": [90],
+      "speeds_deg_s": [30],
+      "request": "50 bench move 1 position=90 speed=30"
+    },
+    {
+      "name": "multi_motor_one_to_one_move",
+      "request_id": 51,
+      "motors": [1, 3],
+      "positions_deg": [90, -45],
+      "speeds_deg_s": [30, 20],
+      "request": "51 bench move 1,3 position=90,-45 speed=30,20"
+    }
+  ],
+  "bench_move_invalid_cases": [
+    {
+      "name": "position_count_mismatch",
+      "request_id": 52,
+      "motors": [1, 3],
+      "positions_deg": [90],
+      "speeds_deg_s": [30, 20],
+      "firmware_request": "52 bench move 1,3 position=90 speed=30,20",
+      "firmware_response": "error 52 bench move code=count_mismatch field=position"
+    }
+  ],
+  "bench_move_terminal_cases": [
+    {
+      "name": "completed_move",
+      "request_id": 50,
+      "line": "done 50 bench move result=completed elapsed_ms=3200 motors=05",
+      "result": "completed",
+      "elapsed_ms": 3200,
+      "motor_mask": 5
+    },
+    {
+      "name": "failed_move",
+      "request_id": 50,
+      "line": "done 50 bench move result=failed stage=motion code=stale_feedback motor=3",
+      "result": "failed",
+      "stage": "motion",
+      "code": "stale_feedback",
+      "motor": 3
+    },
+    {
+      "name": "cancelled_move",
+      "request_id": 50,
+      "line": "done 50 bench move result=cancelled",
+      "result": "cancelled"
+    },
+    {
+      "name": "stopped_move",
+      "request_id": 50,
+      "line": "done 50 bench move result=stopped",
+      "result": "stopped"
+    }
+  ],
+  "bench_move_request_sequences": [
+    {
+      "name": "accepted_request_replay",
+      "requests": [
+        "62 bench move 3,1 position=-45,90 speed=20,30",
+        "62 bench move 3,1 position=-45,90 speed=20,30"
+      ],
+      "responses": [
+        "ok 62 bench move accepted=1",
+        "ok 62 bench move accepted=1"
+      ]
+    },
+    {
+      "name": "request_id_conflict",
+      "requests": [
+        "62 bench move 3,1 position=-45,90 speed=20,30",
+        "62 bench move 3,1 position=-44,90 speed=20,30"
+      ],
+      "responses": [
+        "ok 62 bench move accepted=1",
+        "error 62 bench move code=request_conflict"
+      ]
+    }
   ]
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import pathlib
 import sys
 import unittest
@@ -11,6 +12,31 @@ PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "Tools"))
 
 from aethor_text_simulator import AethorTextSimulator, encode_line  # noqa: E402
+from aethor_reference_client import (  # noqa: E402
+    AethorReferenceClient,
+    build_one_shot_bench_move,
+    parse_one_shot_move_terminal,
+)
+
+
+class ScriptedActionTransport:
+    """Records one action write and returns a predefined ACK/DONE transcript."""
+
+    def __init__(self, action_outputs: list[str]) -> None:
+        """Stores the outputs that the one-shot action receive loop will observe."""
+        self.action_outputs = action_outputs
+        self.action_bodies: list[str] = []
+        self.query_bodies: list[str] = []
+
+    def transact(self, body: str) -> list[str]:
+        """Records an ordinary query transaction for interface compatibility."""
+        self.query_bodies.append(body)
+        return []
+
+    def transact_until_done(self, body: str, request_id: int) -> list[str]:
+        """Records exactly one action write and returns its scripted lifecycle."""
+        self.action_bodies.append(body)
+        return list(self.action_outputs)
 
 
 class AethorTextSimulatorTests(unittest.TestCase):
@@ -103,6 +129,124 @@ class AethorTextSimulatorTests(unittest.TestCase):
         self.assertEqual(len(outputs), len(concatenated["response_prefixes"]))
         for output, prefix in zip(outputs, concatenated["response_prefixes"]):
             self.assertTrue(output.startswith(prefix))
+
+    def test_one_shot_move_build_vectors(self) -> None:
+        """Builds published single- and multi-motor one-to-one move requests."""
+        vector_path = (PROJECT_ROOT / "Tests" / "protocol" /
+                       "aethor-text-v1-vectors.json")
+        vectors = json.loads(vector_path.read_text(encoding="utf-8"))
+
+        for vector in vectors["bench_move_build_cases"]:
+            self.assertEqual(
+                build_one_shot_bench_move(
+                    vector["request_id"],
+                    vector["motors"],
+                    vector["positions_deg"],
+                    vector["speeds_deg_s"],
+                ),
+                vector["request"],
+                vector["name"],
+            )
+
+        mismatch = vectors["bench_move_invalid_cases"][0]
+        with self.assertRaisesRegex(ValueError, "equal non-empty lengths"):
+            build_one_shot_bench_move(
+                mismatch["request_id"],
+                mismatch["motors"],
+                mismatch["positions_deg"],
+                mismatch["speeds_deg_s"],
+            )
+        self.assertEqual(
+            mismatch["firmware_response"],
+            "error 52 bench move code=count_mismatch field=position",
+        )
+
+    def test_one_shot_move_builder_rejects_unsafe_local_values(self) -> None:
+        """Rejects duplicate IDs, invalid IDs, non-finite values, and nonpositive speed."""
+        invalid_arguments = (
+            ([1, 1], [1.0, 2.0], [1.0, 1.0]),
+            ([0], [1.0], [1.0]),
+            ([8], [1.0], [1.0]),
+            ([1], [math.nan], [1.0]),
+            ([1], [math.inf], [1.0]),
+            ([1], [1.0], [math.inf]),
+            ([1], [1.0], [0.0]),
+            ([1], [1.0], [-1.0]),
+        )
+        for motors, positions, speeds in invalid_arguments:
+            with self.subTest(motors=motors, positions=positions, speeds=speeds):
+                with self.assertRaises(ValueError):
+                    build_one_shot_bench_move(50, motors, positions, speeds)
+
+    def test_one_shot_move_terminal_vectors(self) -> None:
+        """Parses completed, failed, cancelled, and stopped terminal schemas."""
+        vector_path = (PROJECT_ROOT / "Tests" / "protocol" /
+                       "aethor-text-v1-vectors.json")
+        vectors = json.loads(vector_path.read_text(encoding="utf-8"))
+
+        for vector in vectors["bench_move_terminal_cases"]:
+            result = parse_one_shot_move_terminal(
+                vector["line"], vector["request_id"])
+            self.assertEqual(result.result, vector["result"], vector["name"])
+            self.assertEqual(result.elapsed_ms, vector.get("elapsed_ms"))
+            self.assertEqual(result.motor_mask, vector.get("motor_mask"))
+            self.assertEqual(result.stage, vector.get("stage"))
+            self.assertEqual(result.code, vector.get("code"))
+            self.assertEqual(result.motor, vector.get("motor"))
+
+    def test_one_shot_move_sends_once_without_keepalive(self) -> None:
+        """Writes one move line, waits for matching ACK/DONE, and emits no ping."""
+        transport = ScriptedActionTransport([
+            "ok 50 bench move accepted=1",
+            "done 50 bench move result=failed stage=motion "
+            "code=stale_feedback motor=3",
+        ])
+        client = AethorReferenceClient(transport)
+        client.next_request_id = 50
+
+        result = client.bench_move_once(
+            [1, 3], [90.0, -45.0], [30.0, 20.0])
+
+        self.assertEqual(
+            transport.action_bodies,
+            ["50 bench move 1,3 position=90,-45 speed=30,20"],
+        )
+        self.assertEqual(transport.query_bodies, [])
+        self.assertFalse(any("ping" in body for body in transport.action_bodies))
+        self.assertEqual(result.result, "failed")
+        self.assertEqual(result.stage, "motion")
+        self.assertEqual(result.code, "stale_feedback")
+        self.assertEqual(result.motor, 3)
+
+    def test_one_shot_move_requires_matching_ack_and_done(self) -> None:
+        """Rejects missing ACKs and terminal lines for another request ID."""
+        missing_ack = AethorReferenceClient(ScriptedActionTransport([
+            "done 1 bench move result=cancelled",
+        ]))
+        with self.assertRaisesRegex(RuntimeError, "matching acceptance"):
+            missing_ack.bench_move_once([1], [1.0], [1.0])
+
+        wrong_done = AethorReferenceClient(ScriptedActionTransport([
+            "ok 1 bench move accepted=1",
+            "done 2 bench move result=completed elapsed_ms=1 motors=01",
+        ]))
+        with self.assertRaisesRegex(RuntimeError, "matching terminal"):
+            wrong_done.bench_move_once([1], [1.0], [1.0])
+
+    def test_published_replay_and_conflict_sequences_are_explicit(self) -> None:
+        """Keeps exact replay and request-ID conflict outcomes in shared vectors."""
+        vector_path = (PROJECT_ROOT / "Tests" / "protocol" /
+                       "aethor-text-v1-vectors.json")
+        vectors = json.loads(vector_path.read_text(encoding="utf-8"))
+        replay, conflict = vectors["bench_move_request_sequences"]
+
+        self.assertEqual(replay["requests"][0], replay["requests"][1])
+        self.assertEqual(replay["responses"][0], replay["responses"][1])
+        self.assertEqual(replay["responses"][0],
+                         "ok 62 bench move accepted=1")
+        self.assertNotEqual(conflict["requests"][0], conflict["requests"][1])
+        self.assertEqual(conflict["responses"][1],
+                         "error 62 bench move code=request_conflict")
 
 
 if __name__ == "__main__":

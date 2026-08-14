@@ -6,7 +6,7 @@
     "encoding": "printable ASCII",
     "line_terminators": ["LF", "CRLF"],
     "maximum_request_bytes": 160,
-    "maximum_response_bytes_including_lf": 192,
+    "maximum_response_bytes_including_lf": 256,
     "application_crc": null
   },
   "identity": {
@@ -28,10 +28,27 @@
   "public_control_mode": "POS_VEL",
   "profiles": {
     "bench": {
-      "commands": ["init", "enable", "jog", "stop", "disable", "clear"],
+      "commands": ["init", "enable", "jog", "move", "stop", "disable", "clear"],
       "explicit_motor_list": true,
-      "maximum_absolute_delta_deg": 3.0,
-      "maximum_speed_deg_s": 3.0
+      "move": {
+        "request": "<id> bench move <motors> position=<deg-list> speed=<deg/s-list>",
+        "coordinates": "absolute S3519 output-shaft angle relative to this power-on zero",
+        "mapping": "motor, position, and speed lists have equal nonzero length and map by list order; no broadcasting",
+        "motors": "unique integers from 1 through 7",
+        "numbers": "finite position values and finite speed values greater than zero",
+        "position_limit": "abs(position_deg) <= discovered PMAX converted to degrees",
+        "speed_limit": "speed_deg_s <= min(discovered VMAX, discovered MAX_SPD) converted to degrees per second",
+        "boundary_policy": "equal is accepted; over-limit values are rejected without clamping",
+        "missing_discovery_policy": "reject; no default limit fallback",
+        "host_submission": "send exactly once and wait for matching ok and done; no ping keepalive",
+        "firmware_lifecycle": ["discovery", "validate", "mode", "clear", "enable", "motion", "hold", "disable"],
+        "completion_gate": "fresh disabled feedback for every selected motor"
+      },
+      "jog": {
+        "coordinates": "relative S3519 output-shaft angle",
+        "limits": "the same discovered PMAX, VMAX, and MAX_SPD runtime admission rules",
+        "keepalive": "ping about every 250 ms while energized or moving"
+      }
     },
     "arm": {
       "commands": ["align", "enable", "move", "stop", "disable", "clear"],
@@ -50,10 +67,34 @@
     "keepalive_command": "ping",
     "host_period_ms_while_energized": 250,
     "watchdog_timeout_ms": 1000,
-    "watchdog_scope": "any motor enabled or motion active",
+    "watchdog_scope": "any motor enabled or motion active, except an accepted self-contained bench move while it owns discovery-through-disable cleanup",
     "watchdog_action": "stop_disable",
     "recent_result_capacity": 32,
     "recent_result_retention_ms": 60000
+  },
+  "show_motor_move_fields": {
+    "pmax_deg": "discovered PMAX in output-shaft degrees, or ? when unavailable",
+    "vmax_deg_s": "discovered VMAX in output-shaft degrees per second, or ? when unavailable",
+    "max_speed_deg_s": "discovered MAX_SPD in output-shaft degrees per second, or ? when unavailable",
+    "move_speed_limit_deg_s": "min(VMAX, MAX_SPD) in output-shaft degrees per second, or ? when unavailable",
+    "format": "compact three-decimal formatting; for example 20 rad/s is 1145.916 deg/s"
+  },
+  "bench_move_results": {
+    "accepted": "ok <id> bench move accepted=1",
+    "completed": "done <id> bench move result=completed elapsed_ms=<uint32> motors=<two-digit-hex-mask>",
+    "failed": "done <id> bench move result=failed stage=<stage> code=<code> motor=<1..7|?>",
+    "cancelled": "done <id> bench move result=cancelled",
+    "stopped": "done <id> bench move result=stopped",
+    "stages": ["validate", "discovery", "mode", "clear", "enable", "motion", "hold", "disable", "unknown"],
+    "codes": ["not_ready", "position_out_of_range", "speed_out_of_range", "fault_present", "stale_feedback", "timeout", "feedback_timeout", "action_failed"],
+    "failed_motor": "one-based selected motor when attributable, otherwise ?",
+    "motors_mask": "selected motor bit mask; motor 1 is bit 0"
+  },
+  "request_arbitration": {
+    "active_action": "a second ordinary command returns code=busy without replacing the active move",
+    "stop": "bench stop may preempt an active move; the original move ends as cancelled and stop has its own terminal result",
+    "replay": "an identical nonzero request ID and normalized body replays its recent result without moving again",
+    "conflict": "the same nonzero request ID with a different normalized body returns code=request_conflict"
   },
   "legacy": {
     "protocol": "aethor-arm-ascii-v1",

@@ -1,6 +1,6 @@
 # Aethor 七自由度机械臂固件
 
-当前分支已经实现 PRD 首组七自由度机械臂的固件软件与上位机兼容性测试包：电脑通过板卡 Type-C USB CDC 发送可手工输入的 `aethor-text-v1` 文本指令，可按正式整组或台架显式子集控制 S3519 电机。真实机械、电气和驱动参数仍未逐轴验证，因此默认台架 Profile 只开放绝对值不超过 `3°`、速度不超过 `3°/s` 的显式选轴相对控制；生产 Profile 继续锁定真实使能。旧 `aethor-arm-ascii-v1` 及其 CRC 测试资产仅用于回归，不进入固件正式协议入口。
+当前分支已经实现 PRD 首组七自由度机械臂的固件软件与上位机兼容性测试包：电脑通过板卡 Type-C USB CDC 发送可手工输入的 `aethor-text-v1` 文本指令，可按正式整组或台架显式子集控制 S3519 电机。默认台架 Profile 支持一条 `bench move` 命令完成所选电机的发现、校验、使能、绝对运动、保持和自动失能；位置与速度边界只来自本次上电发现的 S3519 `PMAX/VMAX/MAX_SPD`，不使用固定 3° 默认值。生产 Profile 仍因真实机械参数未逐轴验证而锁定使能。旧 `aethor-arm-ascii-v1` 及其 CRC 测试资产仅用于回归，不进入固件正式协议入口。
 
 ## 当前入口与范围
 
@@ -9,7 +9,7 @@
 - 物理参数：方向、零位/限位、速度、加速度、MIT 增益、电机量程和外部减速比均保持未验证状态，因此配置不能通过使能就绪检查。
 - 旧验证代码：`User/` 原样保留作为迁移参考，但旧按键双电机和旧七轴控制链不进入当前 Keil 目标。
 - 正式传输：板卡Type-C USB CDC虚拟串口；USART不作为第二套正式协议入口。
-- 当前默认配置：`USB_BENCH_RELATIVE`，允许使用 `bench init/enable/jog/stop/disable/clear` 显式选取一个或多个电机；未选电机不变。
+- 当前默认配置：`USB_BENCH_RELATIVE`，允许使用 `bench init/enable/jog/move/stop/disable/clear` 显式选取一个或多个电机；未选电机不变。
 - `ARM_PRODUCTION` 已实现参考位、整组 POS_VEL、MIT 五次时间标度、受控停止、反馈确认、故障和通信看门狗，但需全部参数验证位有效才可真实使能。
 - STM32 只执行关节空间控制。DH/URDF、逆运动学、笛卡尔控制、动力学和碰撞规划不在固件范围内。
 - 首组 `arm-1` 完成；第二组只保留 `controller_id/arm_id` 扩展边界，尚未实现双会话。
@@ -37,6 +37,9 @@ App/
 hello
 show state
 show motors
+show motor 1
+50 bench move 1 position=90 speed=30
+51 bench move 1,3 position=90,-45 speed=30,20
 1 bench init 1
 2 bench enable 1
 3 bench jog 1 delta=0.2 speed=1
@@ -44,7 +47,11 @@ show motors
 5 bench disable 1
 ```
 
-`bench jog` 等动作命令只提交一次：收到 `ok <id> ... accepted=1` 后等待同一请求编号的 `done`，不要换新请求编号重复发送动作。运动未到位时，固件会在内部周期重发同一批固定 CAN 目标。电机使能或运动期间，上位机仍需每 250 ms 或更快发送有效 `ping`；固件连续 1000 ms 未收到有效请求会执行停止和失能。所有电机均未使能且无运动时，不执行该通信超时动作。
+`bench move` 是绝对输出端角度命令，零点是本次上电零点。`motor/position/speed` 三个列表必须严格等长，按列表顺序一一对应，电机编号必须是唯一的 `1..7`，位置与速度必须是有限值且速度大于 0；不支持广播。固件允许位置等于已发现 `PMAX`、速度等于 `min(VMAX,MAX_SPD)`，越界时拒绝而不截断；任一发现值缺失时不回退默认范围。`show motor <id>` 可查看 `pmax_deg/vmax_deg_s/max_speed_deg_s/move_speed_limit_deg_s`，不可用字段显示 `?`。
+
+新 `bench move` 只发送一次。收到 `ok <id> bench move accepted=1` 后无需发送 `ping`，固件内部会重发固定 CAN 目标，并继续执行新鲜反馈、驱动故障、控制周期和 Bus-Off 安全检查；到位后依次发送最终位置加零速度的 HOLD、仅对所选电机失能，并在收到全部所选电机的新鲜 disabled 反馈后返回 `done`。旧 `bench enable/jog` 仍需在带电期间约每 250 ms 发送一次独立 `ping`，连续 1000 ms 无有效请求仍会停止和失能。不要周期重发任何动作正文来代替保活。
+
+软件解析、主机测试和构建只证明接口与状态机合同，不证明机械臂软限位、输出方向、外部减速比、实际角速度、带载性能、七轴联动或真实硬件已经验收。
 
 只读探测和小角度台架调试见 `Tests/hardware/debug_com7_aethor_text_v1.ps1`；现行接口契约见 `docs/compatibility/`。
 

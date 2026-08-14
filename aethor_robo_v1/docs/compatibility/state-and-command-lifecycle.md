@@ -56,6 +56,40 @@ ping              -----------> 刷新通信看门狗
 - 上位机不能通过不断分配新请求编号来重复提交同一动作，否则会形成多个业务请求。
 - 已接受动作无论成功、停止、取消或失败，都通过 `done ... result=completed/stopped/cancelled/failed` 报告终态；校验或入队失败在动作开始前返回 `error`。
 
+## 自包含绝对台架运动
+
+```text
+上位机                                      固件                         所选电机
+50 bench move 1,3
+ position=90,-45 speed=30,20  -----------> 严格校验等长列表与一一映射
+                         <--------------- ok 50 bench move accepted=1
+                                          按需发现 PMAX/VMAX/MAX_SPD
+                                          校验范围、反馈与故障
+                                          POS_VEL、清错、使能        --->
+                                          固定逐电机目标并内部重发    --->
+                                          最终位置 + 0 速度 HOLD     --->
+                                          selected disable           --->
+                                          等待新鲜 disabled 反馈
+                         <--------------- done 50 bench move result=completed ...
+```
+
+- `motor/position/speed` 列表非空且严格等长，按调用者列表顺序一一对应；电机是唯一的 1–7，位置和速度必须有限且速度大于 0，不广播。
+- 位置是相对本次上电零点的 S3519 输出端绝对角度，不是机械臂软限位。`abs(position)` 只与本次发现的 `PMAX` 比较，速度只与 `min(VMAX,MAX_SPD)` 比较；边界允许，越界拒绝且不截断，缺失发现值不回退默认值。
+- 主机只发送一次动作正文并等待匹配 `ok/done`，不发送 `ping`。局部看门狗豁免只覆盖已接受动作实际持有的发现到失能/清理状态；反馈新鲜度、驱动故障、控制周期、动作期限与 Bus-Off 路径仍然有效。
+- 成功终态只在 HOLD、所选电机失能和全部所选电机新鲜 disabled 反馈之后产生。未选电机不接收该动作的控制帧。
+- `bench stop` 可抢占活动动作：原 `bench move` 报告 `cancelled`，STOP 有独立终态。第二条普通命令立即返回 `busy`，不覆盖当前动作。
+
+稳定终态 schema：
+
+```text
+done 50 bench move result=completed elapsed_ms=3200 motors=05
+done 50 bench move result=failed stage=motion code=stale_feedback motor=3
+done 50 bench move result=cancelled
+done 50 bench move result=stopped
+```
+
+失败阶段为 `validate/discovery/mode/clear/enable/motion/hold/disable`，无法归属时为 `unknown`；错误码为 `not_ready/position_out_of_range/speed_out_of_range/fault_present/stale_feedback/timeout/feedback_timeout/action_failed`。可归属故障时 `motor` 是所选电机的一基编号，否则为 `?`；完成结果的 `motors` 是所选电机位掩码，电机 1 对应 bit 0。
+
 ## 请求重放
 
 ```text
@@ -81,7 +115,7 @@ ping              -----------> 刷新通信看门狗
 ## 保活与连接重建
 
 ```text
-任一电机使能或存在活动运动
+旧 bench enable/jog 使电机带电或运动
   -> 上位机每 250 ms 或更快发送有效 ping
   -> 1000 ms 无有效请求
   -> 固件停止并失能
@@ -92,4 +126,6 @@ ping              -----------> 刷新通信看门狗
   -> boot 改变时丢弃旧请求与旧目标
 ```
 
-全部电机失能且无运动时，通信看门狗不触发停止/失能；因此只读手工调试不需要周期重复发送指令。重新连接后必须先确认设备身份、Profile、`boot`、电机状态和故障掩码，再开放动作；正式机械臂 Profile 还需重新确认参考位。
+自包含 `bench move` 在其已接受的发现到失能/清理生命周期内不走上述通信超时路径，也不伪造 `ping` 或刷新最后请求时间。全部电机失能且无运动时，通信看门狗同样不触发停止/失能；因此只读手工调试不需要周期重复发送指令。重新连接后必须先确认设备身份、Profile、`boot`、电机状态和故障掩码，再开放动作；正式机械臂 Profile 还需重新确认参考位。
+
+本文描述的软件合同和主机测试不证明机械软限位、方向、外部减速比、真实角速度、带载性能、七轴联动或真实硬件已经验收。

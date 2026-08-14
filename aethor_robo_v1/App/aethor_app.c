@@ -18,6 +18,8 @@
 #define AETHOR_APP_MOTION_TIMEOUT_MARGIN_US (2000000ULL)
 #define AETHOR_APP_ALL_JOINTS_MASK ((uint8_t)0x7FU)
 #define AETHOR_APP_DEG_TO_RAD (0.017453292519943295F)
+/* Covers one MOVE cancellation, one superseded STOP, and the current STOP. */
+#define AETHOR_APP_DEFERRED_RESULT_CAPACITY (3U)
 
 /**
  * @brief Describes legacy and self-contained motor action phases owned by ArmControlTask.
@@ -79,6 +81,10 @@ static ProtocolEngine application_protocol_engine;
 static MotorEmergencyFrameBatch application_emergency_disable_batch;
 static uint8_t application_emergency_disable_read_index;
 static AethorAppAction application_action;
+static ProtocolCommandResult
+    application_deferred_results[AETHOR_APP_DEFERRED_RESULT_CAPACITY];
+static uint8_t application_deferred_result_read_sequence;
+static uint8_t application_deferred_result_write_sequence;
 static uint64_t application_last_service_timestamp_us;
 static uint8_t application_initialized;
 
@@ -235,6 +241,99 @@ static S3519ControlMode aethor_app_vendor_mode(ArmControlMode control_mode)
                : S3519_CONTROL_MODE_POSITION_VELOCITY;
 }
 
+/** @brief Returns the number of terminal results retained by the app FIFO. */
+static uint8_t aethor_app_deferred_result_count(void)
+{
+    return (uint8_t)(application_deferred_result_write_sequence -
+                     application_deferred_result_read_sequence);
+}
+
+/** @brief Reports whether one more terminal can be retained without loss. */
+static uint8_t aethor_app_deferred_result_has_capacity(void)
+{
+    return (uint8_t)(aethor_app_deferred_result_count() <
+                     AETHOR_APP_DEFERRED_RESULT_CAPACITY);
+}
+
+/**
+ * @brief Submits one result or appends it behind older deferred terminals.
+ * @param result Immutable terminal result.
+ * @return One only after fixed storage owns the result.
+ */
+static uint8_t aethor_app_submit_or_defer_result(
+    const ProtocolCommandResult *result)
+{
+    uint8_t slot_index;
+
+    if (result == NULL)
+    {
+        return 0U;
+    }
+    if ((aethor_app_deferred_result_count() == 0U) &&
+        (protocol_engine_submit_command_result(&application_protocol_engine,
+                                               result) != 0U))
+    {
+        return 1U;
+    }
+    if (aethor_app_deferred_result_has_capacity() == 0U)
+    {
+        return 0U;
+    }
+    slot_index = (uint8_t)(application_deferred_result_write_sequence %
+                           AETHOR_APP_DEFERRED_RESULT_CAPACITY);
+    application_deferred_results[slot_index] = *result;
+    ++application_deferred_result_write_sequence;
+    return 1U;
+}
+
+/** @brief Moves deferred terminals to ProtocolEngine without reordering them. */
+static uint8_t aethor_app_flush_deferred_results(void)
+{
+    uint8_t flushed = 0U;
+
+    while (aethor_app_deferred_result_count() != 0U)
+    {
+        uint8_t slot_index =
+            (uint8_t)(application_deferred_result_read_sequence %
+                      AETHOR_APP_DEFERRED_RESULT_CAPACITY);
+
+        if (protocol_engine_submit_command_result(
+                &application_protocol_engine,
+                &application_deferred_results[slot_index]) == 0U)
+        {
+            break;
+        }
+        ++application_deferred_result_read_sequence;
+        flushed = 1U;
+    }
+    return flushed;
+}
+
+/**
+ * @brief Retains one terminal for a queued command cancelled before execution.
+ */
+static uint8_t aethor_app_cancel_queued_command(
+    const ProtocolCommand *command,
+    uint64_t timestamp_us)
+{
+    ProtocolCommandResult result;
+
+    if (command == NULL)
+    {
+        return 0U;
+    }
+    memset(&result, 0, sizeof(result));
+    result.request_id = command->request_id;
+    result.session_id = command->session_id;
+    result.type = command->type;
+    result.code = PROTOCOL_COMMAND_RESULT_CANCELLED;
+    result.accepted_at_us = command->accepted_at_us;
+    result.completed_at_us = timestamp_us;
+    result.motor_mask = command->motor_mask;
+    result.bench_relative_scope = command->bench_relative_scope;
+    return aethor_app_submit_or_defer_result(&result);
+}
+
 /** @brief Completes the active command and clears its execution gate. */
 static uint8_t aethor_app_complete_action(ProtocolCommandResultCode code,
                                           uint16_t detail,
@@ -261,10 +360,13 @@ static uint8_t aethor_app_complete_action(ProtocolCommandResultCode code,
         result.auxiliary_values[0] =
             application_action.maximum_following_error_deg;
     }
+    if (aethor_app_submit_or_defer_result(&result) == 0U)
+    {
+        return 0U;
+    }
     memset(&application_action, 0, sizeof(application_action));
     application_last_service_timestamp_us = 0U;
-    return protocol_engine_submit_command_result(&application_protocol_engine,
-                                                 &result);
+    return 1U;
 }
 
 /** @brief Accumulates the maximum absolute trajectory-following error in degrees. */
@@ -572,7 +674,8 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
     if (application_action.cleanup_disable_mask == 0U)
     {
         (void)motor_runtime_abort_active_parameter_sequences(
-            &application_motor_runtime);
+            &application_motor_runtime,
+            timestamp_us);
         return aethor_app_complete_action(
             PROTOCOL_COMMAND_RESULT_FAILED,
             (uint16_t)application_action.failure_error,
@@ -588,7 +691,8 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
             application_action.cleanup_disable_mask,
             &application_action.frames);
         (void)motor_runtime_abort_active_parameter_sequences(
-            &application_motor_runtime);
+            &application_motor_runtime,
+            timestamp_us);
         if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
         {
             return aethor_app_complete_action(
@@ -633,7 +737,8 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
             hold_speed_rad_s,
             &application_action.frames);
         (void)motor_runtime_abort_active_parameter_sequences(
-            &application_motor_runtime);
+            &application_motor_runtime,
+            timestamp_us);
         if (runtime_status == MOTOR_RUNTIME_STATUS_OK)
         {
             application_action.state =
@@ -660,7 +765,8 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
     else
     {
         (void)motor_runtime_abort_active_parameter_sequences(
-            &application_motor_runtime);
+            &application_motor_runtime,
+            timestamp_us);
         runtime_status = motor_runtime_build_mode_command_batch(
             &application_motor_runtime,
             S3519_CONTROL_MODE_POSITION_VELOCITY,
@@ -1506,6 +1612,11 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
            sizeof(application_emergency_disable_batch));
     application_emergency_disable_read_index = 0U;
     memset(&application_action, 0, sizeof(application_action));
+    memset(application_deferred_results,
+           0,
+           sizeof(application_deferred_results));
+    application_deferred_result_read_sequence = 0U;
+    application_deferred_result_write_sequence = 0U;
     application_initialized =
         (uint8_t)(motor_status == MOTOR_RUNTIME_STATUS_OK);
 }
@@ -1738,8 +1849,7 @@ static uint8_t aethor_app_start_lifecycle_action(
             (void)joint_reference_get_bias_degrees(&application_joint_reference,
                                                    result.auxiliary_values);
         }
-        return protocol_engine_submit_command_result(&application_protocol_engine,
-                                                     &result);
+        return aethor_app_submit_or_defer_result(&result);
     }
     if (command->type == PROTOCOL_COMMAND_INIT_MOTORS)
     {
@@ -2181,8 +2291,7 @@ static uint8_t aethor_app_start_lifecycle_action(
     }
 
     result.detail = (uint16_t)runtime_status;
-    return protocol_engine_submit_command_result(&application_protocol_engine,
-                                                 &result);
+    return aethor_app_submit_or_defer_result(&result);
 }
 
 /** @brief Advances one active motor-backed lifecycle action. */
@@ -2534,6 +2643,8 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         ArmSnapshot arm_snapshot;
         uint8_t one_shot_motor_failure_detected;
 
+        (void)aethor_app_flush_deferred_results();
+
         if ((application_last_service_timestamp_us != 0U) &&
             (timestamp_us >= application_last_service_timestamp_us))
         {
@@ -2597,7 +2708,8 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             if (runtime_fault != ARM_FAULT_NONE)
             {
                 (void)motor_runtime_abort_active_parameter_sequences(
-                    &application_motor_runtime);
+                    &application_motor_runtime,
+                    timestamp_us);
                 if (application_action.state != AETHOR_APP_ACTION_IDLE)
                 {
                     if ((runtime_fault == ARM_FAULT_CONTROL_DEADLINE) &&
@@ -2644,7 +2756,8 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             ProtocolCommandResult timeout_result;
 
             (void)motor_runtime_abort_active_parameter_sequences(
-                &application_motor_runtime);
+                &application_motor_runtime,
+                timestamp_us);
             if (application_action.state != AETHOR_APP_ACTION_IDLE)
             {
                 (void)aethor_app_complete_action(
@@ -2664,28 +2777,31 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             timeout_result.type = PROTOCOL_COMMAND_LINK_TIMEOUT;
             timeout_result.code = PROTOCOL_COMMAND_RESULT_STOPPED;
             timeout_result.completed_at_us = timestamp_us;
-            result_generated = protocol_engine_submit_command_result(
-                &application_protocol_engine,
-                &timeout_result);
+            result_generated =
+                aethor_app_submit_or_defer_result(&timeout_result);
         }
         else if (application_action.state != AETHOR_APP_ACTION_IDLE)
         {
             ProtocolCommand stop_command;
 
-            if (protocol_engine_pop_stop_command(&application_protocol_engine,
-                                                 &stop_command) != 0U)
+            if ((aethor_app_deferred_result_has_capacity() != 0U) &&
+                (protocol_engine_pop_stop_command(&application_protocol_engine,
+                                                  &stop_command) != 0U))
             {
                 uint8_t cancel_generated;
                 uint8_t original_action_mask =
-                    (application_action.command.type ==
-                     PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+                    ((application_action.command.type ==
+                      PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+                     (application_action.command.type ==
+                      PROTOCOL_COMMAND_STOP))
                         ? application_action.command.motor_mask
                         : 0U;
                 uint8_t stop_generated;
 
                 stop_command.motor_mask |= original_action_mask;
                 (void)motor_runtime_abort_active_parameter_sequences(
-                    &application_motor_runtime);
+                    &application_motor_runtime,
+                    timestamp_us);
                 cancel_generated = aethor_app_complete_action(
                     PROTOCOL_COMMAND_RESULT_CANCELLED,
                     0U,
@@ -2705,14 +2821,43 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                     timestamp_us);
             }
         }
-        else if (protocol_engine_pop_command(&application_protocol_engine,
-                                             &command) != 0U)
+        else
         {
-            result_generated = aethor_app_start_lifecycle_action(
-                &command,
-                &motor_snapshot,
-                snapshot_status,
-                timestamp_us);
+            ProtocolCommand stop_command;
+
+            if ((aethor_app_deferred_result_has_capacity() != 0U) &&
+                (protocol_engine_pop_stop_command(&application_protocol_engine,
+                                                  &stop_command) != 0U))
+            {
+                ProtocolCommand queued_motion;
+                uint8_t cancel_generated = 0U;
+
+                if (protocol_engine_take_queued_active_motion(
+                        &application_protocol_engine,
+                        &queued_motion) != 0U)
+                {
+                    stop_command.motor_mask |= queued_motion.motor_mask;
+                    cancel_generated = aethor_app_cancel_queued_command(
+                        &queued_motion,
+                        timestamp_us);
+                }
+                result_generated = (uint8_t)(
+                    cancel_generated |
+                    aethor_app_start_lifecycle_action(&stop_command,
+                                                      &motor_snapshot,
+                                                      snapshot_status,
+                                                      timestamp_us));
+            }
+            else if ((aethor_app_deferred_result_count() == 0U) &&
+                     (protocol_engine_pop_command(&application_protocol_engine,
+                                                  &command) != 0U))
+            {
+                result_generated = aethor_app_start_lifecycle_action(
+                    &command,
+                    &motor_snapshot,
+                    snapshot_status,
+                    timestamp_us);
+            }
         }
     }
     return result_generated;
@@ -2832,7 +2977,8 @@ uint8_t aethor_app_report_transport_fault(uint32_t detail,
     if (application_action.state != AETHOR_APP_ACTION_IDLE)
     {
         (void)motor_runtime_abort_active_parameter_sequences(
-            &application_motor_runtime);
+            &application_motor_runtime,
+            timestamp_us);
         if (application_action.command.type ==
             PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
         {

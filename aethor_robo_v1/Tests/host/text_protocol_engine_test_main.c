@@ -881,6 +881,45 @@ static void test_text_bench_move_busy_and_stop_arbitration(void)
     assert_normal_command_queue_empty(&engine);
 }
 
+/**
+ * @brief Verifies queued-motion cancellation preserves unrelated command FIFO.
+ */
+static void test_text_take_queued_motion_uses_exact_tombstone(void)
+{
+    ProtocolEngine engine;
+    ProtocolCommand command;
+    ProtocolCommandResult result;
+
+    protocol_engine_init(&engine, 9201U);
+    memset(engine.commands, 0, sizeof(engine.commands));
+    engine.commands[0].type = PROTOCOL_COMMAND_DISABLE;
+    engine.commands[0].request_id = 41U;
+    engine.commands[1].type =
+        PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED;
+    engine.commands[1].request_id = 42U;
+    engine.commands[2].type = PROTOCOL_COMMAND_CLEAR_FAULT;
+    engine.commands[2].request_id = 43U;
+    engine.command_write_sequence = 3U;
+    engine.active_motion_request_id = 42U;
+
+    assert(protocol_engine_take_queued_active_motion(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED);
+    assert(command.request_id == 42U);
+    assert(protocol_engine_take_queued_active_motion(&engine, &command) == 0U);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.request_id == 41U);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.request_id == 43U);
+    assert(protocol_engine_pop_command(&engine, &command) == 0U);
+
+    memset(&result, 0, sizeof(result));
+    result.type = PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED;
+    result.request_id = 42U;
+    result.code = PROTOCOL_COMMAND_RESULT_CANCELLED;
+    assert(protocol_engine_submit_command_result(&engine, &result) == 1U);
+    assert(engine.active_motion_request_id == 0U);
+}
+
 /** @brief Verifies bench structural rules and compile-time profile gate. */
 static void test_text_bench_rejections(void)
 {
@@ -1268,6 +1307,7 @@ int main(void)
     test_text_bench_move_rejections();
     test_text_bench_move_replay();
     test_text_bench_move_busy_and_stop_arbitration();
+    test_text_take_queued_motion_uses_exact_tombstone();
     test_text_bench_done_output();
     test_text_bench_move_done_output();
     test_text_watchdog_scope();

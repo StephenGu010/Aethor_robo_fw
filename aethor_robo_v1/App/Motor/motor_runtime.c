@@ -37,47 +37,71 @@ static uint8_t motor_runtime_find_joint(const MotorRuntime *runtime,
     return 0U;
 }
 
-/**
- * @brief Identifies a configured S3519 parameter response by ID and register.
- * @param runtime Initialized runtime owning the fixed ESC/master mapping.
- * @param frame Candidate eight-byte CAN frame.
- * @return One only for a configured read/write parameter response signature.
- */
-static uint8_t motor_runtime_is_parameter_frame_signature(
-    const MotorRuntime *runtime,
+/** @brief Clears one expected or quarantined parameter response tuple. */
+static void motor_runtime_clear_parameter_signature(
+    MotorParameterResponseSignature *signature)
+{
+    if (signature != NULL)
+    {
+        memset(signature, 0, sizeof(*signature));
+    }
+}
+
+/** @brief Records the exact response tuple for one emitted parameter request. */
+static void motor_runtime_record_parameter_expectation(
+    MotorRuntime *runtime,
+    MotorParameterResponseSignature *signature,
+    uint8_t joint_index,
+    const CanFrame *request,
+    uint64_t timestamp_us)
+{
+    motor_runtime_clear_parameter_signature(signature);
+    signature->timestamp_us = timestamp_us;
+    signature->identifier =
+        runtime->configuration->joints[joint_index].master_id;
+    signature->joint_index = joint_index;
+    signature->esc_id = request->data[0];
+    signature->opcode = request->data[2];
+    signature->register_address = request->data[3];
+    signature->valid = 1U;
+}
+
+/** @brief Matches one frame against every field of a parameter response tuple. */
+static uint8_t motor_runtime_frame_matches_parameter_signature(
+    const MotorParameterResponseSignature *signature,
     const CanFrame *frame)
 {
-    uint8_t joint_index;
+    return (uint8_t)((signature->valid != 0U) &&
+                     (frame->length == CAN_CLASSIC_MAX_DATA_LENGTH) &&
+                     (frame->identifier == signature->identifier) &&
+                     (frame->data[0] == signature->esc_id) &&
+                     (frame->data[2] == signature->opcode) &&
+                     (frame->data[3] == signature->register_address));
+}
 
-    if ((frame->length != CAN_CLASSIC_MAX_DATA_LENGTH) ||
-        ((frame->data[2] != 0x33U) && (frame->data[2] != 0x55U)) ||
-        (motor_runtime_find_joint(runtime,
-                                  frame->identifier,
-                                  &joint_index) == 0U) ||
-        (frame->data[0] !=
-         (uint8_t)runtime->configuration->joints[joint_index].esc_id))
+/**
+ * @brief Keeps new requests behind one indistinguishable aborted response.
+ * @return One while the quarantine window remains active, otherwise zero.
+ */
+static uint8_t motor_runtime_parameter_quarantine_blocks(
+    MotorRuntime *runtime,
+    uint64_t timestamp_us)
+{
+    MotorParameterResponseSignature *quarantine =
+        &runtime->parameter_quarantine;
+
+    if (quarantine->valid == 0U)
     {
         return 0U;
     }
-
-    switch ((S3519Register)frame->data[3])
+    if ((timestamp_us >= quarantine->timestamp_us) &&
+        ((timestamp_us - quarantine->timestamp_us) <
+         MOTOR_DISCOVERY_REQUEST_TIMEOUT_US))
     {
-        case S3519_REGISTER_ACCELERATION:
-        case S3519_REGISTER_DECELERATION:
-        case S3519_REGISTER_MAXIMUM_SPEED:
-        case S3519_REGISTER_MASTER_ID:
-        case S3519_REGISTER_ESC_ID:
-        case S3519_REGISTER_CONTROL_MODE:
-        case S3519_REGISTER_HARDWARE_VERSION:
-        case S3519_REGISTER_SOFTWARE_VERSION:
-        case S3519_REGISTER_POSITION_RANGE:
-        case S3519_REGISTER_VELOCITY_RANGE:
-        case S3519_REGISTER_TORQUE_RANGE:
-        case S3519_REGISTER_SUB_VERSION:
-            return 1U;
-        default:
-            return 0U;
+        return 1U;
     }
+    motor_runtime_clear_parameter_signature(quarantine);
+    return 0U;
 }
 
 /** @brief Advances the mode-switch cursor past every unselected motor. */
@@ -418,6 +442,8 @@ MotorRuntimeStatus motor_runtime_begin_discovery(MotorRuntime *runtime,
     {
         return MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR;
     }
+    motor_runtime_clear_parameter_signature(
+        &runtime->discovery_parameter_expectation);
     runtime->discovery_active = 1U;
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
@@ -446,6 +472,7 @@ MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
                                                       CanFrame *frame)
 {
     MotorDiscoveryStatus discovery_status;
+    uint8_t request_joint_index;
 
     if ((runtime == NULL) || (frame == NULL))
     {
@@ -456,9 +483,25 @@ MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
 
+    if ((runtime->discovery_active != 0U) &&
+        (motor_runtime_parameter_quarantine_blocks(runtime, timestamp_us) != 0U))
+    {
+        return MOTOR_RUNTIME_STATUS_WAITING;
+    }
+    request_joint_index = runtime->discovery.current_joint_index;
     discovery_status = motor_discovery_next_request(&runtime->discovery,
                                                      timestamp_us,
                                                      frame);
+    if ((discovery_status == MOTOR_DISCOVERY_STATUS_FRAME_READY) &&
+        (request_joint_index < ARM_JOINT_COUNT))
+    {
+        motor_runtime_record_parameter_expectation(
+            runtime,
+            &runtime->discovery_parameter_expectation,
+            request_joint_index,
+            frame,
+            timestamp_us);
+    }
     if ((runtime->discovery.state == MOTOR_DISCOVERY_STATE_COMPLETE) ||
         (runtime->discovery.state == MOTOR_DISCOVERY_STATE_FAILED))
     {
@@ -471,9 +514,11 @@ MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
  * @brief Aborts active parameter sequences without revalidating selected mode fields.
  */
 MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
-    MotorRuntime *runtime)
+    MotorRuntime *runtime,
+    uint64_t timestamp_us)
 {
     uint8_t mode_switch_is_active;
+    uint8_t parameter_sequence_is_active;
 
     if (runtime == NULL)
     {
@@ -484,6 +529,28 @@ MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
 
+    mode_switch_is_active =
+        (uint8_t)((runtime->mode_switch_state == MOTOR_MODE_SWITCH_WRITING) ||
+                  (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_READY) ||
+                  (runtime->mode_switch_state ==
+                   MOTOR_MODE_SWITCH_READ_WAITING));
+    parameter_sequence_is_active =
+        (uint8_t)((runtime->discovery_active != 0U) ||
+                  (mode_switch_is_active != 0U));
+    if ((parameter_sequence_is_active != 0U) &&
+        ((runtime->mode_parameter_expectation.valid != 0U) ||
+         (runtime->discovery_parameter_expectation.valid != 0U)))
+    {
+        runtime->parameter_quarantine =
+            (runtime->mode_parameter_expectation.valid != 0U)
+                ? runtime->mode_parameter_expectation
+                : runtime->discovery_parameter_expectation;
+        runtime->parameter_quarantine.timestamp_us = timestamp_us;
+        motor_runtime_clear_parameter_signature(
+            &runtime->mode_parameter_expectation);
+        motor_runtime_clear_parameter_signature(
+            &runtime->discovery_parameter_expectation);
+    }
     if (runtime->discovery_active != 0U)
     {
         runtime->discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
@@ -494,12 +561,6 @@ MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
         runtime->discovery.request_sent_at_us = 0U;
         runtime->discovery_active = 0U;
     }
-
-    mode_switch_is_active =
-        (uint8_t)((runtime->mode_switch_state == MOTOR_MODE_SWITCH_WRITING) ||
-                  (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_READY) ||
-                  (runtime->mode_switch_state ==
-                   MOTOR_MODE_SWITCH_READ_WAITING));
     if (mode_switch_is_active != 0U)
     {
         runtime->mode_switch_state = MOTOR_MODE_SWITCH_IDLE;
@@ -527,25 +588,44 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
 
-    if (motor_runtime_is_mode_readback_response(runtime, frame) != 0U)
+    if ((motor_runtime_frame_matches_parameter_signature(
+             &runtime->mode_parameter_expectation,
+             frame) != 0U) &&
+        (motor_runtime_is_mode_readback_response(runtime, frame) != 0U))
     {
+        motor_runtime_clear_parameter_signature(
+            &runtime->mode_parameter_expectation);
         return motor_runtime_accept_mode_readback(runtime, frame);
     }
-    if (((runtime->mode_switch_state == MOTOR_MODE_SWITCH_WRITING) ||
+    if ((motor_runtime_frame_matches_parameter_signature(
+             &runtime->mode_parameter_expectation,
+             frame) != 0U) &&
+        ((runtime->mode_switch_state == MOTOR_MODE_SWITCH_WRITING) ||
          (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_READY) ||
          (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING)) &&
-        (frame->length == CAN_CLASSIC_MAX_DATA_LENGTH) &&
         (frame->data[2] == 0x55U))
     {
+        motor_runtime_clear_parameter_signature(
+            &runtime->mode_parameter_expectation);
         return MOTOR_RUNTIME_STATUS_OK;
     }
 
-    if (motor_runtime_is_parameter_response(runtime, frame) != 0U)
+    if ((motor_runtime_frame_matches_parameter_signature(
+             &runtime->discovery_parameter_expectation,
+             frame) != 0U) &&
+        (motor_runtime_is_parameter_response(runtime, frame) != 0U))
     {
+        motor_runtime_clear_parameter_signature(
+            &runtime->discovery_parameter_expectation);
         return motor_runtime_accept_parameter_response(runtime, frame);
     }
-    if (motor_runtime_is_parameter_frame_signature(runtime, frame) != 0U)
+    if ((motor_runtime_parameter_quarantine_blocks(runtime,
+                                                   timestamp_us) != 0U) &&
+        (motor_runtime_frame_matches_parameter_signature(
+             &runtime->parameter_quarantine,
+             frame) != 0U))
     {
+        motor_runtime_clear_parameter_signature(&runtime->parameter_quarantine);
         return MOTOR_RUNTIME_STATUS_OK;
     }
     return motor_runtime_accept_control_feedback(runtime, frame, timestamp_us);
@@ -1015,6 +1095,8 @@ MotorRuntimeStatus motor_runtime_begin_control_mode_switch_mask(
     runtime->mode_switch_attempt_count = 0U;
     runtime->mode_request_sent_at_us = 0U;
     runtime->mode_switch_state = MOTOR_MODE_SWITCH_WRITING;
+    motor_runtime_clear_parameter_signature(
+        &runtime->mode_parameter_expectation);
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
         uint8_t joint_bit = (uint8_t)(1U << joint_index);
@@ -1039,6 +1121,7 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
     CanFrame *frame)
 {
     uint8_t esc_id;
+    uint8_t request_joint_index;
 
     if ((runtime == NULL) || (frame == NULL))
     {
@@ -1051,6 +1134,10 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
     if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_FAILED)
     {
         return MOTOR_RUNTIME_STATUS_ACTION_FAILED;
+    }
+    if (motor_runtime_parameter_quarantine_blocks(runtime, timestamp_us) != 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_WAITING;
     }
     if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING)
     {
@@ -1075,6 +1162,7 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
     }
     esc_id = (uint8_t)runtime->configuration->joints[
         runtime->mode_switch_joint_index].esc_id;
+    request_joint_index = runtime->mode_switch_joint_index;
     if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_WRITING)
     {
         uint32_t mode_value =
@@ -1094,6 +1182,12 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
             motor_runtime_skip_unselected_mode_joints(runtime);
             runtime->mode_switch_state = MOTOR_MODE_SWITCH_READ_READY;
         }
+        motor_runtime_record_parameter_expectation(
+            runtime,
+            &runtime->mode_parameter_expectation,
+            request_joint_index,
+            frame,
+            timestamp_us);
         return MOTOR_RUNTIME_STATUS_FRAME_READY;
     }
     if (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_READY)
@@ -1107,6 +1201,12 @@ MotorRuntimeStatus motor_runtime_next_control_mode_frame(
         }
         runtime->mode_request_sent_at_us = timestamp_us;
         runtime->mode_switch_state = MOTOR_MODE_SWITCH_READ_WAITING;
+        motor_runtime_record_parameter_expectation(
+            runtime,
+            &runtime->mode_parameter_expectation,
+            request_joint_index,
+            frame,
+            timestamp_us);
         return MOTOR_RUNTIME_STATUS_FRAME_READY;
     }
     return MOTOR_RUNTIME_STATUS_WAITING;

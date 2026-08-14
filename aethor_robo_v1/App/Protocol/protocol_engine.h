@@ -202,6 +202,7 @@ typedef struct
     uint32_t telemetry_sequence;
     uint32_t event_sequence;
     uint32_t active_motion_request_id;
+    uint32_t cancelled_queued_motion_request_id;
     uint32_t last_motion_actual_duration_ms;
     uint32_t last_motion_max_following_error_mdeg;
     uint32_t bad_frame_count;
@@ -265,6 +266,17 @@ uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
  */
 uint8_t protocol_engine_pop_stop_command(ProtocolEngine *engine,
                                          ProtocolCommand *command);
+
+/**
+ * @brief Takes the accepted one-shot motion still waiting in the normal ring.
+ * @param engine Initialized engine owning the active motion request ID.
+ * @param command Destination copy of the exact queued one-shot command.
+ * @return One when the active queued motion was found and tombstoned.
+ * @note The fixed tombstone preserves unrelated FIFO entries and is consumed
+ *       by protocol_engine_pop_command before the cancelled motion can run.
+ */
+uint8_t protocol_engine_take_queued_active_motion(ProtocolEngine *engine,
+                                                  ProtocolCommand *command);
 
 /**
  * @brief Cancels all accepted commands not yet taken by ArmControlTask.

@@ -1860,6 +1860,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
     engine->command_read_sequence = engine->command_write_sequence;
     engine->stop_read_sequence = engine->stop_write_sequence;
     engine->result_read_sequence = engine->result_write_sequence;
+    engine->cancelled_queued_motion_request_id = 0U;
     engine->session_id = protocol_engine_create_session(engine,
                                                         request->request_id,
                                                         timestamp_us);
@@ -3093,6 +3094,7 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     engine->command_read_sequence = engine->command_write_sequence;
     engine->stop_read_sequence = engine->stop_write_sequence;
     engine->result_read_sequence = engine->result_write_sequence;
+    engine->cancelled_queued_motion_request_id = 0U;
     engine->session_id = protocol_engine_create_session(engine,
                                                         request->request_id,
                                                         timestamp_us);
@@ -4266,17 +4268,26 @@ uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
     {
         return 1U;
     }
-    if (engine->command_read_sequence == engine->command_write_sequence)
+    while (engine->command_read_sequence != engine->command_write_sequence)
     {
-        return 0U;
+        protocol_engine_compiler_barrier();
+        slot_index = (uint8_t)(engine->command_read_sequence %
+                               PROTOCOL_ENGINE_COMMAND_CAPACITY);
+        *command = engine->commands[slot_index];
+        protocol_engine_compiler_barrier();
+        ++engine->command_read_sequence;
+        if ((engine->cancelled_queued_motion_request_id != 0U) &&
+            (command->type ==
+             PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+            (command->request_id ==
+             engine->cancelled_queued_motion_request_id))
+        {
+            engine->cancelled_queued_motion_request_id = 0U;
+            continue;
+        }
+        return 1U;
     }
-    protocol_engine_compiler_barrier();
-    slot_index = (uint8_t)(engine->command_read_sequence %
-                           PROTOCOL_ENGINE_COMMAND_CAPACITY);
-    *command = engine->commands[slot_index];
-    protocol_engine_compiler_barrier();
-    ++engine->command_read_sequence;
-    return 1U;
+    return 0U;
 }
 
 /**
@@ -4298,6 +4309,44 @@ uint8_t protocol_engine_pop_stop_command(ProtocolEngine *engine,
 }
 
 /**
+ * @brief Tombstones the exact active one-shot still waiting in the normal ring.
+ */
+uint8_t protocol_engine_take_queued_active_motion(ProtocolEngine *engine,
+                                                  ProtocolCommand *command)
+{
+    uint8_t scan_sequence;
+    uint8_t write_sequence_snapshot;
+
+    if ((engine == NULL) || (command == NULL) ||
+        (engine->active_motion_request_id == 0U) ||
+        (engine->cancelled_queued_motion_request_id != 0U))
+    {
+        return 0U;
+    }
+    protocol_engine_compiler_barrier();
+    write_sequence_snapshot = engine->command_write_sequence;
+    for (scan_sequence = engine->command_read_sequence;
+         scan_sequence != write_sequence_snapshot;
+         ++scan_sequence)
+    {
+        uint8_t slot_index = (uint8_t)(scan_sequence %
+                                       PROTOCOL_ENGINE_COMMAND_CAPACITY);
+        ProtocolCommand candidate = engine->commands[slot_index];
+
+        if ((candidate.type ==
+             PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+            (candidate.request_id == engine->active_motion_request_id))
+        {
+            *command = candidate;
+            protocol_engine_compiler_barrier();
+            engine->cancelled_queued_motion_request_id = candidate.request_id;
+            return 1U;
+        }
+    }
+    return 0U;
+}
+
+/**
  * @brief Cancels all accepted commands not yet taken by ArmControlTask.
  */
 void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
@@ -4307,6 +4356,7 @@ void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
         engine->command_read_sequence = engine->command_write_sequence;
         engine->stop_read_sequence = engine->stop_write_sequence;
         engine->active_motion_request_id = 0U;
+        engine->cancelled_queued_motion_request_id = 0U;
     }
 }
 

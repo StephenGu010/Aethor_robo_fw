@@ -655,10 +655,15 @@ static void test_motor_runtime_masked_mode_switch_serializes_unselected_discover
     runtime.discovery.verified_joint_mask = 0x01U;
     runtime.discovery.results[0].verified_fields_mask =
         MOTOR_DISCOVERY_ALL_FIELDS_MASK;
-    runtime.discovery.state = MOTOR_DISCOVERY_STATE_WAITING;
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_READY;
     runtime.discovery.target_joint_mask = 0x02U;
     runtime.discovery.current_joint_index = 1U;
     runtime.discovery.current_register_index = 2U;
+    runtime.discovery_active = 1U;
+    assert(motor_runtime_next_discovery_frame(&runtime, 500U, &request) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[0] == 2U);
+    assert(request.data[3] == S3519_REGISTER_CONTROL_MODE);
 
     assert(motor_runtime_begin_control_mode_switch_mask(
                &runtime,
@@ -770,7 +775,7 @@ static void test_motor_runtime_aborts_active_parameter_sequences(void)
     assert(motor_runtime_next_discovery_frame(&runtime, 1000U, &frame) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
 
-    assert(motor_runtime_abort_active_parameter_sequences(&runtime) ==
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 1100U) ==
            MOTOR_RUNTIME_STATUS_OK);
     assert(runtime.discovery.state == MOTOR_DISCOVERY_STATE_COMPLETE);
     assert(motor_runtime_next_discovery_frame(&runtime, 2000U, &frame) ==
@@ -780,7 +785,7 @@ static void test_motor_runtime_aborts_active_parameter_sequences(void)
                   &preserved_result,
                   sizeof(preserved_result)) == 0);
     assert(runtime.accepted_feedback_count == preserved_feedback_count);
-    assert(motor_runtime_abort_active_parameter_sequences(&runtime) ==
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 2100U) ==
            MOTOR_RUNTIME_STATUS_OK);
 
     runtime.discovery.verified_joint_mask = 0x03U;
@@ -794,9 +799,14 @@ static void test_motor_runtime_aborts_active_parameter_sequences(void)
                &runtime,
                S3519_CONTROL_MODE_POSITION_VELOCITY,
                0x01U) == MOTOR_RUNTIME_STATUS_OK);
-    assert(motor_runtime_next_control_mode_frame(&runtime, 3000U, &frame) ==
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1100U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US + 1U,
+               &frame) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
-    assert(motor_runtime_abort_active_parameter_sequences(&runtime) ==
+    assert(motor_runtime_abort_active_parameter_sequences(
+               &runtime,
+               1200U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US) ==
            MOTOR_RUNTIME_STATUS_OK);
     assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_IDLE);
     assert(runtime.mode_switch_joint_mask == 0U);
@@ -809,24 +819,40 @@ static void test_motor_runtime_aborts_active_parameter_sequences(void)
     assert((runtime.discovery.results[1].verified_fields_mask &
             MOTOR_DISCOVERY_MODE_FIELDS_MASK) != 0U);
     assert((runtime.discovery.verified_joint_mask & 0x02U) != 0U);
-    assert(motor_runtime_next_control_mode_frame(&runtime, 4000U, &frame) ==
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1300U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US,
+               &frame) ==
            MOTOR_RUNTIME_STATUS_WAITING);
 
     assert(motor_runtime_begin_control_mode_switch_mask(
                &runtime,
                S3519_CONTROL_MODE_POSITION_VELOCITY,
                0x01U) == MOTOR_RUNTIME_STATUS_OK);
-    assert(motor_runtime_next_control_mode_frame(&runtime, 5000U, &frame) ==
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1400U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US,
+               &frame) == MOTOR_RUNTIME_STATUS_WAITING);
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1201U + (2U * MOTOR_DISCOVERY_REQUEST_TIMEOUT_US),
+               &frame) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(frame.data[2] == 0x55U);
-    assert(motor_runtime_next_control_mode_frame(&runtime, 5001U, &frame) ==
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1202U + (2U * MOTOR_DISCOVERY_REQUEST_TIMEOUT_US),
+               &frame) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(frame.data[2] == 0x33U);
     assert(can_frame_init(&response,
                           0x11U,
                           response_payload,
                           sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
-    assert(motor_runtime_accept_frame(&runtime, &response, 5002U) ==
+    assert(motor_runtime_accept_frame(
+               &runtime,
+               &response,
+               1203U + (2U * MOTOR_DISCOVERY_REQUEST_TIMEOUT_US)) ==
            MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
     assert((runtime.discovery.results[0].verified_fields_mask &
             MOTOR_DISCOVERY_MODE_FIELDS_MASK) != 0U);
@@ -892,7 +918,7 @@ static void test_motor_runtime_discards_late_parameter_responses_after_abort(voi
                                               &request_frame) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(request_frame.data[3] == S3519_REGISTER_MASTER_ID);
-    assert(motor_runtime_abort_active_parameter_sequences(&runtime) ==
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 2050U) ==
            MOTOR_RUNTIME_STATUS_OK);
     preserved_discovery_result = runtime.discovery.results[0];
     preserved_feedback = runtime.bank.motors[0].feedback;
@@ -915,6 +941,10 @@ static void test_motor_runtime_discards_late_parameter_responses_after_abort(voi
            preserved_accepted_feedback_count);
     assert(runtime.rejected_feedback_count ==
            preserved_rejected_feedback_count);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 2101U) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+    assert(runtime.rejected_feedback_count ==
+           preserved_rejected_feedback_count + 1U);
     assert(motor_runtime_next_discovery_frame(&runtime,
                                               2200U,
                                               &request_frame) ==
@@ -941,7 +971,7 @@ static void test_motor_runtime_discards_late_parameter_responses_after_abort(voi
                                                  &request_frame) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(request_frame.data[3] == S3519_REGISTER_CONTROL_MODE);
-    assert(motor_runtime_abort_active_parameter_sequences(&runtime) ==
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 3150U) ==
            MOTOR_RUNTIME_STATUS_OK);
     preserved_discovery_result = runtime.discovery.results[0];
     preserved_feedback = runtime.bank.motors[0].feedback;
@@ -964,28 +994,92 @@ static void test_motor_runtime_discards_late_parameter_responses_after_abort(voi
            preserved_accepted_feedback_count);
     assert(runtime.rejected_feedback_count ==
            preserved_rejected_feedback_count);
-    mode_response_payload[2] = 0x55U;
-    assert(can_frame_init(&response_frame,
-                          0x11U,
-                          mode_response_payload,
-                          sizeof(mode_response_payload)) ==
-           CAN_FRAME_STATUS_OK);
     assert(motor_runtime_accept_frame(&runtime, &response_frame, 3201U) ==
            MOTOR_RUNTIME_STATUS_OK);
     assert(memcmp(&runtime.discovery.results[0],
                   &preserved_discovery_result,
                   sizeof(preserved_discovery_result)) == 0);
-    assert(memcmp(&runtime.bank.motors[0].feedback,
-                  &preserved_feedback,
-                  sizeof(preserved_feedback)) == 0);
     assert(runtime.accepted_feedback_count ==
-           preserved_accepted_feedback_count);
+           preserved_accepted_feedback_count + 1U);
+    assert(runtime.bank.motors[0].feedback.timestamp_us == 3201U);
     assert(runtime.rejected_feedback_count ==
            preserved_rejected_feedback_count);
     assert(motor_runtime_next_control_mode_frame(&runtime,
                                                  3300U,
                                                  &request_frame) ==
            MOTOR_RUNTIME_STATUS_WAITING);
+}
+
+/**
+ * @brief Verifies quarantine gates a new request and expires after one timeout.
+ */
+static void test_motor_runtime_parameter_quarantine_is_bounded(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame late_frame;
+    uint32_t accepted_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4000U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4001U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 4050U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4060U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+    assert(can_frame_init(&late_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &late_frame, 4070U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_WRITING);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4080U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4081U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 4090U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    assert(motor_runtime_accept_frame(
+               &runtime,
+               &late_frame,
+               4090U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US + 1U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count + 1U);
 }
 
 /**
@@ -1517,6 +1611,7 @@ int main(void)
     test_motor_runtime_masked_mode_switch_requires_selected_readiness();
     test_motor_runtime_aborts_active_parameter_sequences();
     test_motor_runtime_discards_late_parameter_responses_after_abort();
+    test_motor_runtime_parameter_quarantine_is_bounded();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();

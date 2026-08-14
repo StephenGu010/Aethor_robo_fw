@@ -66,6 +66,18 @@ typedef enum
     MOTOR_MODE_SWITCH_FAILED
 } MotorModeSwitchState;
 
+/** @brief Identifies one exact parameter response expected from one motor. */
+typedef struct
+{
+    uint64_t timestamp_us;
+    uint16_t identifier;
+    uint8_t joint_index;
+    uint8_t esc_id;
+    uint8_t opcode;
+    uint8_t register_address;
+    uint8_t valid;
+} MotorParameterResponseSignature;
+
 /**
  * @brief Owns all static receive-side state for the first seven-axis arm.
  */
@@ -86,6 +98,9 @@ typedef struct
     uint8_t mode_switch_attempt_count;
     uint8_t discovery_active;
     uint8_t initialized;
+    MotorParameterResponseSignature discovery_parameter_expectation;
+    MotorParameterResponseSignature mode_parameter_expectation;
+    MotorParameterResponseSignature parameter_quarantine;
 } MotorRuntime;
 
 /**
@@ -122,10 +137,12 @@ MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
  * @param runtime Initialized runtime whose feedback and completed discovery
  *        data remain intact; selected mode fields invalidated by an active
  *        switch stay unverified.
+ * @param timestamp_us Abort timestamp starting the bounded late-frame window.
  * @return OK, INVALID_ARGUMENT, or NOT_INITIALIZED; repeated calls are idempotent.
  */
 MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
-    MotorRuntime *runtime);
+    MotorRuntime *runtime,
+    uint64_t timestamp_us);
 
 /**
  * @brief Routes one validated Classic CAN frame to discovery or feedback decode.

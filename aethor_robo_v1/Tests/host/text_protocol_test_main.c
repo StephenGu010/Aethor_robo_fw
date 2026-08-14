@@ -4,10 +4,8 @@
  */
 
 #include <assert.h>
-#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "text_protocol.h"
@@ -220,6 +218,10 @@ static void test_text_protocol_float_conversion_is_strict(void)
         maximum_rounds_to_float32_text,
         sizeof(maximum_rounds_to_float32_text) - 1U
     };
+    TextProtocolSpan overflow_rounding_threshold = {
+        overflow_rounding_threshold_text,
+        sizeof(overflow_rounding_threshold_text) - 1U
+    };
     TextProtocolSpan minimum_rounds_to_normal = {
         minimum_rounds_to_normal_text,
         sizeof(minimum_rounds_to_normal_text) - 1U
@@ -238,7 +240,6 @@ static void test_text_protocol_float_conversion_is_strict(void)
     };
     char maximum_token[64];
     char overlength_token[65];
-    char *conversion_end = NULL;
     TextProtocolSpan maximum_length_decimal;
     TextProtocolSpan overlength_decimal;
     uint32_t value_bits = 0U;
@@ -294,21 +295,8 @@ static void test_text_protocol_float_conversion_is_strict(void)
     memcpy(&value_bits, &value, sizeof(value_bits));
     assert(value_bits == 0x00800000U);
 
-    errno = 0;
-    value = strtof(overflow_rounding_threshold_text, &conversion_end);
-    memcpy(&value_bits, &value, sizeof(value_bits));
-    assert(conversion_end == &overflow_rounding_threshold_text[
-                                 sizeof(overflow_rounding_threshold_text) - 1U]);
-    assert(errno == 0);
-    assert(value_bits == 0x7F800000U);
-
-    errno = 0;
-    value = strtof(subnormal_rounding_threshold_text, &conversion_end);
-    memcpy(&value_bits, &value, sizeof(value_bits));
-    assert(conversion_end == &subnormal_rounding_threshold_text[
-                                 sizeof(subnormal_rounding_threshold_text) - 1U]);
-    assert(errno == 0);
-    assert(value_bits == 0x007FFFFFU);
+    assert(text_protocol_span_to_float(&overflow_rounding_threshold, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
     assert(text_protocol_span_to_float(&subnormal_rounding_threshold, &value) ==
            TEXT_PROTOCOL_STATUS_BAD_NUMBER);
     assert(text_protocol_span_to_float(&rounds_to_zero, &value) ==

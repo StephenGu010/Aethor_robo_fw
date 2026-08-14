@@ -843,13 +843,119 @@ static void test_text_bench_done_output(void)
                   "done 40 bench jog result=completed elapsed_ms=3050 arrived=05\n") == 0);
 }
 
+/**
+ * @brief Submits one result and verifies its exact bounded public text output.
+ * @param engine Initialized protocol engine with text framing active.
+ * @param result Terminal result carrying the non-public detail sentinel 4242.
+ * @param output_batch Destination output batch.
+ * @param expected_output Exact expected response including the final LF.
+ */
+static void assert_text_result_output(ProtocolEngine *engine,
+                                      const ProtocolCommandResult *result,
+                                      ProtocolOutputBatch *output_batch,
+                                      const char *expected_output)
+{
+    const ProtocolOutputMessage *message;
+
+    assert(result->detail == 4242U);
+    assert(protocol_engine_submit_command_result(engine, result) != 0U);
+    assert(protocol_engine_pop_result_output(engine, output_batch) != 0U);
+    assert(output_batch->count == 1U);
+    message = &output_batch->messages[0];
+    assert(message->length < sizeof(message->data));
+    assert(message->length == strlen(message->data));
+    assert(message->length > 0U);
+    assert(message->data[message->length - 1U] == '\n');
+    assert(message->data[message->length] == '\0');
+    assert(strcmp(message->data, expected_output) == 0);
+    assert(strstr(message->data, "detail") == NULL);
+    assert(strstr(message->data, "4242") == NULL);
+}
+
 /** @brief Verifies one-shot bench move terminal results use stable public tokens. */
 static void test_text_bench_move_done_output(void)
 {
+    static const ProtocolCommandStage stage_values[] = {
+        PROTOCOL_COMMAND_STAGE_VALIDATE,
+        PROTOCOL_COMMAND_STAGE_DISCOVERY,
+        PROTOCOL_COMMAND_STAGE_MODE,
+        PROTOCOL_COMMAND_STAGE_CLEAR,
+        PROTOCOL_COMMAND_STAGE_ENABLE,
+        PROTOCOL_COMMAND_STAGE_MOTION,
+        PROTOCOL_COMMAND_STAGE_HOLD,
+        PROTOCOL_COMMAND_STAGE_DISABLE
+    };
+    static const char *const stage_tokens[] = {
+        "validate", "discovery", "mode", "clear",
+        "enable", "motion", "hold", "disable"
+    };
+    static const ProtocolCommandError error_values[] = {
+        PROTOCOL_COMMAND_ERROR_NOT_READY,
+        PROTOCOL_COMMAND_ERROR_POSITION_OUT_OF_RANGE,
+        PROTOCOL_COMMAND_ERROR_SPEED_OUT_OF_RANGE,
+        PROTOCOL_COMMAND_ERROR_FAULT_PRESENT,
+        PROTOCOL_COMMAND_ERROR_STALE_FEEDBACK,
+        PROTOCOL_COMMAND_ERROR_TIMEOUT,
+        PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT,
+        PROTOCOL_COMMAND_ERROR_ACTION_FAILED
+    };
+    static const char *const error_tokens[] = {
+        "not_ready", "position_out_of_range", "speed_out_of_range",
+        "fault_present", "stale_feedback", "timeout",
+        "feedback_timeout", "action_failed"
+    };
+    static const struct
+    {
+        ProtocolCommandStage stage;
+        ProtocolCommandError error;
+        uint8_t failed_motor_number;
+        uint8_t motor_mask;
+        const char *stage_token;
+        const char *error_token;
+        const char *motor_token;
+    } metadata_cases[] = {
+        {PROTOCOL_COMMAND_STAGE_NONE, PROTOCOL_COMMAND_ERROR_NONE,
+         0U, 0x01U, "unknown", "action_failed", "?"},
+        {PROTOCOL_COMMAND_STAGE_VALIDATE, PROTOCOL_COMMAND_ERROR_NONE,
+         1U, 0x01U, "validate", "action_failed", "1"},
+        {PROTOCOL_COMMAND_STAGE_NONE, PROTOCOL_COMMAND_ERROR_TIMEOUT,
+         1U, 0x01U, "unknown", "timeout", "1"},
+        {(ProtocolCommandStage)255, (ProtocolCommandError)255,
+         255U, 0x7FU, "unknown", "action_failed", "?"},
+        {PROTOCOL_COMMAND_STAGE_VALIDATE, PROTOCOL_COMMAND_ERROR_TIMEOUT,
+         0U, 0x01U, "validate", "timeout", "?"},
+        {PROTOCOL_COMMAND_STAGE_VALIDATE, PROTOCOL_COMMAND_ERROR_TIMEOUT,
+         8U, 0x7FU, "validate", "timeout", "?"},
+        {PROTOCOL_COMMAND_STAGE_VALIDATE, PROTOCOL_COMMAND_ERROR_TIMEOUT,
+         255U, 0x7FU, "validate", "timeout", "?"},
+        {PROTOCOL_COMMAND_STAGE_VALIDATE, PROTOCOL_COMMAND_ERROR_TIMEOUT,
+         2U, 0x01U, "validate", "timeout", "?"},
+        {PROTOCOL_COMMAND_STAGE_VALIDATE, PROTOCOL_COMMAND_ERROR_TIMEOUT,
+         1U, 0x01U, "validate", "timeout", "1"},
+        {PROTOCOL_COMMAND_STAGE_VALIDATE, PROTOCOL_COMMAND_ERROR_TIMEOUT,
+         7U, 0x40U, "validate", "timeout", "7"}
+    };
+    static const ProtocolCommandResultCode non_failure_codes[] = {
+        PROTOCOL_COMMAND_RESULT_STOPPED,
+        PROTOCOL_COMMAND_RESULT_CANCELLED
+    };
+    static const char *const non_failure_tokens[] = {
+        "stopped", "cancelled"
+    };
     ProtocolEngine engine;
     ProtocolOutputBatch output_batch;
     ProtocolCommand command;
     ProtocolCommandResult result;
+    char expected_output[PROTOCOL_ENGINE_MESSAGE_CAPACITY];
+    size_t case_index;
+    int formatted_length;
+
+    assert((sizeof(stage_values) / sizeof(stage_values[0])) ==
+           (sizeof(stage_tokens) / sizeof(stage_tokens[0])));
+    assert((sizeof(error_values) / sizeof(error_values[0])) ==
+           (sizeof(error_tokens) / sizeof(error_tokens[0])));
+    assert((sizeof(non_failure_codes) / sizeof(non_failure_codes[0])) ==
+           (sizeof(non_failure_tokens) / sizeof(non_failure_tokens[0])));
 
     protocol_engine_init(&engine, 9401U);
     (void)process_text_request(&engine,
@@ -867,45 +973,102 @@ static void test_text_bench_move_done_output(void)
     result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
     result.accepted_at_us = command.accepted_at_us;
     result.completed_at_us = 3201000U;
+    result.detail = 4242U;
     result.motor_mask = command.motor_mask;
-    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
-    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
-    assert(strcmp(output_batch.messages[0].data,
-                  "done 50 bench move result=completed elapsed_ms=3200 motors=01\n") == 0);
+    assert_text_result_output(
+        &engine,
+        &result,
+        &output_batch,
+        "done 50 bench move result=completed elapsed_ms=3200 motors=01\n");
 
     result.code = PROTOCOL_COMMAND_RESULT_FAILED;
-    result.stage = PROTOCOL_COMMAND_STAGE_VALIDATE;
-    result.error = PROTOCOL_COMMAND_ERROR_POSITION_OUT_OF_RANGE;
+    result.error = PROTOCOL_COMMAND_ERROR_ACTION_FAILED;
     result.failed_motor_number = 1U;
-    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
-    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
-    assert(strcmp(output_batch.messages[0].data,
-                  "done 50 bench move result=failed stage=validate "
-                  "code=position_out_of_range motor=1\n") == 0);
+    for (case_index = 0U;
+         case_index < (sizeof(stage_values) / sizeof(stage_values[0]));
+         ++case_index)
+    {
+        result.stage = stage_values[case_index];
+        formatted_length = sprintf(
+            expected_output,
+            "done 50 bench move result=failed stage=%s code=action_failed motor=1\n",
+            stage_tokens[case_index]);
+        assert(formatted_length > 0);
+        assert((size_t)formatted_length < sizeof(expected_output));
+        assert_text_result_output(&engine, &result, &output_batch, expected_output);
+    }
 
-    result.stage = PROTOCOL_COMMAND_STAGE_DISCOVERY;
-    result.error = PROTOCOL_COMMAND_ERROR_NOT_READY;
-    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
-    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
-    assert(strcmp(output_batch.messages[0].data,
-                  "done 50 bench move result=failed stage=discovery "
-                  "code=not_ready motor=1\n") == 0);
+    result.stage = PROTOCOL_COMMAND_STAGE_VALIDATE;
+    for (case_index = 0U;
+         case_index < (sizeof(error_values) / sizeof(error_values[0]));
+         ++case_index)
+    {
+        result.error = error_values[case_index];
+        formatted_length = sprintf(
+            expected_output,
+            "done 50 bench move result=failed stage=validate code=%s motor=1\n",
+            error_tokens[case_index]);
+        assert(formatted_length > 0);
+        assert((size_t)formatted_length < sizeof(expected_output));
+        assert_text_result_output(&engine, &result, &output_batch, expected_output);
+    }
 
-    result.stage = PROTOCOL_COMMAND_STAGE_MOTION;
-    result.error = PROTOCOL_COMMAND_ERROR_TIMEOUT;
-    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
-    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
-    assert(strcmp(output_batch.messages[0].data,
-                  "done 50 bench move result=failed stage=motion "
-                  "code=timeout motor=1\n") == 0);
+    for (case_index = 0U;
+         case_index < (sizeof(metadata_cases) / sizeof(metadata_cases[0]));
+         ++case_index)
+    {
+        result.stage = metadata_cases[case_index].stage;
+        result.error = metadata_cases[case_index].error;
+        result.failed_motor_number =
+            metadata_cases[case_index].failed_motor_number;
+        result.motor_mask = metadata_cases[case_index].motor_mask;
+        formatted_length = sprintf(
+            expected_output,
+            "done 50 bench move result=failed stage=%s code=%s motor=%s\n",
+            metadata_cases[case_index].stage_token,
+            metadata_cases[case_index].error_token,
+            metadata_cases[case_index].motor_token);
+        assert(formatted_length > 0);
+        assert((size_t)formatted_length < sizeof(expected_output));
+        assert_text_result_output(&engine, &result, &output_batch, expected_output);
+    }
 
     result.stage = PROTOCOL_COMMAND_STAGE_DISABLE;
-    result.error = PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT;
-    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
-    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
-    assert(strcmp(output_batch.messages[0].data,
-                  "done 50 bench move result=failed stage=disable "
-                  "code=feedback_timeout motor=1\n") == 0);
+    result.error = PROTOCOL_COMMAND_ERROR_TIMEOUT;
+    result.failed_motor_number = 7U;
+    result.motor_mask = 0x40U;
+    for (case_index = 0U;
+         case_index < (sizeof(non_failure_codes) / sizeof(non_failure_codes[0]));
+         ++case_index)
+    {
+        result.code = non_failure_codes[case_index];
+        formatted_length = sprintf(
+            expected_output,
+            "done 50 bench move result=%s\n",
+            non_failure_tokens[case_index]);
+        assert(formatted_length > 0);
+        assert((size_t)formatted_length < sizeof(expected_output));
+        assert_text_result_output(&engine, &result, &output_batch, expected_output);
+    }
+
+    result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
+    result.motor_mask = 0x01U;
+    result.accepted_at_us = 1000U;
+    result.completed_at_us =
+        result.accepted_at_us + (((uint64_t)UINT32_MAX + 1ULL) * 1000ULL);
+    assert_text_result_output(
+        &engine,
+        &result,
+        &output_batch,
+        "done 50 bench move result=completed elapsed_ms=4294967295 motors=01\n");
+
+    result.accepted_at_us = 2000U;
+    result.completed_at_us = 1000U;
+    assert_text_result_output(
+        &engine,
+        &result,
+        &output_batch,
+        "done 50 bench move result=completed elapsed_ms=0 motors=01\n");
 }
 
 /** @brief Verifies the communication watchdog is active only while energized. */

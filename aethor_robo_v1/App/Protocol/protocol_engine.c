@@ -4354,14 +4354,14 @@ static const char *protocol_engine_text_result(ProtocolCommandResultCode code)
 /**
  * @brief Returns the stable lowercase public token for an execution stage.
  * @param stage Fixed execution stage.
- * @return Static stage token, including deterministic none and unknown tokens.
+ * @return Static stage token, normalizing none and unknown values to unknown.
  */
 static const char *protocol_engine_command_stage_text(ProtocolCommandStage stage)
 {
     switch (stage)
     {
         case PROTOCOL_COMMAND_STAGE_NONE:
-            return "none";
+            return "unknown";
         case PROTOCOL_COMMAND_STAGE_VALIDATE:
             return "validate";
         case PROTOCOL_COMMAND_STAGE_DISCOVERY:
@@ -4386,14 +4386,14 @@ static const char *protocol_engine_command_stage_text(ProtocolCommandStage stage
 /**
  * @brief Returns the stable lowercase public token for a command error.
  * @param error Fixed public command error.
- * @return Static error token, including deterministic none and unknown tokens.
+ * @return Static error token, normalizing none and unknown values to action_failed.
  */
 static const char *protocol_engine_command_error_text(ProtocolCommandError error)
 {
     switch (error)
     {
         case PROTOCOL_COMMAND_ERROR_NONE:
-            return "none";
+            return "action_failed";
         case PROTOCOL_COMMAND_ERROR_NOT_READY:
             return "not_ready";
         case PROTOCOL_COMMAND_ERROR_POSITION_OUT_OF_RANGE:
@@ -4411,8 +4411,49 @@ static const char *protocol_engine_command_error_text(ProtocolCommandError error
         case PROTOCOL_COMMAND_ERROR_ACTION_FAILED:
             return "action_failed";
         default:
-            return "unknown";
+            return "action_failed";
     }
+}
+
+/** @brief Owns normalized public metadata for one failed command result. */
+typedef struct
+{
+    /** @brief Stable public stage token. */
+    const char *stage_token;
+    /** @brief Stable public error token. */
+    const char *error_token;
+    /** @brief Original one-based failed motor number. */
+    uint8_t failed_motor_number;
+    /** @brief One when the motor number is valid and belongs to the result mask. */
+    uint8_t failed_motor_number_is_valid;
+} ProtocolCommandFailureMetadata;
+
+/**
+ * @brief Normalizes failed-result tokens and validates the public motor number.
+ * @param result Immutable failed command result.
+ * @return Normalized bounded metadata suitable for public formatting.
+ */
+static ProtocolCommandFailureMetadata
+protocol_engine_normalize_failure_metadata(const ProtocolCommandResult *result)
+{
+    ProtocolCommandFailureMetadata metadata;
+    uint8_t failed_motor_bit = 0U;
+
+    metadata.stage_token = protocol_engine_command_stage_text(result->stage);
+    metadata.error_token = protocol_engine_command_error_text(result->error);
+    metadata.failed_motor_number = result->failed_motor_number;
+    metadata.failed_motor_number_is_valid = 0U;
+    if ((result->failed_motor_number >= 1U) &&
+        (result->failed_motor_number <= ARM_JOINT_COUNT))
+    {
+        failed_motor_bit =
+            (uint8_t)(1U << (result->failed_motor_number - 1U));
+        if ((result->motor_mask & failed_motor_bit) != 0U)
+        {
+            metadata.failed_motor_number_is_valid = 1U;
+        }
+    }
+    return metadata;
 }
 
 /** @brief Formats one aethor-text-v1 terminal command result. */
@@ -4422,11 +4463,17 @@ static uint8_t protocol_engine_format_text_result(
     ProtocolOutputBatch *output_batch)
 {
     const char *result_text = protocol_engine_text_result(result->code);
-    uint64_t elapsed_ms = 0U;
+    ProtocolCommandFailureMetadata failure_metadata;
+    uint64_t elapsed_ms_u64 = 0U;
+    uint32_t elapsed_ms = 0U;
 
     if (result->completed_at_us >= result->accepted_at_us)
     {
-        elapsed_ms = (result->completed_at_us - result->accepted_at_us) / 1000ULL;
+        elapsed_ms_u64 =
+            (result->completed_at_us - result->accepted_at_us) / 1000ULL;
+        elapsed_ms = (elapsed_ms_u64 > (uint64_t)UINT32_MAX)
+                         ? UINT32_MAX
+                         : (uint32_t)elapsed_ms_u64;
     }
     if (result->type == PROTOCOL_COMMAND_LINK_TIMEOUT)
     {
@@ -4451,20 +4498,32 @@ static uint8_t protocol_engine_format_text_result(
                                  (unsigned int)result->motor_mask) ==
                              PROTOCOL_ENGINE_STATUS_OK);
         }
-        if ((result->code == PROTOCOL_COMMAND_RESULT_FAILED) &&
-            ((result->stage != PROTOCOL_COMMAND_STAGE_NONE) ||
-             (result->error != PROTOCOL_COMMAND_ERROR_NONE) ||
-             (result->failed_motor_number != 0U)))
+        if (result->code == PROTOCOL_COMMAND_RESULT_FAILED)
         {
+            failure_metadata =
+                protocol_engine_normalize_failure_metadata(result);
+            if (failure_metadata.failed_motor_number_is_valid != 0U)
+            {
+                return (uint8_t)(protocol_engine_append_text_format(
+                                     output_batch,
+                                     PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                     "done %lu bench move result=%s stage=%s code=%s motor=%u",
+                                     (unsigned long)result->request_id,
+                                     result_text,
+                                     failure_metadata.stage_token,
+                                     failure_metadata.error_token,
+                                     (unsigned int)failure_metadata
+                                         .failed_motor_number) ==
+                                 PROTOCOL_ENGINE_STATUS_OK);
+            }
             return (uint8_t)(protocol_engine_append_text_format(
                                  output_batch,
                                  PROTOCOL_OUTPUT_HIGH_PRIORITY,
-                                 "done %lu bench move result=%s stage=%s code=%s motor=%u",
+                                 "done %lu bench move result=%s stage=%s code=%s motor=?",
                                  (unsigned long)result->request_id,
                                  result_text,
-                                 protocol_engine_command_stage_text(result->stage),
-                                 protocol_engine_command_error_text(result->error),
-                                 (unsigned int)result->failed_motor_number) ==
+                                 failure_metadata.stage_token,
+                                 failure_metadata.error_token) ==
                              PROTOCOL_ENGINE_STATUS_OK);
         }
         return (uint8_t)(protocol_engine_append_text_format(

@@ -1676,6 +1676,7 @@ static void protocol_engine_store_recent(ProtocolEngine *engine,
                                          const AsciiProtocolRequest *request,
                                          uint32_t body_hash,
                                          uint64_t timestamp_us,
+                                         uint8_t watchdog_valid,
                                          const ProtocolOutputBatch *output_batch)
 {
     ProtocolRecentResult *result;
@@ -1691,6 +1692,7 @@ static void protocol_engine_store_recent(ProtocolEngine *engine,
     result->completed_at_us = timestamp_us;
     result->response_length = output_batch->messages[0].length;
     result->priority = output_batch->messages[0].priority;
+    result->watchdog_valid = watchdog_valid;
     memcpy(result->response,
            output_batch->messages[0].data,
            (size_t)result->response_length + 1U);
@@ -1707,6 +1709,7 @@ static void protocol_engine_store_text_recent(
     uint32_t request_id,
     uint32_t body_hash,
     uint64_t timestamp_us,
+    uint8_t watchdog_valid,
     const ProtocolOutputBatch *output_batch)
 {
     ProtocolRecentResult *result;
@@ -1722,6 +1725,7 @@ static void protocol_engine_store_text_recent(
     result->completed_at_us = timestamp_us;
     result->response_length = output_batch->messages[0].length;
     result->priority = output_batch->messages[0].priority;
+    result->watchdog_valid = watchdog_valid;
     memcpy(result->response,
            output_batch->messages[0].data,
            (size_t)result->response_length + 1U);
@@ -5424,10 +5428,6 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
     {
         if (recent_result->body_hash != body_hash)
         {
-            if (engine->session_active != 0U)
-            {
-                engine->last_valid_request_at_us = timestamp_us;
-            }
             (void)protocol_engine_append_format(
                 output_batch,
                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
@@ -5436,7 +5436,8 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
             return PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT;
         }
         protocol_engine_replay(recent_result, output_batch);
-        if (engine->session_active != 0U)
+        if ((engine->session_active != 0U) &&
+            (recent_result->watchdog_valid != 0U))
         {
             engine->last_valid_request_at_us = timestamp_us;
         }
@@ -5618,6 +5619,8 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
                                      &request,
                                      body_hash,
                                      timestamp_us,
+                                     (uint8_t)(engine_status ==
+                                               PROTOCOL_ENGINE_STATUS_OK),
                                      output_batch);
     }
     return engine_status;
@@ -5692,7 +5695,8 @@ ProtocolEngineStatus protocol_engine_process_text_line(
             return PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT;
         }
         protocol_engine_replay(recent_result, output_batch);
-        if (engine->session_active != 0U)
+        if ((engine->session_active != 0U) &&
+            (recent_result->watchdog_valid != 0U))
         {
             engine->last_valid_request_at_us = timestamp_us;
             engine->watchdog_timeout_reported = 0U;
@@ -5824,6 +5828,8 @@ ProtocolEngineStatus protocol_engine_process_text_line(
                                           request.request_id,
                                           body_hash,
                                           timestamp_us,
+                                          (uint8_t)(engine_status ==
+                                                    PROTOCOL_ENGINE_STATUS_OK),
                                           output_batch);
     }
     if ((engine_status == PROTOCOL_ENGINE_STATUS_OK) &&

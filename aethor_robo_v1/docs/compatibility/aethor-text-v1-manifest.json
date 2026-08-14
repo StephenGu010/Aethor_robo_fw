@@ -76,7 +76,7 @@
     "watchdog_scope": "any motor enabled or motion active, except an accepted self-contained bench move while it owns discovery-through-disable cleanup",
     "watchdog_action": "stop_disable",
     "valid_request_refreshes_watchdog": true,
-    "exact_replay_refreshes_watchdog": true,
+    "exact_replay_refreshes_watchdog": "only_when_original_request_status_is_ok",
     "rejected_request_refreshes_watchdog": false,
     "recent_result_capacity": 32,
     "recent_result_retention_ms": 60000

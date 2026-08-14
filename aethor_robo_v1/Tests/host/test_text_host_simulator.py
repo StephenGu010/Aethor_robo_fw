@@ -212,6 +212,60 @@ class AethorTextSimulatorTests(unittest.TestCase):
         )
         self.assertEqual(busy_simulator.last_request_ms, 0)
 
+    def test_rejected_exact_replay_does_not_refresh_energized_watchdog(
+            self) -> None:
+        """Keeps the original timeout boundary after replaying one cached error."""
+        simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+        simulator.process_line(encode_line("1 hello"))
+        simulator.process_line(encode_line("2 bench enable 1"))
+        simulator.drain_outputs()
+        simulator.advance(100)
+        first_response = simulator.process_line(encode_line("50 nonsense"))
+        simulator.advance(800)
+
+        self.assertEqual(
+            simulator.process_line(encode_line("50 nonsense")),
+            first_response,
+        )
+        self.assertEqual(simulator.last_request_ms, 0)
+        simulator.advance(99)
+        self.assertFalse(any("link_timeout" in output
+                             for output in simulator.drain_outputs()))
+        simulator.advance(1)
+        self.assertTrue(any("link_timeout" in output
+                            for output in simulator.drain_outputs()))
+
+    def test_replay_cache_replacement_and_hello_reset_validity(self) -> None:
+        """Does not retain rejected replay admission across eviction or HELLO."""
+        replacement_simulator = AethorTextSimulator(
+            boot_id=1234, profile="bench")
+        replacement_simulator.process_line(encode_line("1 hello"))
+        replacement_simulator.process_line(encode_line("2 bench enable 1"))
+        replacement_simulator.drain_outputs()
+        replacement_simulator.advance(100)
+        replacement_simulator.process_line(encode_line("50 nonsense"))
+        for request_id in range(100, 100 + simulator_module.REPLAY_CAPACITY):
+            replacement_simulator.process_line(
+                encode_line(f"{request_id} nonsense"))
+        replacement_simulator.advance(800)
+        self.assertEqual(
+            replacement_simulator.process_line(encode_line("50 nonsense")),
+            ["error 50 nonsense code=unknown_command"],
+        )
+        self.assertEqual(replacement_simulator.last_request_ms, 0)
+        replacement_simulator.advance(100)
+        self.assertTrue(any("link_timeout" in output for output in
+                            replacement_simulator.drain_outputs()))
+
+        reset_simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+        reset_simulator.process_line(encode_line("1 hello"))
+        reset_simulator.process_line(encode_line("50 nonsense"))
+        reset_simulator.advance(100)
+        reset_simulator.process_line(encode_line("2 hello"))
+        self.assertTrue(
+            reset_simulator.process_line(encode_line("50 ping"))[0].startswith(
+                "ok 50 ping "))
+
     def test_invalid_request_shapes_match_c_and_do_not_refresh_watchdog(
             self) -> None:
         """Rejects extra protocol tokens without extending energized lifetime."""
@@ -401,7 +455,9 @@ class AethorTextSimulatorTests(unittest.TestCase):
             ("3 show diag motion", None),
             ("3 show diag usb", None),
             ("3 show diag rtos", None),
+            ("50 ping", "50 ping"),
             ("50 show state", "50 show state"),
+            ("50 bench enable 1", "50 bench enable 1"),
         )
         for request_body, replay_seed in keepalive_requests:
             with self.subTest(request=request_body, replay=bool(replay_seed)):
@@ -1223,8 +1279,9 @@ class AethorTextSimulatorTests(unittest.TestCase):
                          simulator_module.AETHOR_TEXT_MAX_REQUEST_BODY_BYTES)
         self.assertTrue(
             manifest["lifecycle"]["valid_request_refreshes_watchdog"])
-        self.assertTrue(
-            manifest["lifecycle"]["exact_replay_refreshes_watchdog"])
+        self.assertEqual(
+            manifest["lifecycle"]["exact_replay_refreshes_watchdog"],
+            "only_when_original_request_status_is_ok")
         self.assertFalse(
             manifest["lifecycle"]["rejected_request_refreshes_watchdog"])
         self.assertEqual(set(manifest["bench_move_results"]["stages"]),

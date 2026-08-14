@@ -69,6 +69,7 @@ typedef struct
     uint32_t body_hash;
     uint16_t response_length;
     ProtocolOutputPriority priority;
+    uint8_t watchdog_valid;
     uint8_t valid;
 } ProtocolRecentResult;
 

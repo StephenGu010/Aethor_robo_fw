@@ -132,7 +132,8 @@ class AethorTextSimulator:
         self.active_motion: SimulatedMotion | None = None
         self._pending_outputs: list[str] = []
         self._rx_buffer = bytearray()
-        self._replay: OrderedDict[int, tuple[str, list[str], int]] = OrderedDict()
+        self._replay: OrderedDict[
+            int, tuple[str, list[str], int, bool]] = OrderedDict()
 
     @staticmethod
     def _parse_motor_list(value: str,
@@ -182,11 +183,13 @@ class AethorTextSimulator:
             raise ValueError("vector")
         return values
 
-    def _remember(self, request_id: int, canonical: str, outputs: list[str]) -> None:
-        """Stores one nonzero replay result with fixed capacity and retention."""
+    def _remember(self, request_id: int, canonical: str, outputs: list[str],
+                  watchdog_valid: bool) -> None:
+        """Stores one replay result and its original watchdog admission state."""
         if request_id == 0:
             return
-        self._replay[request_id] = (canonical, list(outputs), self.now_ms)
+        self._replay[request_id] = (
+            canonical, list(outputs), self.now_ms, watchdog_valid)
         self._replay.move_to_end(request_id)
         while len(self._replay) > REPLAY_CAPACITY:
             self._replay.popitem(last=False)
@@ -202,7 +205,7 @@ class AethorTextSimulator:
         """Replaces an accepted response with its terminal result."""
         cached = self._replay.get(request_id)
         if cached is not None:
-            self._remember(request_id, cached[0], [output])
+            self._remember(request_id, cached[0], [output], cached[3])
 
     def _complete(self, motion: SimulatedMotion) -> None:
         """Completes one motion and queues its readable terminal output."""
@@ -557,6 +560,7 @@ class AethorTextSimulator:
         if path == "hello":
             if positionals or fields:
                 return [f"error {request_id} hello code=bad_argument"], False
+            self._replay.clear()
             self.stream_kind = "off"
             self.stream_rate_hz = 0
             return ([f"ok {request_id} hello protocol=aethor-text-v1 fw=sim-1 "
@@ -676,15 +680,16 @@ class AethorTextSimulator:
             if cached[0] != canonical:
                 return [f"error {request_id} {' '.join(command)} "
                         "code=request_conflict"]
-            self.last_request_ms = self.now_ms
-            self.watchdog_reported = False
+            if cached[3]:
+                self.last_request_ms = self.now_ms
+                self.watchdog_reported = False
             return list(cached[1])
         try:
             outputs, accepted_for_watchdog = self._dispatch(
                 request_id, command, positionals, fields)
         except (IndexError, KeyError, ValueError):
             return [f"error {request_id} {' '.join(command)} code=bad_argument"]
-        self._remember(request_id, canonical, outputs)
+        self._remember(request_id, canonical, outputs, accepted_for_watchdog)
         if accepted_for_watchdog:
             self.last_request_ms = self.now_ms
             self.watchdog_reported = False

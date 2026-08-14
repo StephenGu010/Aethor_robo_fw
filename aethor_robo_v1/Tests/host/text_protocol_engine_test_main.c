@@ -1647,6 +1647,163 @@ static void test_unknown_text_command_does_not_keep_motors_energized(void)
     assert(protocol_engine_watchdog_expired(&engine, 1001000U) == 1U);
 }
 
+/** @brief Verifies an exact replay of a rejected request cannot refresh watchdog time. */
+static void test_rejected_text_replay_does_not_keep_motors_energized(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolQueryContext query_context = make_query_context();
+    char first_response[PROTOCOL_ENGINE_MESSAGE_CAPACITY];
+    const char *response;
+
+    protocol_engine_init(&engine, 9471U);
+    protocol_engine_update_query_context(&engine, &query_context);
+    (void)process_text_request(&engine,
+                               "1 hello\n",
+                               0U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    response = process_text_request(&engine,
+                                    "50 nonsense\n",
+                                    100000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    (void)strcpy(first_response, response);
+    response = process_text_request(&engine,
+                                    "50 nonsense\n",
+                                    900000U,
+                                    PROTOCOL_ENGINE_STATUS_REPLAYED,
+                                    &output_batch);
+    assert(strcmp(response, first_response) == 0);
+    assert(protocol_engine_watchdog_expired(&engine, 999999U) == 0U);
+    assert(protocol_engine_watchdog_expired(&engine, 1000000U) == 1U);
+}
+
+/** @brief Verifies accepted ping, query, and queued-action replays remain keepalives. */
+static void test_valid_text_replays_keep_motors_energized(void)
+{
+    static const char *requests[] = {
+        "50 ping\n",
+        "50 show state\n",
+        "50 bench enable 1\n"
+    };
+    size_t request_index;
+
+    for (request_index = 0U;
+         request_index < (sizeof(requests) / sizeof(requests[0]));
+         ++request_index)
+    {
+        ProtocolEngine engine;
+        ProtocolOutputBatch output_batch;
+        ProtocolQueryContext query_context = make_query_context();
+
+        protocol_engine_init(&engine, (uint32_t)(9472U + request_index));
+        protocol_engine_update_query_context(&engine, &query_context);
+        (void)process_text_request(&engine,
+                                   "1 hello\n",
+                                   0U,
+                                   PROTOCOL_ENGINE_STATUS_OK,
+                                   &output_batch);
+        (void)process_text_request(&engine,
+                                   requests[request_index],
+                                   100000U,
+                                   PROTOCOL_ENGINE_STATUS_OK,
+                                   &output_batch);
+        (void)process_text_request(&engine,
+                                   requests[request_index],
+                                   900000U,
+                                   PROTOCOL_ENGINE_STATUS_REPLAYED,
+                                   &output_batch);
+        assert(protocol_engine_watchdog_expired(&engine, 1899999U) == 0U);
+        assert(protocol_engine_watchdog_expired(&engine, 1900000U) == 1U);
+    }
+}
+
+/** @brief Verifies conflicts, cache replacement, and HELLO reset cannot revive validity. */
+static void test_text_replay_validity_cache_boundaries(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolQueryContext query_context = make_query_context();
+    char rejected_request[48];
+    uint8_t cache_index;
+
+    protocol_engine_init(&engine, 9476U);
+    protocol_engine_update_query_context(&engine, &query_context);
+    (void)process_text_request(&engine,
+                               "1 hello\n",
+                               0U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    (void)process_text_request(&engine,
+                               "50 nonsense\n",
+                               100000U,
+                               PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                               &output_batch);
+    (void)process_text_request(&engine,
+                               "50 ping\n",
+                               900000U,
+                               PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT,
+                               &output_batch);
+    assert(protocol_engine_watchdog_expired(&engine, 1000000U) == 1U);
+
+    protocol_engine_init(&engine, 9477U);
+    protocol_engine_update_query_context(&engine, &query_context);
+    (void)process_text_request(&engine,
+                               "1 hello\n",
+                               0U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    (void)process_text_request(&engine,
+                               "50 nonsense\n",
+                               100000U,
+                               PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                               &output_batch);
+    for (cache_index = 0U;
+         cache_index < PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY;
+         ++cache_index)
+    {
+        (void)snprintf(rejected_request,
+                       sizeof(rejected_request),
+                       "%lu nonsense\n",
+                       (unsigned long)(100U + cache_index));
+        (void)process_text_request(&engine,
+                                   rejected_request,
+                                   100000U,
+                                   PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                   &output_batch);
+    }
+    (void)process_text_request(&engine,
+                               "50 nonsense\n",
+                               900000U,
+                               PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                               &output_batch);
+    assert(protocol_engine_watchdog_expired(&engine, 1000000U) == 1U);
+
+    protocol_engine_init(&engine, 9478U);
+    protocol_engine_update_query_context(&engine, &query_context);
+    (void)process_text_request(&engine,
+                               "1 hello\n",
+                               0U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    (void)process_text_request(&engine,
+                               "50 nonsense\n",
+                               100000U,
+                               PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                               &output_batch);
+    (void)process_text_request(&engine,
+                               "2 hello\n",
+                               200000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    (void)process_text_request(&engine,
+                               "50 ping\n",
+                               300000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+}
+
 /** @brief Verifies terminal-friendly bounded help topics. */
 static void test_text_help(void)
 {
@@ -1701,6 +1858,9 @@ int main(void)
     test_text_bench_move_done_output();
     test_text_watchdog_scope();
     test_unknown_text_command_does_not_keep_motors_energized();
+    test_rejected_text_replay_does_not_keep_motors_energized();
+    test_valid_text_replays_keep_motors_energized();
+    test_text_replay_validity_cache_boundaries();
     test_text_help();
     puts("TEXT_PROTOCOL_ENGINE_TESTS_PASSED");
     return 0;

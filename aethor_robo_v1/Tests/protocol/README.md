@@ -11,7 +11,7 @@
 .\Tests\host\run_simulator_tests.ps1
 ```
 
-模拟器测试还验证 `help bench` 与 manifest 命令一致、`show motor <id>` 先发现动态运动边界再提交一次性移动，以及仅 C 协议接受的有效请求和精确重放刷新通信看门狗；所有拒绝请求均不得延后超时。
+模拟器测试还验证 `help bench` 与 manifest 命令一致、`show motor <id>` 先发现动态运动边界再提交一次性移动，以及仅 C 协议接受的有效请求及其精确重放刷新通信看门狗；被拒绝请求及其精确重放均不得延后超时。
 
 - `run_text_protocol_tests.ps1` 验证有界文本解析、空格、大小写、字段和错误边界。
 - `run_text_protocol_engine_tests.ps1` 验证查询、流、台架 Profile、动作 `ok/done`、请求重放和通信看门狗。

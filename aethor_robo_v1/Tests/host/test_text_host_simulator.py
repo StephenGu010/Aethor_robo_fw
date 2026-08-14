@@ -130,6 +130,114 @@ class AethorTextSimulatorTests(unittest.TestCase):
         self.assertFalse(any("link_timeout" in item
                              for item in self.simulator.drain_outputs()))
 
+    def test_invalid_requests_do_not_refresh_energized_watchdog(self) -> None:
+        """Times out from the last valid request despite each rejected request class."""
+        invalid_requests = (
+            "50 bench move 1,3 position=1 speed=1,1",
+            "50 bench move 1 position=nan speed=1",
+            "50 nonsense",
+            "show\tstate",
+        )
+        for request_body in invalid_requests:
+            with self.subTest(request=request_body):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                simulator.process_line(encode_line("1 hello"))
+                simulator.process_line(encode_line("2 bench enable 1"))
+                simulator.drain_outputs()
+                simulator.advance(900)
+                simulator.process_line(request_body + "\n")
+                self.assertEqual(simulator.last_request_ms, 0)
+                simulator.advance(100)
+                self.assertTrue(any("link_timeout" in output
+                                    for output in simulator.drain_outputs()))
+
+        conflict_simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+        conflict_simulator.process_line(encode_line("1 hello"))
+        conflict_simulator.process_line(encode_line("50 show state"))
+        conflict_simulator.process_line(encode_line("2 bench enable 1"))
+        conflict_simulator.drain_outputs()
+        conflict_simulator.advance(900)
+        self.assertEqual(
+            conflict_simulator.process_line(encode_line("50 ping")),
+            ["error 50 ping code=request_conflict"],
+        )
+        self.assertEqual(conflict_simulator.last_request_ms, 0)
+        conflict_simulator.advance(100)
+        self.assertTrue(any("link_timeout" in output
+                            for output in conflict_simulator.drain_outputs()))
+
+        busy_simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+        busy_simulator.process_line(encode_line("1 hello"))
+        busy_simulator.process_line(encode_line(
+            "50 bench move 1 position=90 speed=30"))
+        busy_simulator.advance(900)
+        self.assertEqual(
+            busy_simulator.process_line(encode_line(
+                "51 bench move 3 position=1 speed=1")),
+            ["error 51 bench move code=busy"],
+        )
+        self.assertEqual(busy_simulator.last_request_ms, 0)
+
+    def test_valid_ping_show_and_replay_refresh_energized_watchdog(self) -> None:
+        """Refreshes watchdog time only for valid commands and exact replay."""
+        keepalive_requests = (
+            ("3 ping", None),
+            ("3 show state", None),
+            ("50 show state", "50 show state"),
+        )
+        for request_body, replay_seed in keepalive_requests:
+            with self.subTest(request=request_body, replay=bool(replay_seed)):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                simulator.process_line(encode_line("1 hello"))
+                if replay_seed is not None:
+                    simulator.process_line(encode_line(replay_seed))
+                simulator.process_line(encode_line("2 bench enable 1"))
+                simulator.drain_outputs()
+                simulator.advance(900)
+                simulator.process_line(encode_line(request_body))
+                self.assertEqual(simulator.last_request_ms, 900)
+                simulator.advance(999)
+                self.assertFalse(any("link_timeout" in output
+                                     for output in simulator.drain_outputs()))
+                simulator.advance(1)
+                self.assertTrue(any("link_timeout" in output
+                                    for output in simulator.drain_outputs()))
+
+    def test_real_show_motor_matches_firmware_limits_and_client_discovers_first(
+            self) -> None:
+        """Queries simulated discovered limits before a one-shot client move."""
+        response = self.request("1 show motor 1")[0]
+        expected_response = (
+            "ok 1 show motor joint=1 esc=01 master=11 state=disabled "
+            "pos_deg=0 speed_deg_s=0 torque_nm=0 mos_c=0 rotor_c=0 "
+            "fault=0 age_ms=0 pmax_deg=180 vmax_deg_s=360 "
+            "max_speed_deg_s=360 move_speed_limit_deg_s=360")
+        self.assertEqual(response, expected_response)
+        self.assertLessEqual(len(response) + 1, 256)
+
+        invalid_cases = (
+            ("2 show motor", "error 2 show motor code=bad_argument"),
+            ("3 show motor abc", "error 3 show motor code=bad_argument"),
+            ("4 show motor +1", "error 4 show motor code=bad_argument"),
+            ("5 show motor 0", "error 5 show motor code=out_of_range field=joint"),
+            ("6 show motor 8", "error 6 show motor code=out_of_range field=joint"),
+            ("7 show motor 1 extra", "error 7 show motor code=bad_argument"),
+        )
+        for request_body, expected_error in invalid_cases:
+            with self.subTest(request=request_body):
+                self.assertEqual(self.request(request_body), [expected_error])
+
+        transport = SimulatorTransport()
+        client = AethorReferenceClient(transport)
+        limits = client.request("show motor 1")
+        result = client.bench_move_once([1], [90.0], [30.0])
+        self.assertIn("pmax_deg=180", limits[0])
+        self.assertIn("move_speed_limit_deg_s=360", limits[0])
+        self.assertEqual(result.result, "completed")
+        self.assertEqual(client.transcript[0], "> 1 show motor 1")
+        self.assertEqual(client.transcript[2],
+                         "> 2 bench move 1 position=90 speed=30")
+
     def test_shared_protocol_vectors(self) -> None:
         """Runs published line and fragmented-stream vectors unchanged."""
         vector_path = (PROJECT_ROOT / "Tests" / "protocol" /
@@ -887,10 +995,20 @@ class AethorTextSimulatorTests(unittest.TestCase):
         vectors = json.loads(vector_path.read_text(encoding="utf-8"))
 
         self.assertIn("move", manifest["profiles"]["bench"]["commands"])
+        help_response = self.request("help bench")[0]
+        help_commands = help_response.split("commands=", 1)[1].split(",")
+        self.assertEqual(help_commands,
+                         manifest["profiles"]["bench"]["commands"])
         self.assertEqual(manifest["transport"]["maximum_request_bytes"],
                          reference_client.AETHOR_TEXT_MAX_REQUEST_BODY_BYTES)
         self.assertEqual(manifest["transport"]["maximum_request_bytes"],
                          simulator_module.AETHOR_TEXT_MAX_REQUEST_BODY_BYTES)
+        self.assertTrue(
+            manifest["lifecycle"]["valid_request_refreshes_watchdog"])
+        self.assertTrue(
+            manifest["lifecycle"]["exact_replay_refreshes_watchdog"])
+        self.assertFalse(
+            manifest["lifecycle"]["rejected_request_refreshes_watchdog"])
         self.assertEqual(set(manifest["bench_move_results"]["stages"]),
                          reference_client.ONE_SHOT_MOVE_STAGES)
         self.assertEqual(set(manifest["bench_move_results"]["codes"]),
@@ -916,6 +1034,20 @@ class AethorTextSimulatorTests(unittest.TestCase):
                     ["numeric_token_max_characters"],
             simulator_module.AETHOR_TEXT_MAX_FLOAT_TOKEN_CHARACTERS,
         )
+        show_motor_response = self.request("show motor 1")[0]
+        show_motor_fields = {
+            token.split("=", 1)[0]
+            for token in show_motor_response.split()
+            if "=" in token
+        }
+        self.assertEqual(
+            set(manifest["show_motor_move_fields"]) - {"format"},
+            {"pmax_deg", "vmax_deg_s", "max_speed_deg_s",
+             "move_speed_limit_deg_s"},
+        )
+        self.assertTrue(
+            (set(manifest["show_motor_move_fields"]) - {"format"}) <=
+            show_motor_fields)
         for vector in vectors["bench_move_build_cases"]:
             self.assertGreater(vector["request_id"], 0, vector["name"])
             self.assertLessEqual(vector["request_id"], 0xFFFFFFFF,

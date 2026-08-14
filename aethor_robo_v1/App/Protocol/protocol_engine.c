@@ -2019,7 +2019,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_help(
         return protocol_engine_append_text_format(
             output_batch,
             PROTOCOL_OUTPUT_QUERY,
-            "ok %lu help bench commands=init,enable,jog,stop,disable,clear",
+            "ok %lu help bench commands=init,enable,jog,move,stop,disable,clear",
             (unsigned long)request->request_id);
     }
     (void)protocol_engine_append_text_command_error(output_batch,

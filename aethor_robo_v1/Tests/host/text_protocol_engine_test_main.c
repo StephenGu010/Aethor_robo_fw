@@ -1419,7 +1419,11 @@ static void test_text_help(void)
                                PROTOCOL_ENGINE_STATUS_OK,
                                &output_batch);
     assert(strcmp(output_batch.messages[0].data,
-                  "ok 0 help bench commands=init,enable,jog,stop,disable,clear\n") == 0);
+                  "ok 0 help bench commands=init,enable,jog,move,stop,disable,clear\n") == 0);
+    assert(output_batch.messages[0].length <
+           TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH);
+    assert(output_batch.messages[0].data[
+               output_batch.messages[0].length - 1U] == '\n');
 }
 
 /** @brief Runs the aethor-text-v1 engine lifecycle tests. */

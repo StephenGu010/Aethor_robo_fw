@@ -16,7 +16,10 @@ AETHOR_TEXT_MAX_FLOAT_TOKEN_CHARACTERS = 63
 FLOAT32_MIN_NORMAL = 1.1754943508222875e-38
 FLOAT32_MAX = 3.4028234663852886e38
 SIMULATED_PMAX_DEG = 180.0
-SIMULATED_MOVE_SPEED_LIMIT_DEG_S = 360.0
+SIMULATED_VMAX_DEG_S = 360.0
+SIMULATED_MAX_SPEED_DEG_S = 360.0
+SIMULATED_MOVE_SPEED_LIMIT_DEG_S = min(
+    SIMULATED_VMAX_DEG_S, SIMULATED_MAX_SPEED_DEG_S)
 
 
 def parse_strict_float32_token(token: str) -> tuple[str, float]:
@@ -259,55 +262,100 @@ class AethorTextSimulator:
                 self._replace_replay_with_done(int(tokens[1], 10), output)
         return outputs
 
-    def _show(self, request_id: int, target: str, positionals: list[str]) -> list[str]:
-        """Formats one public query without changing simulated hardware state."""
+    def _show(self, request_id: int, target: str, positionals: list[str],
+              fields: dict[str, str]) -> tuple[list[str], bool]:
+        """Formats one public query and reports whether C accepts it as valid."""
+        if fields:
+            return [f"error {request_id} show {target} code=bad_argument"], False
+        if target == "motor":
+            if len(positionals) != 1:
+                return [f"error {request_id} show motor code=bad_argument"], False
+            joint_token = positionals[0]
+            if (not joint_token or
+                    any(character < "0" or character > "9"
+                        for character in joint_token)):
+                return [f"error {request_id} show motor code=bad_argument"], False
+            joint_number = int(joint_token, 10)
+            if not 1 <= joint_number <= JOINT_COUNT:
+                return [f"error {request_id} show motor "
+                        "code=out_of_range field=joint"], False
+            joint_index = joint_number - 1
+            joint_bit = 1 << joint_index
+            moving_mask = (self.active_motion.selected_mask
+                           if self.active_motion is not None else 0)
+            if self.motor_fault_mask & joint_bit:
+                motor_state = "fault"
+            elif self.motor_enabled_mask & joint_bit:
+                motor_state = "moving" if moving_mask & joint_bit else "holding"
+            else:
+                motor_state = "disabled"
+            response = (
+                f"ok {request_id} show motor joint={joint_number} "
+                f"esc={joint_number:02x} master={joint_number + 0x10:02x} "
+                f"state={motor_state} "
+                f"pos_deg={compact_number(self.joint_position_deg[joint_index])} "
+                f"speed_deg_s={compact_number(self.joint_velocity_deg_s[joint_index])} "
+                "torque_nm=0 mos_c=0 rotor_c=0 "
+                f"fault={int(bool(self.motor_fault_mask & joint_bit))} age_ms=0 "
+                f"pmax_deg={compact_number(SIMULATED_PMAX_DEG)} "
+                f"vmax_deg_s={compact_number(SIMULATED_VMAX_DEG_S)} "
+                f"max_speed_deg_s={compact_number(SIMULATED_MAX_SPEED_DEG_S)} "
+                "move_speed_limit_deg_s="
+                f"{compact_number(SIMULATED_MOVE_SPEED_LIMIT_DEG_S)}")
+            return [response], True
+        if target == "config":
+            if len(positionals) > 1:
+                return [f"error {request_id} show config code=bad_argument"], False
+        elif positionals:
+            return [f"error {request_id} show {target} code=bad_argument"], False
         if target == "info":
-            return [f"ok {request_id} show info mcu=STM32H723VGT6 transport=usb_cdc "
-                    "can=classic_1m motor=s3519 driver=dm3520 build=sim"]
+            return ([f"ok {request_id} show info mcu=STM32H723VGT6 transport=usb_cdc "
+                     "can=classic_1m motor=s3519 driver=dm3520 build=sim"], True)
         if target == "state":
-            return [f"ok {request_id} show state state={self.arm_state} "
-                    f"aligned={int(self.aligned)} enabled={self.motor_enabled_mask:02x} "
-                    f"moving={int(self.active_motion is not None)} active="
-                    f"{self.active_motion.request_id if self.active_motion else 0} "
-                    f"fault={'driver' if self.motor_fault_mask else 'none'}"]
+            return ([f"ok {request_id} show state state={self.arm_state} "
+                     f"aligned={int(self.aligned)} enabled={self.motor_enabled_mask:02x} "
+                     f"moving={int(self.active_motion is not None)} active="
+                     f"{self.active_motion.request_id if self.active_motion else 0} "
+                     f"fault={'driver' if self.motor_fault_mask else 'none'}"], True)
         if target == "joints":
             q_text = ",".join(compact_number(item) for item in self.joint_position_deg)
             qd_text = ",".join(compact_number(item) for item in self.joint_velocity_deg_s)
-            return [f"ok {request_id} show joints t_ms={self.now_ms} q={q_text} "
-                    f"qd={qd_text} valid=7f"]
+            return ([f"ok {request_id} show joints t_ms={self.now_ms} q={q_text} "
+                     f"qd={qd_text} valid=7f"], True)
         if target == "motors":
             holding_mask = self.motor_enabled_mask
             moving_mask = self.active_motion.selected_mask if self.active_motion else 0
             holding_mask &= ~moving_mask
-            return [f"ok {request_id} show motors present={self.motor_present_mask:02x} "
-                    f"enabled={self.motor_enabled_mask:02x} moving={moving_mask:02x} "
-                    f"holding={holding_mask:02x} stale=00 fault={self.motor_fault_mask:02x}"]
+            return ([f"ok {request_id} show motors present={self.motor_present_mask:02x} "
+                     f"enabled={self.motor_enabled_mask:02x} moving={moving_mask:02x} "
+                     f"holding={holding_mask:02x} stale=00 "
+                     f"fault={self.motor_fault_mask:02x}"], True)
         if target == "config":
-            return [f"ok {request_id} show config map=sim required=ff verified=7f "
-                    "enable_ready=1"]
+            return ([f"ok {request_id} show config map=sim required=ff verified=7f "
+                     "enable_ready=1"], True)
         if target == "diag":
-            return [f"ok {request_id} show diag loop_max_us=4000 deadline_miss=0 "
-                    "can_error=0 usb_drop=0 fault=none"]
-        raise ValueError("show")
+            return ([f"ok {request_id} show diag loop_max_us=4000 deadline_miss=0 "
+                     "can_error=0 usb_drop=0 fault=none"], True)
+        return [f"error {request_id} show {target} code=unknown_command"], False
 
     def _bench(self, request_id: int, operation: str, positionals: list[str],
-               fields: dict[str, str]) -> list[str]:
-        """Executes one explicitly scoped low-energy simulated bench command."""
+               fields: dict[str, str]) -> tuple[list[str], bool]:
+        """Executes one bench command and reports C watchdog acceptance."""
         if self.profile != "bench":
-            return [f"error {request_id} bench {operation} code=profile "
-                    "current=arm required=bench"]
+            return ([f"error {request_id} bench {operation} code=profile "
+                     "current=arm required=bench"], False)
         if operation == "move" and request_id == 0:
-            return ["error 0 bench move code=bad_argument field=request_id"]
+            return ["error 0 bench move code=bad_argument field=request_id"], False
         try:
             if len(positionals) != 1:
                 raise ValueError("motors")
             motors, mask = self._parse_motor_list(
                 positionals[0], require_ascending=(operation != "move"))
         except (IndexError, TypeError, ValueError):
-            return [f"error {request_id} bench {operation} "
-                    "code=bad_argument field=motors"]
+            return ([f"error {request_id} bench {operation} "
+                     "code=bad_argument field=motors"], False)
         if self.active_motion is not None and operation != "stop":
-            return [f"error {request_id} bench {operation} code=busy"]
+            return [f"error {request_id} bench {operation} code=busy"], False
         accepted = f"ok {request_id} bench {operation} accepted=1"
         if operation == "init":
             done = (f"done {request_id} bench init result=completed identity={mask:02x} "
@@ -317,21 +365,22 @@ class AethorTextSimulator:
             done = f"done {request_id} bench enable result=completed enabled={mask:02x}"
         elif operation == "jog":
             if len(fields) != 2 or "delta" not in fields:
-                return [f"error {request_id} bench jog "
-                        "code=bad_argument field=delta"]
+                return ([f"error {request_id} bench jog "
+                         "code=bad_argument field=delta"], False)
             if "speed" not in fields:
-                return [f"error {request_id} bench jog "
-                        "code=bad_argument field=speed"]
+                return ([f"error {request_id} bench jog "
+                         "code=bad_argument field=speed"], False)
             delta_status, delta = parse_strict_float32_token(fields["delta"])
             if delta_status != "ok":
-                return [f"error {request_id} bench jog "
-                        "code=bad_argument field=delta"]
+                return ([f"error {request_id} bench jog "
+                         "code=bad_argument field=delta"], False)
             speed_status, speed = parse_strict_float32_token(fields["speed"])
             if speed_status != "ok":
-                return [f"error {request_id} bench jog "
-                        "code=bad_argument field=speed"]
+                return ([f"error {request_id} bench jog "
+                         "code=bad_argument field=speed"], False)
             if speed <= 0.0:
-                return [f"error {request_id} bench jog code=out_of_range field=speed"]
+                return ([f"error {request_id} bench jog "
+                         "code=out_of_range field=speed"], False)
             target = list(self.joint_position_deg)
             for motor in motors:
                 target[motor - 1] += delta
@@ -339,26 +388,26 @@ class AethorTextSimulator:
             self.active_motion = SimulatedMotion(request_id, "bench", mask,
                                                  self.now_ms, duration_ms,
                                                  list(self.joint_position_deg), target)
-            return [accepted]
+            return [accepted], True
         elif operation == "move":
             if "position" not in fields:
-                return [f"error {request_id} bench move "
-                        "code=bad_argument field=position"]
+                return ([f"error {request_id} bench move "
+                         "code=bad_argument field=position"], False)
             if "speed" not in fields:
-                return [f"error {request_id} bench move "
-                        "code=bad_argument field=speed"]
+                return ([f"error {request_id} bench move "
+                         "code=bad_argument field=speed"], False)
             if set(fields) != {"position", "speed"}:
-                return [f"error {request_id} bench move code=bad_argument"]
+                return [f"error {request_id} bench move code=bad_argument"], False
             position_status, positions = self._parse_move_values(
                 fields["position"], len(motors), True)
             if position_status != "ok":
-                return [f"error {request_id} bench move "
-                        f"code={position_status} field=position"]
+                return ([f"error {request_id} bench move "
+                         f"code={position_status} field=position"], False)
             speed_status, speeds = self._parse_move_values(
                 fields["speed"], len(motors), False)
             if speed_status != "ok":
-                return [f"error {request_id} bench move "
-                        f"code={speed_status} field=speed"]
+                return ([f"error {request_id} bench move "
+                         f"code={speed_status} field=speed"], False)
             positions_by_joint = [0.0] * JOINT_COUNT
             speeds_by_joint = [0.0] * JOINT_COUNT
             for motor, position, speed in zip(motors, positions, speeds):
@@ -373,14 +422,14 @@ class AethorTextSimulator:
                               "stage=validate code=position_out_of_range "
                               f"motor={motor}")
                     self._pending_outputs.append(failed)
-                    return [accepted]
+                    return [accepted], True
                 if (speeds_by_joint[joint_index] >
                         SIMULATED_MOVE_SPEED_LIMIT_DEG_S):
                     failed = (f"done {request_id} bench move result=failed "
                               "stage=validate code=speed_out_of_range "
                               f"motor={motor}")
                     self._pending_outputs.append(failed)
-                    return [accepted]
+                    return [accepted], True
             target = list(self.joint_position_deg)
             duration_ms = 4
             for motor, position, speed in zip(motors, positions, speeds):
@@ -393,7 +442,7 @@ class AethorTextSimulator:
             self.active_motion = SimulatedMotion(
                 request_id, "bench_move", mask, self.now_ms, duration_ms,
                 list(self.joint_position_deg), target)
-            return [accepted]
+            return [accepted], True
         elif operation == "stop":
             effective_mask = mask
             if self.active_motion is not None:
@@ -422,45 +471,68 @@ class AethorTextSimulator:
             self.motor_fault_mask &= ~mask
             done = f"done {request_id} bench clear result=completed fault=00"
         else:
-            return [f"error {request_id} bench {operation} code=unknown_command"]
+            return ([f"error {request_id} bench {operation} "
+                     "code=unknown_command"], False)
         self._pending_outputs.append(done)
-        return [accepted]
+        return [accepted], True
 
     def _dispatch(self, request_id: int, command: list[str],
-                  positionals: list[str], fields: dict[str, str]) -> list[str]:
-        """Dispatches one parsed command into deterministic simulator behavior."""
+                  positionals: list[str],
+                  fields: dict[str, str]) -> tuple[list[str], bool]:
+        """Dispatches one request and returns explicit C watchdog acceptance."""
         path = " ".join(command)
         if path == "hello":
+            if positionals or fields:
+                return [f"error {request_id} hello code=bad_argument"], False
             self.stream_kind = "off"
             self.stream_rate_hz = 0
-            return [f"ok {request_id} hello protocol=aethor-text-v1 fw=sim-1 "
-                    f"profile={self.profile} dof=7 boot={self.boot_id} watchdog_ms=1000"]
+            return ([f"ok {request_id} hello protocol=aethor-text-v1 fw=sim-1 "
+                     f"profile={self.profile} dof=7 boot={self.boot_id} "
+                     "watchdog_ms=1000"], True)
         if path == "ping":
-            return [f"ok {request_id} ping state={self.arm_state} "
-                    f"enabled={self.motor_enabled_mask:02x} boot={self.boot_id}"]
+            if positionals or fields:
+                return [f"error {request_id} ping code=bad_argument"], False
+            return ([f"ok {request_id} ping state={self.arm_state} "
+                     f"enabled={self.motor_enabled_mask:02x} boot={self.boot_id}"],
+                    True)
         if path == "help":
-            return [f"ok {request_id} help topics=show,stream,arm,bench "
-                    "examples=show_state,arm_move,bench_jog"]
+            if fields or len(positionals) > 1:
+                return [f"error {request_id} help code=bad_argument"], False
+            if not positionals:
+                return ([f"ok {request_id} help topics=show,stream,arm,bench "
+                         "examples=show_state,arm_move,bench_jog"], True)
+            help_topics = {
+                "show": "commands=info,state,joints,motors,motor,config,diag",
+                "stream": "commands=joints,motors,off rates=joints_1_50,motors_1_10",
+                "arm": "commands=align,enable,move,stop,disable,clear",
+                "bench": "commands=init,enable,jog,move,stop,disable,clear",
+            }
+            topic = positionals[0].lower()
+            if topic not in help_topics:
+                return [f"error {request_id} help code=bad_argument"], False
+            return [f"ok {request_id} help {topic} {help_topics[topic]}"], True
         if command[0] == "show":
-            return self._show(request_id, command[1], positionals)
+            return self._show(request_id, command[1], positionals, fields)
         if command[0] == "stream":
             if command[1] == "off":
                 self.stream_kind = "off"
                 self.stream_rate_hz = 0
-                return [f"ok {request_id} stream off"]
+                return [f"ok {request_id} stream off"], True
             rate_hz = int(fields["rate"])
             maximum_rate = 50 if command[1] == "joints" else 10
             if not 1 <= rate_hz <= maximum_rate:
-                return [f"error {request_id} {path} code=out_of_range field=rate"]
+                return ([f"error {request_id} {path} "
+                         "code=out_of_range field=rate"], False)
             self.stream_kind = command[1]
             self.stream_rate_hz = rate_hz
             self.next_stream_ms = self.now_ms
-            return [f"ok {request_id} {path} rate={rate_hz}"]
+            return [f"ok {request_id} {path} rate={rate_hz}"], True
         if command[0] == "bench":
             return self._bench(request_id, command[1], positionals, fields)
         if command[0] == "arm" and self.profile != "arm":
-            return [f"error {request_id} {path} code=profile current=bench required=arm"]
-        return [f"error {request_id} {path} code=unknown_command"]
+            return ([f"error {request_id} {path} code=profile "
+                     "current=bench required=arm"], False)
+        return [f"error {request_id} {path} code=unknown_command"], False
 
     def process_line(self, line: bytes | str) -> list[str]:
         """Parses and processes one optional-ID plain text request line."""
@@ -511,13 +583,17 @@ class AethorTextSimulator:
                 if cached[0] != canonical:
                     return [f"error {request_id} {' '.join(command)} "
                             "code=request_conflict"]
+                self.last_request_ms = self.now_ms
+                self.watchdog_reported = False
                 return list(cached[1])
-            outputs = self._dispatch(request_id, command, positionals, fields)
+            outputs, accepted_for_watchdog = self._dispatch(
+                request_id, command, positionals, fields)
         except (IndexError, KeyError, ValueError):
             return [f"error {request_id} {' '.join(command)} code=bad_argument"]
         self._remember(request_id, canonical, outputs)
-        self.last_request_ms = self.now_ms
-        self.watchdog_reported = False
+        if accepted_for_watchdog:
+            self.last_request_ms = self.now_ms
+            self.watchdog_reported = False
         return outputs
 
     def feed_bytes(self, data: bytes) -> list[str]:

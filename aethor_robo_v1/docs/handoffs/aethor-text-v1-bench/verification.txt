@@ -138,3 +138,47 @@ One-shot hardware boundary:
 - No serial port, motor, flash probe, or physical hardware was accessed in this
   verification run. The historical COM7 evidence above must not be interpreted as
   current one-shot bench move hardware verification.
+
+Final one-shot post-review verification
+Recorded: 2026-08-15 04:42 +08:00 Asia/Shanghai
+Branch: feature/one-shot-bench-move-impl
+Source commit: fe6f45276391b4ddc401f9d3a4febbd01c134b4d
+
+Fresh software verification:
+- All ten Tests/host/run_*.ps1 suites passed.
+- Tests/host/run_phase0_tests.ps1 reported PHASE0_TESTS_PASSED and
+  PRODUCTION_PROFILE_TEST_PASSED.
+- Tests/host/run_simulator_tests.ps1 ran 44 tests and reported
+  SIMULATOR_TESTS_PASSED.
+- Tests/host/check_phase0_architecture.ps1 passed all eight checks.
+- Python py_compile passed for all nine Python files under Tests and tools.
+- All five tracked JSON protocol, manifest, vector, and schema files parsed.
+- git diff --check passed; the implementation worktree had no tracked changes
+  before the rebuild.
+
+Final Keil full rebuild:
+- Command: E:/keil/UV4/UV4.exe -r
+  E:/Desktop_E/TCG/Aethor_robo_fw/.worktrees/one-shot-bench-move-impl/aethor_robo_v1/MDK-ARM/CtrBoard-H7_FDCAN.uvprojx
+  -t CtrBoard-H7_FDCAN -j0 -o
+  E:/Desktop_E/TCG/Aethor_robo_fw/.worktrees/one-shot-bench-move-impl/aethor_robo_v1/MDK-ARM/one-shot-bench-move-final-build.log
+- Process exit code: 0
+- Compiler: ARMCC V5.05 update 1 build 106
+- Target: CtrBoard-H7_FDCAN
+- Program Size: Code=81452 RO-data=3820 RW-data=452 ZI-data=93756
+- Result: 0 Error(s), 0 Warning(s)
+- The uvprojx working-tree blob remained identical to HEAD after the rebuild.
+
+Final rebuilt artifact evidence:
+- HEX: MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.hex
+  Length: 240479 bytes
+  Last write: 2026-08-15 04:41:06 +08:00
+  SHA-256: F4A27512C20FB81E58FC8DD028253C7D2A85C86A348AC6772A8E6977F9230CBF
+- The generated tracked HEX was restored to the branch version after recording
+  this evidence and was not included in the documentation commit.
+
+Final evidence boundary:
+- This final rebuild and software matrix prove compilation and deterministic
+  host behavior for the self-contained bench move implementation.
+- No serial port, flash probe, motor, or physical hardware was accessed. They do
+  not prove real one-shot motion, mechanical direction, load behavior, physical
+  angle, physical speed, or seven-axis commissioning.

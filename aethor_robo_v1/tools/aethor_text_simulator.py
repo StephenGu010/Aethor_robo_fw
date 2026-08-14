@@ -49,7 +49,7 @@ def parse_strict_float32_token(token: str) -> tuple[str, float]:
             (float32_value != 0.0 and
              abs(float32_value) < FLOAT32_MIN_NORMAL)):
         return "bad_argument", 0.0
-    return "ok", float32_value
+    return "ok", numeric_value
 
 
 def encode_line(body: str) -> bytes:
@@ -105,11 +105,15 @@ class AethorTextSimulator:
         self._replay: OrderedDict[int, tuple[str, list[str], int]] = OrderedDict()
 
     @staticmethod
-    def _parse_motor_list(value: str) -> tuple[list[int], int]:
-        """Parses one unique one-based motor list while preserving its order."""
+    def _parse_motor_list(value: str,
+                          require_ascending: bool) -> tuple[list[int], int]:
+        """Parses one unique motor list with optional legacy ascending order."""
         motors = [int(item) for item in value.split(",")]
         if (not motors or len(set(motors)) != len(motors) or
-                any(item < 1 or item > JOINT_COUNT for item in motors)):
+                any(item < 1 or item > JOINT_COUNT for item in motors) or
+                (require_ascending and
+                 any(current <= previous
+                     for previous, current in zip(motors, motors[1:])))):
             raise ValueError("motors")
         return motors, sum(1 << (item - 1) for item in motors)
 
@@ -293,7 +297,8 @@ class AethorTextSimulator:
         try:
             if len(positionals) != 1:
                 raise ValueError("motors")
-            motors, mask = self._parse_motor_list(positionals[0])
+            motors, mask = self._parse_motor_list(
+                positionals[0], require_ascending=(operation != "move"))
         except (IndexError, TypeError, ValueError):
             return [f"error {request_id} bench {operation} "
                     "code=bad_argument field=motors"]
@@ -307,11 +312,21 @@ class AethorTextSimulator:
             self.motor_enabled_mask |= mask
             done = f"done {request_id} bench enable result=completed enabled={mask:02x}"
         elif operation == "jog":
-            delta = float(fields["delta"])
-            speed = float(fields["speed"])
-            if not math.isfinite(delta) or abs(delta) > 3.0:
-                return [f"error {request_id} bench jog code=out_of_range field=delta"]
-            if not math.isfinite(speed) or not 0.0 < speed <= 3.0:
+            if len(fields) != 2 or "delta" not in fields:
+                return [f"error {request_id} bench jog "
+                        "code=bad_argument field=delta"]
+            if "speed" not in fields:
+                return [f"error {request_id} bench jog "
+                        "code=bad_argument field=speed"]
+            delta_status, delta = parse_strict_float32_token(fields["delta"])
+            if delta_status != "ok":
+                return [f"error {request_id} bench jog "
+                        "code=bad_argument field=delta"]
+            speed_status, speed = parse_strict_float32_token(fields["speed"])
+            if speed_status != "ok":
+                return [f"error {request_id} bench jog "
+                        "code=bad_argument field=speed"]
+            if speed <= 0.0:
                 return [f"error {request_id} bench jog code=out_of_range field=speed"]
             target = list(self.joint_position_deg)
             for motor in motors:
@@ -340,12 +355,20 @@ class AethorTextSimulator:
             if speed_status != "ok":
                 return [f"error {request_id} bench move "
                         f"code={speed_status} field=speed"]
-            if any(abs(position) > SIMULATED_PMAX_DEG for position in positions):
-                return [f"error {request_id} bench move "
-                        "code=out_of_range field=position"]
-            if any(speed > SIMULATED_MOVE_SPEED_LIMIT_DEG_S for speed in speeds):
-                return [f"error {request_id} bench move "
-                        "code=out_of_range field=speed"]
+            for motor, position in zip(motors, positions):
+                if abs(position) > SIMULATED_PMAX_DEG:
+                    failed = (f"done {request_id} bench move result=failed "
+                              "stage=validate code=position_out_of_range "
+                              f"motor={motor}")
+                    self._pending_outputs.append(failed)
+                    return [accepted]
+            for motor, speed in zip(motors, speeds):
+                if speed > SIMULATED_MOVE_SPEED_LIMIT_DEG_S:
+                    failed = (f"done {request_id} bench move result=failed "
+                              "stage=validate code=speed_out_of_range "
+                              f"motor={motor}")
+                    self._pending_outputs.append(failed)
+                    return [accepted]
             target = list(self.joint_position_deg)
             duration_ms = 4
             for motor, position, speed in zip(motors, positions, speeds):

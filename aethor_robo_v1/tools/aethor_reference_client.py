@@ -17,6 +17,9 @@ from aethor_text_simulator import AethorTextSimulator, encode_line
 # Matches TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH. Firmware removes CR/LF before
 # applying this limit, so the client checks the ASCII request body only.
 AETHOR_TEXT_MAX_REQUEST_BODY_BYTES = 160
+# SimulatorTransport converts the timeout to an unsigned 32-bit millisecond
+# budget; the same cap also keeps SerialTransport's monotonic deadline finite.
+AETHOR_ACTION_TIMEOUT_MAX_SECONDS = 0xFFFFFFFF / 1000.0
 FLOAT32_MIN_NORMAL = 1.1754943508222875e-38
 FLOAT32_MAX = 3.4028234663852886e38
 ONE_SHOT_MOVE_RESULTS = {"completed", "failed", "cancelled", "stopped"}
@@ -96,14 +99,18 @@ def _coerce_firmware_float32(value: object, field_name: str,
 
 def _validate_action_timeout(action_timeout: object) -> float:
     """Returns one finite positive timeout before any transport can write."""
+    error_message = (
+        "action_timeout must be finite, positive, and no greater than "
+        f"{AETHOR_ACTION_TIMEOUT_MAX_SECONDS} seconds")
     if isinstance(action_timeout, bool):
-        raise ValueError("action_timeout must be a finite positive number")
+        raise ValueError(error_message)
     try:
         timeout_value = float(action_timeout)
     except (OverflowError, TypeError, ValueError) as exc:
-        raise ValueError("action_timeout must be a finite positive number") from exc
-    if not math.isfinite(timeout_value) or timeout_value <= 0.0:
-        raise ValueError("action_timeout must be a finite positive number")
+        raise ValueError(error_message) from exc
+    if (not math.isfinite(timeout_value) or timeout_value <= 0.0 or
+            timeout_value > AETHOR_ACTION_TIMEOUT_MAX_SECONDS):
+        raise ValueError(error_message)
     return timeout_value
 
 

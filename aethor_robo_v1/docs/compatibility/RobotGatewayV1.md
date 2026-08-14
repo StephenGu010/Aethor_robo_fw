@@ -89,7 +89,8 @@ stream off
 15 bench disable 1,3
 ```
 
-- 电机列表由唯一的 `1..7` ESC/CAN ID 组成；`bench move` 的电机、位置和速度列表必须非空且严格等长，并按列表顺序一一映射，不支持广播。
+- 旧 `bench init/enable/jog/stop/disable/clear` 的电机列表必须是严格升序、无重复的 `1..7` ESC/CAN ID。新 `bench move` 单独允许任意唯一顺序，其电机、位置和速度列表必须非空且严格等长，并严格按调用者列表顺序一一映射，不支持广播。
+- `bench jog` 的 `delta/speed` 使用与固件相同的普通十进制正常 `float32` 语法，不接受指数；`delta` 可正、可负或为 `0`，`speed` 必须大于 `0`。确定性模拟器不为 legacy jog 伪造发现能力上限；真实固件仍在动作执行阶段依据本次发现的 `PMAX/VMAX/MAX_SPD` 做运行时校验。
 - `bench move` 使用相对本次上电零点的 S3519 输出端绝对角度，不是机械臂关节软限位。位置和速度只接受不含指数的十进制正常 `float32`；位置还允许 `0`，速度必须大于 `0`。
 - 位置边界来自本次发现的 `PMAX`，速度边界来自 `min(VMAX,MAX_SPD)`；边界值允许，越界拒绝且不截断，任一发现值缺失时不回退默认值。`show motor <id>` 通过 `pmax_deg/vmax_deg_s/max_speed_deg_s/move_speed_limit_deg_s` 显示这些值，不可用时显示 `?`。
 - 对动作编号 `13` 只发送一次。收到 `ok 13 bench jog accepted=1` 后等待 `done 13 ...`；不要通过新编号重复发送同一动作。

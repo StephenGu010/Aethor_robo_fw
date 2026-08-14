@@ -2,6 +2,7 @@ Aethor Text V1 firmware and bench verification
 Recorded: 2026-08-13 Asia/Shanghai
 Branch: refactor/prd-phase-00
 Source commit before evidence artifact: 39415f41cbd2894c655131230e405c62f1a3b6bc
+Status: historical evidence snapshot; its fixed 3 deg bench bound is superseded by the current discovered PMAX/VMAX/MAX_SPD contract.
 
 Protocol contract:
 - Production entry: aethor-text-v1 over USB CDC, printable ASCII, LF/CRLF.

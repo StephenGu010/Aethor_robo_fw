@@ -348,7 +348,16 @@ class AethorTextSimulatorTests(unittest.TestCase):
 
     def test_one_shot_move_rejects_invalid_timeout_before_transport(self) -> None:
         """Rejects nonpositive or nonfinite action timeouts before any write."""
-        invalid_timeouts = (0.0, -1.0, math.nan, math.inf, -math.inf)
+        maximum_timeout_seconds = 0xFFFFFFFF / 1000.0
+        invalid_timeouts = (
+            0.0,
+            -1.0,
+            math.nan,
+            math.inf,
+            -math.inf,
+            math.nextafter(maximum_timeout_seconds, math.inf),
+            sys.float_info.max,
+        )
         for invalid_timeout in invalid_timeouts:
             with self.subTest(timeout=invalid_timeout):
                 scripted_transport = ScriptedActionTransport([])
@@ -377,6 +386,19 @@ class AethorTextSimulatorTests(unittest.TestCase):
                         invalid_timeout,
                     )
                 self.assertEqual(recording_serial.write_calls, [])
+
+    def test_one_shot_move_accepts_maximum_representable_timeout(self) -> None:
+        """Accepts the largest timeout whose milliseconds fit the transport contract."""
+        maximum_timeout = reference_client.AETHOR_ACTION_TIMEOUT_MAX_SECONDS
+        self.assertLessEqual(int(maximum_timeout * 1000.0), 0xFFFFFFFF)
+        transport = ScriptedActionTransport([
+            "ok 1 bench move accepted=1",
+            "done 1 bench move result=completed elapsed_ms=4 motors=01",
+        ])
+        result = AethorReferenceClient(transport).bench_move_once(
+            [1], [0.0], [1.0], action_timeout=maximum_timeout)
+        self.assertEqual(result.result, "completed")
+        self.assertEqual(len(transport.action_bodies), 1)
 
     def test_one_shot_move_validates_lifecycle_order_and_selected_mask(self) -> None:
         """Rejects reordered, duplicated, or out-of-scope lifecycle output."""
@@ -524,6 +546,95 @@ class AethorTextSimulatorTests(unittest.TestCase):
                     [f"error {case_index} bench move "
                      f"code=bad_argument field={field_name}"],
                 )
+
+    def test_real_simulator_legacy_motor_lists_require_strict_ascending_order(
+            self) -> None:
+        """Rejects unordered legacy masks while preserving move caller order."""
+        legacy_requests = (
+            (90, "init", ""),
+            (91, "enable", ""),
+            (92, "jog", " delta=4 speed=4"),
+            (93, "stop", ""),
+            (94, "disable", ""),
+            (95, "clear", ""),
+        )
+        for request_id, operation, fields in legacy_requests:
+            with self.subTest(operation=operation):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                self.assertEqual(
+                    simulator.process_line(encode_line(
+                        f"{request_id} bench {operation} 3,1{fields}")),
+                    [f"error {request_id} bench {operation} "
+                     "code=bad_argument field=motors"],
+                )
+
+        self.assertEqual(
+            self.request("96 bench move 3,1 position=-45,90 speed=20,30"),
+            ["ok 96 bench move accepted=1"],
+        )
+        self.assertEqual(self.simulator.active_motion.target_deg[2], -45.0)
+        self.assertEqual(self.simulator.active_motion.target_deg[0], 90.0)
+
+    def test_real_simulator_legacy_jog_uses_firmware_numeric_grammar(self) -> None:
+        """Accepts unrestricted valid jog values and rejects exponent syntax."""
+        valid_jogs = (
+            (100, "delta=4 speed=4"),
+            (101, "delta=90 speed=30"),
+            (102, "delta=0 speed=30"),
+            (103, "delta=-90 speed=30"),
+        )
+        for request_id, fields in valid_jogs:
+            with self.subTest(fields=fields):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                self.assertEqual(
+                    simulator.process_line(encode_line(
+                        f"{request_id} bench jog 1 {fields}")),
+                    [f"ok {request_id} bench jog accepted=1"],
+                )
+
+        invalid_jogs = (
+            (104, "delta=1e-2 speed=1", "delta"),
+            (105, "delta=1 speed=1E2", "speed"),
+            (106, "delta=1 speed=1 extra=1", "delta"),
+        )
+        for request_id, fields, field_name in invalid_jogs:
+            with self.subTest(fields=fields):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                self.assertEqual(
+                    simulator.process_line(encode_line(
+                        f"{request_id} bench jog 1 {fields}")),
+                    [f"error {request_id} bench jog "
+                     f"code=bad_argument field={field_name}"],
+                )
+
+    def test_real_client_receives_move_limit_failures_as_terminals(self) -> None:
+        """Reports simulated discovered-limit failures after ACK and replays DONE."""
+        cases = (
+            ([800.0, 0.0], [30.0, 20.0],
+             "position_out_of_range", 3),
+            ([0.0, 0.0], [30.0, 1200.0],
+             "speed_out_of_range", 1),
+        )
+        for positions, speeds, expected_code, expected_motor in cases:
+            with self.subTest(code=expected_code):
+                transport = SimulatorTransport()
+                client = AethorReferenceClient(transport)
+                result = client.bench_move_once(
+                    [3, 1], positions, speeds)
+                self.assertEqual(result.result, "failed")
+                self.assertEqual(result.stage, "validate")
+                self.assertEqual(result.code, expected_code)
+                self.assertEqual(result.motor, expected_motor)
+                self.assertEqual(client.transcript[1],
+                                 "< ok 1 bench move accepted=1")
+                self.assertEqual(client.transcript[2], f"< {result.raw_line}")
+                request_body = client.transcript[0][2:]
+                self.assertEqual(
+                    transport.simulator.process_line(encode_line(request_body)),
+                    [result.raw_line],
+                )
+                self.assertIsNone(transport.simulator.active_motion)
+                self.assertEqual(transport.simulator.motor_enabled_mask, 0)
 
     def test_real_simulator_stop_preempts_move_and_replays_terminals(self) -> None:
         """Cancels one move before completing STOP with the union motor mask."""

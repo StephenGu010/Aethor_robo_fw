@@ -297,6 +297,14 @@ static void test_motor_runtime_builds_position_velocity_subset_atomically(void)
                &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
                &batch) == MOTOR_RUNTIME_STATUS_OK);
     assert(batch.count == 2U);
+    assert(batch.frames[0].identifier == 0x101U);
+    assert(batch.frames[1].identifier == 0x103U);
+    assert(memcmp(&batch.frames[0].data[4],
+                  &(float){0.0F},
+                  sizeof(float)) == 0);
+    assert(memcmp(&batch.frames[1].data[4],
+                  &(float){0.0F},
+                  sizeof(float)) == 0);
 
     memset(&batch, 0xA5, sizeof(batch));
     motor_position_rad[2] = 1.76F;
@@ -311,6 +319,14 @@ static void test_motor_runtime_builds_position_velocity_subset_atomically(void)
     assert(motor_runtime_build_position_velocity_subset(
                &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
                &batch) == MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    motor_speed_rad_s[2] = -0.1F;
+    assert(motor_runtime_build_position_velocity_subset(
+               &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
+               &batch) == MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(batch.count == 0U);
     assert_motor_frame_batch_is_zeroed(&batch);
 }
 

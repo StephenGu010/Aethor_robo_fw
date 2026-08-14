@@ -475,6 +475,112 @@ class AethorTextSimulatorTests(unittest.TestCase):
         self.assertEqual(accepted, ["ok 50 bench move accepted=1"])
         self.assertEqual(busy, ["error 51 bench move code=busy"])
 
+    def test_real_simulator_move_numbers_match_strict_firmware_decimal_syntax(
+            self) -> None:
+        """Mirrors firmware decimal grammar and its 63-character token limit."""
+        sixty_three_character_number = ("0" * 62) + "1"
+        sixty_four_character_number = ("0" * 63) + "1"
+        self.assertEqual(len(sixty_three_character_number), 63)
+        self.assertEqual(len(sixty_four_character_number), 64)
+
+        accepted_positions = (
+            sixty_three_character_number,
+            "+1",
+            "-1",
+            ".5",
+            "5.",
+            "+.5",
+            "-.5",
+        )
+        for case_index, position_token in enumerate(accepted_positions, 70):
+            with self.subTest(position=position_token):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                self.assertEqual(
+                    simulator.process_line(encode_line(
+                        f"{case_index} bench move 1 "
+                        f"position={position_token} speed=1")),
+                    [f"ok {case_index} bench move accepted=1"],
+                )
+
+        invalid_fields = (
+            ("position", "1e-10"),
+            ("speed", "1E-10"),
+            ("position", sixty_four_character_number),
+            ("speed", sixty_four_character_number),
+            ("position", "."),
+            ("position", "+."),
+            ("position", "--1"),
+        )
+        for case_index, (field_name, numeric_token) in enumerate(
+                invalid_fields, 80):
+            with self.subTest(field=field_name, token=numeric_token):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                position_token = numeric_token if field_name == "position" else "0"
+                speed_token = numeric_token if field_name == "speed" else "1"
+                self.assertEqual(
+                    simulator.process_line(encode_line(
+                        f"{case_index} bench move 1 "
+                        f"position={position_token} speed={speed_token}")),
+                    [f"error {case_index} bench move "
+                     f"code=bad_argument field={field_name}"],
+                )
+
+    def test_real_simulator_stop_preempts_move_and_replays_terminals(self) -> None:
+        """Cancels one move before completing STOP with the union motor mask."""
+        self.assertEqual(
+            self.request("50 bench move 1 position=90 speed=30"),
+            ["ok 50 bench move accepted=1"],
+        )
+        self.assertEqual(
+            self.request("51 bench stop 3"),
+            ["ok 51 bench stop accepted=1"],
+        )
+        expected_terminals = [
+            "done 50 bench move result=cancelled",
+            "done 51 bench stop result=stopped stopped=05",
+        ]
+        self.assertEqual(self.simulator.drain_outputs(), expected_terminals)
+        self.assertIsNone(self.simulator.active_motion)
+        self.assertEqual(self.simulator.motor_enabled_mask, 0)
+
+        self.assertEqual(
+            self.request("50 bench move 1 position=90 speed=30"),
+            [expected_terminals[0]],
+        )
+        self.assertEqual(self.request("51 bench stop 3"),
+                         [expected_terminals[1]])
+        self.assertEqual(
+            self.request("51 bench stop 2"),
+            ["error 51 bench stop code=request_conflict"],
+        )
+        self.assertEqual(self.simulator.drain_outputs(), [])
+
+    def test_real_simulator_stop_without_move_has_one_replayable_terminal(
+            self) -> None:
+        """Completes and replays one standalone STOP without cancellation output."""
+        self.assertEqual(self.request("60 bench stop 2"),
+                         ["ok 60 bench stop accepted=1"])
+        terminal = "done 60 bench stop result=stopped stopped=02"
+        self.assertEqual(self.simulator.drain_outputs(), [terminal])
+        self.assertEqual(self.request("60 bench stop 2"), [terminal])
+        self.assertEqual(self.simulator.drain_outputs(), [])
+
+    def test_real_simulator_stop_preserves_legacy_jog_terminal_schema(self) -> None:
+        """Cancels an active legacy jog without mislabeling it as bench move."""
+        self.assertEqual(
+            self.request("61 bench jog 1 delta=0.2 speed=1"),
+            ["ok 61 bench jog accepted=1"],
+        )
+        self.assertEqual(self.request("62 bench stop 3"),
+                         ["ok 62 bench stop accepted=1"])
+        self.assertEqual(
+            self.simulator.drain_outputs(),
+            [
+                "done 61 bench jog result=cancelled elapsed_ms=0 arrived=00",
+                "done 62 bench stop result=stopped stopped=05",
+            ],
+        )
+
     def test_manifest_vectors_client_and_simulator_share_public_tokens(self) -> None:
         """Cross-checks public command, size, token, and request-ID assets."""
         manifest_path = (PROJECT_ROOT / "docs" / "compatibility" /
@@ -508,6 +614,11 @@ class AethorTextSimulatorTests(unittest.TestCase):
         self.assertEqual(
             manifest["profiles"]["bench"]["move"]["float32_max"],
             reference_client.FLOAT32_MAX,
+        )
+        self.assertEqual(
+            manifest["profiles"]["bench"]["move"]
+                    ["numeric_token_max_characters"],
+            simulator_module.AETHOR_TEXT_MAX_FLOAT_TOKEN_CHARACTERS,
         )
         for vector in vectors["bench_move_build_cases"]:
             self.assertGreater(vector["request_id"], 0, vector["name"])

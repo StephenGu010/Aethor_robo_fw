@@ -157,13 +157,43 @@ static void test_text_protocol_float_conversion_is_strict(void)
     static const char scientific_text[] = "1e2";
     static const char nan_text[] = "nan";
     static const char signed_decimal_text[] = "-3.25";
+    static const char positive_fraction_text[] = "+.5";
+    static const char trailing_decimal_text[] = "5.";
+    static const char decimal_point_only_text[] = ".";
     TextProtocolSpan scientific = {scientific_text, sizeof(scientific_text) - 1U};
     TextProtocolSpan nan_value = {nan_text, sizeof(nan_text) - 1U};
     TextProtocolSpan signed_decimal = {
         signed_decimal_text,
         sizeof(signed_decimal_text) - 1U
     };
+    TextProtocolSpan positive_fraction = {
+        positive_fraction_text,
+        sizeof(positive_fraction_text) - 1U
+    };
+    TextProtocolSpan trailing_decimal = {
+        trailing_decimal_text,
+        sizeof(trailing_decimal_text) - 1U
+    };
+    TextProtocolSpan decimal_point_only = {
+        decimal_point_only_text,
+        sizeof(decimal_point_only_text) - 1U
+    };
+    char maximum_token[64];
+    char overlength_token[65];
+    TextProtocolSpan maximum_length_decimal;
+    TextProtocolSpan overlength_decimal;
     float value = 0.0F;
+
+    memset(maximum_token, '0', sizeof(maximum_token));
+    maximum_token[62] = '1';
+    maximum_token[63] = '\0';
+    maximum_length_decimal.data = maximum_token;
+    maximum_length_decimal.length = 63U;
+    memset(overlength_token, '0', sizeof(overlength_token));
+    overlength_token[63] = '1';
+    overlength_token[64] = '\0';
+    overlength_decimal.data = overlength_token;
+    overlength_decimal.length = 64U;
 
     assert(text_protocol_span_to_float(&scientific, &value) ==
            TEXT_PROTOCOL_STATUS_BAD_NUMBER);
@@ -172,6 +202,19 @@ static void test_text_protocol_float_conversion_is_strict(void)
     assert(text_protocol_span_to_float(&signed_decimal, &value) ==
            TEXT_PROTOCOL_STATUS_OK);
     assert(value == -3.25F);
+    assert(text_protocol_span_to_float(&positive_fraction, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 0.5F);
+    assert(text_protocol_span_to_float(&trailing_decimal, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 5.0F);
+    assert(text_protocol_span_to_float(&decimal_point_only, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
+    assert(text_protocol_span_to_float(&maximum_length_decimal, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 1.0F);
+    assert(text_protocol_span_to_float(&overlength_decimal, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
 }
 
 /**

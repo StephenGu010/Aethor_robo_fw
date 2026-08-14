@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import struct
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -11,10 +12,44 @@ ALL_MOTORS_MASK = 0x7F
 REPLAY_CAPACITY = 32
 REPLAY_RETENTION_MS = 60_000
 AETHOR_TEXT_MAX_REQUEST_BODY_BYTES = 160
+AETHOR_TEXT_MAX_FLOAT_TOKEN_CHARACTERS = 63
 FLOAT32_MIN_NORMAL = 1.1754943508222875e-38
 FLOAT32_MAX = 3.4028234663852886e38
 SIMULATED_PMAX_DEG = 180.0
 SIMULATED_MOVE_SPEED_LIMIT_DEG_S = 360.0
+
+
+def parse_strict_float32_token(token: str) -> tuple[str, float]:
+    """Parses one decimal token with the firmware's 64-byte float buffer rules."""
+    if not token or len(token) > AETHOR_TEXT_MAX_FLOAT_TOKEN_CHARACTERS:
+        return "bad_argument", 0.0
+    index = 1 if token[0] in "+-" else 0
+    digit_seen = False
+    decimal_point_seen = False
+    for character in token[index:]:
+        if "0" <= character <= "9":
+            digit_seen = True
+        elif character == "." and not decimal_point_seen:
+            decimal_point_seen = True
+        else:
+            return "bad_argument", 0.0
+    if not digit_seen:
+        return "bad_argument", 0.0
+    try:
+        numeric_value = float(token)
+        if (not math.isfinite(numeric_value) or
+                (numeric_value != 0.0 and
+                 (abs(numeric_value) < FLOAT32_MIN_NORMAL or
+                  abs(numeric_value) > FLOAT32_MAX))):
+            return "bad_argument", 0.0
+        float32_value = struct.unpack("!f", struct.pack("!f", numeric_value))[0]
+    except (OverflowError, TypeError, ValueError, struct.error):
+        return "bad_argument", 0.0
+    if (not math.isfinite(float32_value) or
+            (float32_value != 0.0 and
+             abs(float32_value) < FLOAT32_MIN_NORMAL)):
+        return "bad_argument", 0.0
+    return "ok", float32_value
 
 
 def encode_line(body: str) -> bytes:
@@ -86,24 +121,18 @@ class AethorTextSimulator:
         if len(tokens) != expected_count:
             return "count_mismatch", []
         values: list[float] = []
-        try:
-            for token in tokens:
-                numeric_value = float(token)
-                if not math.isfinite(numeric_value):
-                    return "bad_argument", []
-                if numeric_value == 0.0:
-                    if allow_zero:
-                        values.append(0.0)
-                        continue
-                    return "out_of_range", []
-                if (abs(numeric_value) < FLOAT32_MIN_NORMAL or
-                        abs(numeric_value) > FLOAT32_MAX):
-                    return "bad_argument", []
-                if not allow_zero and numeric_value < 0.0:
-                    return "out_of_range", []
-                values.append(numeric_value)
-        except (OverflowError, TypeError, ValueError):
-            return "bad_argument", []
+        for token in tokens:
+            parse_status, numeric_value = parse_strict_float32_token(token)
+            if parse_status != "ok":
+                return parse_status, []
+            if numeric_value == 0.0:
+                if allow_zero:
+                    values.append(0.0)
+                    continue
+                return "out_of_range", []
+            if not allow_zero and numeric_value < 0.0:
+                return "out_of_range", []
+            values.append(numeric_value)
         return "ok", values
 
     @staticmethod
@@ -215,6 +244,11 @@ class AethorTextSimulator:
         """Returns and clears asynchronous done, event, and data outputs."""
         outputs = list(self._pending_outputs)
         self._pending_outputs.clear()
+        for output in outputs:
+            tokens = output.split(maxsplit=3)
+            if (len(tokens) >= 2 and tokens[0] == "done" and
+                    tokens[1].isascii() and tokens[1].isdigit()):
+                self._replace_replay_with_done(int(tokens[1], 10), output)
         return outputs
 
     def _show(self, request_id: int, target: str, positionals: list[str]) -> list[str]:
@@ -326,9 +360,26 @@ class AethorTextSimulator:
                 list(self.joint_position_deg), target)
             return [accepted]
         elif operation == "stop":
+            effective_mask = mask
+            if self.active_motion is not None:
+                cancelled_motion = self.active_motion
+                effective_mask |= cancelled_motion.selected_mask
+                if cancelled_motion.namespace == "bench_move":
+                    cancelled = (f"done {cancelled_motion.request_id} "
+                                 "bench move result=cancelled")
+                else:
+                    elapsed_ms = self.now_ms - cancelled_motion.start_ms
+                    cancelled = (f"done {cancelled_motion.request_id} bench jog "
+                                 f"result=cancelled elapsed_ms={elapsed_ms} "
+                                 "arrived=00")
+                self._pending_outputs.append(cancelled)
+                self._replace_replay_with_done(
+                    cancelled_motion.request_id, cancelled)
             self.active_motion = None
             self.joint_velocity_deg_s = [0.0] * JOINT_COUNT
-            done = f"done {request_id} bench stop result=stopped enabled={mask:02x}"
+            self.motor_enabled_mask &= ~effective_mask
+            done = (f"done {request_id} bench stop result=stopped "
+                    f"stopped={effective_mask:02x}")
         elif operation == "disable":
             self.motor_enabled_mask &= ~mask
             done = f"done {request_id} bench disable result=completed enabled=00"

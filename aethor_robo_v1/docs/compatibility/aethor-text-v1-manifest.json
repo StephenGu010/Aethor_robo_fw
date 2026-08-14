@@ -38,6 +38,8 @@
         "mapping": "motor, position, and speed lists have equal nonzero length and map by list order; no broadcasting",
         "motors": "unique integers from 1 through 7",
         "numbers": "plain decimal normal IEEE-754 float32 values; position may also be zero and speed must be greater than zero",
+        "numeric_syntax": "optional leading plus or minus, digits with at most one decimal point, at least one digit, and no exponent",
+        "numeric_token_max_characters": 63,
         "float32_min_normal": 1.1754943508222875e-38,
         "float32_max": 3.4028234663852886e38,
         "position_limit": "abs(position_deg) <= discovered PMAX converted to degrees",

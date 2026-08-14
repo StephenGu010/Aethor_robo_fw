@@ -14,11 +14,17 @@
 #define BOARD_ARM_ID "arm-01"
 #define BOARD_MCU_PART_NUMBER "STM32H723VGT6"
 #define BOARD_FDCAN_NOMINAL_BITRATE (1000000UL)
-#define BOARD_FORMAL_UART_BAUDRATE (921600UL)
-#define BOARD_FORMAL_UART_DATA_BITS (8U)
-#define BOARD_FORMAL_UART_STOP_BITS (1U)
-#define BOARD_FORMAL_UART_PARITY_NONE (1U)
-#define BOARD_FORMAL_UART_VALIDATED (0U)
+
+/**
+ * @brief Identifies the physical transport that carries the formal protocol.
+ */
+typedef enum
+{
+    BOARD_SERIAL_TRANSPORT_USB_CDC = 1U
+} BoardSerialTransport;
+
+#define BOARD_FORMAL_SERIAL_TRANSPORT BOARD_SERIAL_TRANSPORT_USB_CDC
+#define BOARD_USB_CDC_VALIDATED (0U)
 
 #if ARM_JOINT_COUNT != 7U
 #error "The Aethor arm firmware contract requires exactly seven joints."

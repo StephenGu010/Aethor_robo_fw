@@ -1,0 +1,38 @@
+{
+  "protocol": "aethor-text-v1",
+  "profile": "bench",
+  "lines": [
+    {
+      "name": "numbered_hello",
+      "request": "1 hello\n",
+      "response": "ok 1 hello protocol=aethor-text-v1 fw=sim-1 profile=bench dof=7 boot=1234 watchdog_ms=1000"
+    },
+    {
+      "name": "manual_state",
+      "request": "show state\r\n",
+      "response": "ok 0 show state state=unaligned aligned=0 enabled=00 moving=0 active=0 fault=none"
+    },
+    {
+      "name": "normalized_case_and_spaces",
+      "request": "7   PING\n",
+      "response": "ok 7 ping state=unaligned enabled=00 boot=1234"
+    },
+    {
+      "name": "bad_character",
+      "request": "show\tstate\n",
+      "response": "error 0 parse code=bad_line"
+    }
+  ],
+  "byte_stream_cases": [
+    {
+      "name": "fragmented_hello",
+      "chunks_ascii": ["1 hel", "lo\n"],
+      "responses": ["ok 1 hello protocol=aethor-text-v1 fw=sim-1 profile=bench dof=7 boot=1234 watchdog_ms=1000"]
+    },
+    {
+      "name": "concatenated_queries",
+      "chunks_ascii": ["show state\nping\n"],
+      "response_prefixes": ["ok 0 show state ", "ok 0 ping "]
+    }
+  ]
+}

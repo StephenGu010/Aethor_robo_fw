@@ -13,19 +13,20 @@
 #define ARM_UNVERIFIED_JOINT(joint_number, esc_identifier, master_identifier) \
     {                                                                         \
         (joint_number), (esc_identifier), (master_identifier), 0,             \
-        0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0U      \
+        0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F,         \
+        0.0F, 0.0F, 0U                                                       \
     }
 
 static const ArmConfig production_configuration = {
     ARM_JOINT_COUNT,
     {
-        ARM_UNVERIFIED_JOINT(0U, 1U, 11U),
-        ARM_UNVERIFIED_JOINT(1U, 2U, 12U),
-        ARM_UNVERIFIED_JOINT(2U, 3U, 13U),
-        ARM_UNVERIFIED_JOINT(3U, 4U, 14U),
-        ARM_UNVERIFIED_JOINT(4U, 5U, 15U),
-        ARM_UNVERIFIED_JOINT(5U, 6U, 16U),
-        ARM_UNVERIFIED_JOINT(6U, 7U, 17U)
+        ARM_UNVERIFIED_JOINT(0U, 1U, 0x11U),
+        ARM_UNVERIFIED_JOINT(1U, 2U, 0x12U),
+        ARM_UNVERIFIED_JOINT(2U, 3U, 0x13U),
+        ARM_UNVERIFIED_JOINT(3U, 4U, 0x14U),
+        ARM_UNVERIFIED_JOINT(4U, 5U, 0x15U),
+        ARM_UNVERIFIED_JOINT(5U, 6U, 0x16U),
+        ARM_UNVERIFIED_JOINT(6U, 7U, 0x17U)
     }
 };
 
@@ -143,6 +144,19 @@ static void arm_config_validate_verified_values(const JointConfig *joint,
          (joint->gear_ratio <= 0.0F)))
     {
         arm_config_record_error(validation, ARM_CONFIG_ERROR_GEAR_RATIO, joint_index);
+    }
+
+    if ((verified_fields & ARM_JOINT_VERIFIED_COMPLETION_TOLERANCE) != 0U)
+    {
+        if (!arm_config_float_is_finite(joint->position_tolerance_rad) ||
+            !arm_config_float_is_finite(joint->velocity_tolerance_rad_s) ||
+            (joint->position_tolerance_rad <= 0.0F) ||
+            (joint->velocity_tolerance_rad_s <= 0.0F))
+        {
+            arm_config_record_error(validation,
+                                    ARM_CONFIG_ERROR_COMPLETION_TOLERANCE,
+                                    joint_index);
+        }
     }
 }
 

@@ -26,6 +26,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "aethor_app.h"
+#include "arm_config.h"
+#include "stm32_platform.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,6 +55,7 @@
 void SystemClock_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
+static uint32_t CreateBootId(void);
 
 /* USER CODE END PFP */
 
@@ -101,7 +104,8 @@ int main(void)
   MX_FDCAN2_Init();
   MX_FDCAN3_Init();
   /* USER CODE BEGIN 2 */
-  aethor_app_init((uint64_t)HAL_GetTick() * 1000ULL);
+  (void)stm32_platform_init(arm_config_get_production());
+  aethor_app_init((uint64_t)HAL_GetTick() * 1000ULL, CreateBootId());
   /* USER CODE END 2 */
 
   /* Call init function for freertos objects (in cmsis_os2.c) */
@@ -183,6 +187,22 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+  * @brief  Creates a nonzero per-boot correlation identifier from local MCU state.
+  * @retval Nonzero boot identifier used by the serial protocol.
+  */
+static uint32_t CreateBootId(void)
+{
+  uint32_t bootId = HAL_GetUIDw0() ^ HAL_GetUIDw1() ^ HAL_GetUIDw2() ^
+                    HAL_GetTick() ^ SysTick->VAL ^ DWT->CYCCNT ^ 0xA37E2026UL;
+
+  if (bootId == 0U)
+  {
+    bootId = 1U;
+  }
+  return bootId;
+}
 
 /* USER CODE END 4 */
 

@@ -1,27 +1,30 @@
 # Aethor 七自由度机械臂固件
 
-当前分支实现 PRD Phase 0 安全基线：STM32H723 工程已经切换到静态内存的 `App/` 分层入口，启动状态固定为 `BOOT → SELF_TEST → FAULT(CONFIG_INCOMPLETE)`。由于真实机械参数尚未完成逐轴验证，本固件不会进入使能或运动状态，也没有可执行的电机发送接口。
+当前分支已经实现 PRD 首组七自由度机械臂的固件软件与上位机兼容性测试包：电脑通过板卡 Type-C USB CDC 发送 `aethor-arm-ascii-v1` 指令，可按正式整组或台架显式子集控制 S3519 电机。真实机械、电气和驱动参数仍未逐轴验证，因此默认台架 Profile 只开放 `±3°`、不超过 `3°/s` 的显式选轴相对控制；生产 Profile 继续锁定真实使能。
 
 ## 当前入口与范围
 
-- 正式入口：`App/aethor_app.c`，由 `main.c` 初始化、FreeRTOS 默认任务每 4 ms 服务一次。
-- 默认任务：CubeMX 静态创建，栈缓冲区为 512 words。
-- 关节模型：固定 7 轴；ESC ID 为 1–7，Master ID 为 11–17。
+- 正式入口：`App/aethor_app.c`，由 6 个静态 FreeRTOS 任务分别承担 250 Hz 控制、CAN RX、协议、USB TX、遥测和诊断。
+- 关节模型：固定7轴；ESC ID为`0x01–0x07`，Master ID为`0x11–0x17`。
 - 物理参数：方向、零位/限位、速度、加速度、MIT 增益、电机量程和外部减速比均保持未验证状态，因此配置不能通过使能就绪检查。
 - 旧验证代码：`User/` 原样保留作为迁移参考，但旧按键双电机和旧七轴控制链不进入当前 Keil 目标。
-- 本阶段未实现：正式 UART 协议、电机控制、同步轨迹、DH 正逆解、RGB 和上位机业务逻辑。
+- 正式传输：板卡Type-C USB CDC虚拟串口；USART不作为第二套正式协议入口。
+- 当前默认配置：`USB_BENCH_RELATIVE`，允许 `INIT_MOTORS/ENABLE/MOVE_REL/STOP/DISABLE/CLEAR_FAULT` 显式选取一个或多个电机；未选电机不变。
+- `ARM_PRODUCTION` 已实现参考位、整组 POS_VEL、MIT 五次时间标度、受控停止、反馈确认、故障和通信看门狗，但需全部参数验证位有效才可真实使能。
+- STM32 只执行关节空间控制。DH/URDF、逆运动学、笛卡尔控制、动力学和碰撞规划不在固件范围内。
+- 首组 `arm-1` 完成；第二组只保留 `controller_id/arm_id` 扩展边界，尚未实现双会话。
 
 ## 分层目录
 
 ```text
 App/
 ├─ Config/       七轴只读配置、构建身份、验证位
-├─ Protocol/     上位机协议边界，Phase 0 不执行命令
-├─ Arm/          状态唯一所有者与启动自检
-├─ Motion/       运动类型边界，不生成设定值
-├─ Motor/        电机类型边界，不发送 CAN 帧
-├─ Telemetry/    固定容量事件环与诊断计数
-└─ Platform/     HAL/RTOS/FDCAN/UART 适配契约
+├─ Protocol/     会话、CRC、请求重放、命令和遥测
+├─ Arm/          状态唯一所有者、参考位和安全门控
+├─ Motion/       POS_VEL、MIT 五次时间标度和受控停止
+├─ Motor/        S3519 编解码、七电机发现、反馈和 CAN 调度
+├─ Telemetry/    256 项固定事件环与运行诊断
+└─ Platform/     HAL/RTOS/FDCAN/USB CDC适配契约
 ```
 
 核心业务层不包含 HAL、FreeRTOS 或 USB/FDCAN 头文件；`App/` 禁止动态分配。架构规则由脚本持续检查。
@@ -31,6 +34,11 @@ App/
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_phase0_tests.ps1
 powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_protocol_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_motor_core_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_platform_io_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_motion_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_simulator_tests.ps1
 powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\check_phase0_architecture.ps1
 ```
 
@@ -38,18 +46,18 @@ Keil 工程：`MDK-ARM\CtrBoard-H7_FDCAN.uvprojx`
 
 CubeMX 工程：`CtrBoard-H7_FDCAN.ioc`
 
-最近一次 ARMCC 5 构建结果为 `0 Error(s), 0 Warning(s)`；该结果只证明源码和工程配置能够生成固件，不证明 USB、CAN、电机、关节方向、限位、减速比或运动精度已通过实机验证。详细证据与交接说明见 `docs/handoffs/phase-00/`。
+最近一次 ARMCC 5 构建结果为 `0 Error(s), 0 Warning(s)`。兼容性 Schema、Golden Frames、模拟器、参考客户端和外部验收模板见 `docs/compatibility/`。软件构建和模拟结果不证明 USB、CAN、电机、关节方向、限位、减速比或运动精度已通过实机验证。
 
 ## 后续入口
 
-Phase 1 应先建立参数来源、审核和逐轴确认机制，再迁移 DM3520/S3519 参数读取与反馈解码。任何运动功能都必须等配置验证位、单轴台架验收和安全条件满足后才能接入。
+下一入口是按 `Tests/hardware/` 的脚本执行 USB CDC、安全隔离单轴和七轴硬件验收：先确认真实 CAN/Master ID、量程、方向、参考位、限位和反馈查询，再逐轴解锁；不得直接进行七轴同时使能。Aethor Studio V2 仍需用共享兼容性包做外部契约验收。
 
 <details>
 <summary>历史 PA15 双电机验证资料（保留源码参考，不是当前固件入口）</summary>
 
 # Aethor STM32H723 S3519 电机控制固件
 
-本工程以 STM32H723VGT6、FreeRTOS、USB CDC 和 FDCAN1 为基础。当前运行入口由 PA15 按键触发两台 S3519 各转一圈，方向优先正反交替，并在首选方向超过 PMAX 时自动改选两台共同安全的反方向；USB CDC 只承担查询和探针输出。原七轴关节控制模块仍保留，但当前不参与运行。
+该历史镜像以STM32H723VGT6、FreeRTOS、USB CDC和FDCAN1为基础，运行入口曾由PA15按键触发两台S3519各转一圈；它保留为迁移与回归证据，不是当前生产入口。
 
 > 当前烧录目标为 PA15 双电机按键演示：第一次有效按下优先增加 `2π rad`；若任一电机的正向目标超过 PMAX，则自动改为两台同时减少 `2π rad`。后续按键优先与上次反向，并在必要时选择共同安全方向。速度上限为 `0.5 rad/s`，每圈到达后保持。
 

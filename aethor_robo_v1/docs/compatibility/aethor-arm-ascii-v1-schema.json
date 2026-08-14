@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "aethor-arm-ascii-v1 compatibility manifest",
+  "protocol": "aethor-arm-ascii-v1",
+  "transport": {
+    "production": "USB_CDC",
+    "encoding": "ASCII",
+    "line_terminators": ["LF", "CRLF"],
+    "maximum_line_bytes": 512,
+    "crc": "CRC-16/CCITT-FALSE",
+    "crc_parameters": {
+      "polynomial": "0x1021",
+      "initial": "0xFFFF",
+      "reflect_input": false,
+      "reflect_output": false,
+      "xor_output": "0x0000"
+    }
+  },
+  "identity": {
+    "controller_id": "ctrboard-h7",
+    "arm_id": "arm-1",
+    "joint_count": 7,
+    "esc_ids_hex": ["01", "02", "03", "04", "05", "06", "07"],
+    "master_ids_hex": ["11", "12", "13", "14", "15", "16", "17"],
+    "second_arm": "reserved-not-implemented"
+  },
+  "frame_types": ["REQ", "ACK", "RSP", "ERR", "EVT", "TEL", "DONE"],
+  "formal_commands": [
+    "HELLO",
+    "HEARTBEAT",
+    "GET_INFO",
+    "GET_CONFIG",
+    "GET_STATE",
+    "GET_JPOS",
+    "GET_MOTORS",
+    "GET_DIAG",
+    "SET_STREAM",
+    "ALIGN_REFERENCE",
+    "SET_MODE",
+    "ENABLE",
+    "MOVE_JOINTS",
+    "STOP",
+    "DISABLE",
+    "CLEAR_FAULT"
+  ],
+  "bench_only_commands": ["INIT_MOTORS", "MOVE_REL"],
+  "profiles": {
+    "USB_BENCH_RELATIVE": {
+      "partial_motor_population": true,
+      "explicit_motor_subset_required": true,
+      "maximum_absolute_delta_deg": 3.0,
+      "maximum_speed_deg_s": 3.0
+    },
+    "ARM_PRODUCTION": {
+      "all_seven_motors_required": true,
+      "all_physical_fields_verified_before_enable": true,
+      "joint_space_only": true
+    }
+  },
+  "stream": {
+    "rate_hz_min": 0,
+    "rate_hz_max": 100,
+    "default_joint_state_hz": 50,
+    "motor_state_hz": 10,
+    "replacement_policy": "drop-old-keep-latest"
+  },
+  "lifecycle": {
+    "heartbeat_period_ms": 250,
+    "watchdog_timeout_ms": 1000,
+    "watchdog_action": "STOP_DISABLE",
+    "recent_result_capacity": 32,
+    "recent_result_retention_ms": 60000
+  },
+  "excluded": [
+    "inverse_kinematics",
+    "cartesian_control",
+    "dynamics",
+    "collision_planning",
+    "DH_or_URDF_computation_on_STM32"
+  ]
+}

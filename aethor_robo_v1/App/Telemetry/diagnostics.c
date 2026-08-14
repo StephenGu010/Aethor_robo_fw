@@ -37,6 +37,10 @@ void diagnostics_init(Diagnostics *diagnostics)
     diagnostics->next_sequence = 1U;
     diagnostics->counters.minimum_stack_words = DIAGNOSTIC_WATERMARK_NOT_SAMPLED;
     diagnostics->counters.minimum_heap_bytes = DIAGNOSTIC_WATERMARK_NOT_SAMPLED;
+    diagnostics->counters.control_period_min_us =
+        DIAGNOSTIC_WATERMARK_NOT_SAMPLED;
+    diagnostics->counters.control_group_skew_max_us =
+        DIAGNOSTIC_WATERMARK_NOT_SAMPLED;
 }
 
 /**
@@ -77,6 +81,7 @@ bool diagnostics_push(Diagnostics *diagnostics,
         diagnostics->head = (uint16_t)((diagnostics->head + 1U) %
                                        DIAGNOSTICS_CAPACITY);
         diagnostics_increment_saturating(&diagnostics->dropped_count);
+        diagnostics->counters.event_overwrite_count = diagnostics->dropped_count;
     }
 
     event = &diagnostics->events[write_index];
@@ -168,4 +173,87 @@ void diagnostics_record_config_validation_failure(Diagnostics *diagnostics)
         diagnostics_increment_saturating(
             &diagnostics->counters.config_validation_failures);
     }
+}
+
+/**
+ * @brief Records one observed ArmControlTask start-to-start period.
+ */
+void diagnostics_record_control_period(Diagnostics *diagnostics,
+                                       uint32_t period_us)
+{
+    DiagnosticCounters *counters;
+
+    if ((diagnostics == NULL) || (period_us == 0U))
+    {
+        return;
+    }
+    counters = &diagnostics->counters;
+    counters->control_period_last_us = period_us;
+    if ((counters->control_period_min_us == DIAGNOSTIC_WATERMARK_NOT_SAMPLED) ||
+        (period_us < counters->control_period_min_us))
+    {
+        counters->control_period_min_us = period_us;
+    }
+    if (period_us > counters->control_period_max_us)
+    {
+        counters->control_period_max_us = period_us;
+    }
+    if (period_us > 4000U)
+    {
+        diagnostics_increment_saturating(
+            &counters->control_deadline_miss_count);
+        diagnostics_increment_saturating(
+            &counters->control_consecutive_miss_count);
+        if (counters->control_consecutive_miss_max <
+            counters->control_consecutive_miss_count)
+        {
+            counters->control_consecutive_miss_max =
+                counters->control_consecutive_miss_count;
+        }
+    }
+    else
+    {
+        counters->control_consecutive_miss_count = 0U;
+    }
+}
+
+/**
+ * @brief Replaces sampled transport/resource values with a coherent snapshot.
+ */
+void diagnostics_update_runtime_sample(
+    Diagnostics *diagnostics,
+    const RuntimeDiagnosticSample *sample)
+{
+    DiagnosticCounters *counters;
+
+    if ((diagnostics == NULL) || (sample == NULL))
+    {
+        return;
+    }
+    counters = &diagnostics->counters;
+    counters->can_rx_frames = sample->can_rx_frames;
+    counters->can_tx_frames = sample->can_tx_frames;
+    counters->can_rx_overflow_count = sample->can_rx_overflow_count;
+    counters->can_tx_error_count = sample->can_tx_error_count;
+    counters->can_bus_off_count = sample->can_bus_off_count;
+    counters->can_tx_queue_high_watermark =
+        sample->can_tx_queue_high_watermark;
+    counters->control_group_reject_count =
+        sample->control_group_reject_count;
+    counters->usb_rx_bytes = sample->usb_rx_bytes;
+    counters->usb_rx_overflow_count = sample->usb_rx_overflow_count;
+    counters->usb_overlong_line_count = sample->usb_overlong_line_count;
+    counters->usb_high_queue_high_watermark =
+        sample->usb_high_queue_high_watermark;
+    counters->usb_query_queue_high_watermark =
+        sample->usb_query_queue_high_watermark;
+    counters->usb_telemetry_queue_high_watermark =
+        sample->usb_telemetry_queue_high_watermark;
+    counters->usb_telemetry_drop_count = sample->usb_telemetry_drop_count;
+    counters->usb_high_queue_full_count = sample->usb_high_queue_full_count;
+    counters->usb_transmit_busy_count = sample->usb_transmit_busy_count;
+    counters->usb_transmit_error_count = sample->usb_transmit_error_count;
+    counters->control_group_skew_max_us = sample->control_group_skew_max_us;
+    counters->minimum_stack_words = sample->minimum_stack_words;
+    counters->minimum_heap_bytes = sample->minimum_heap_bytes;
 }

@@ -17,7 +17,7 @@ static const BuildInfo build_information = {
     AETHOR_GIT_DESCRIPTION,
     BOARD_CONTROLLER_ID,
     BOARD_ARM_ID,
-    "aethor-arm-ascii-v1"
+    "aethor-text-v1"
 };
 
 /**

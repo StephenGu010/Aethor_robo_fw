@@ -22,7 +22,7 @@
 #include "usbd_cdc_if.h"
 
 /* USER CODE BEGIN INCLUDE */
-#include "usb_cdc_transport.h"
+#include "stm32_platform.h"
 
 /* USER CODE END INCLUDE */
 
@@ -267,7 +267,7 @@ static int8_t CDC_Receive_HS(uint8_t* Buf, uint32_t *Len)
   /* USER CODE BEGIN 11 */
   if ((Buf != NULL) && (Len != NULL))
   {
-    (void)usb_cdc_transport_receive(Buf, *Len);
+    (void)stm32_platform_usb_receive_isr(Buf, *Len);
   }
   USBD_CDC_SetRxBuffer(&hUsbDeviceHS, UserRxBufferHS);
   USBD_CDC_ReceivePacket(&hUsbDeviceHS);
@@ -315,6 +315,7 @@ static int8_t CDC_TransmitCplt_HS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
   UNUSED(Buf);
   UNUSED(Len);
   UNUSED(epnum);
+  stm32_platform_usb_tx_complete_isr();
   /* USER CODE END 14 */
   return result;
 }

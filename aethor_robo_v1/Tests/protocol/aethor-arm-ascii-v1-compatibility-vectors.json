@@ -1,0 +1,44 @@
+{
+  "protocol": "aethor-arm-ascii-v1",
+  "crc": "CRC-16/CCITT-FALSE",
+  "frames": [
+    {
+      "type": "RSP",
+      "line": "RSP 1 ok boot_id=1234 session=1 controller_id=ctrboard-h7 arm_id=arm-1 capabilities=formal,bench,sim *A785\n"
+    },
+    {
+      "type": "ACK",
+      "line": "ACK 6 accepted motion_id=6 duration_ms=667 mode=MIT *B199\n"
+    },
+    {
+      "type": "DONE",
+      "line": "DONE 6 COMPLETED detail=0 *5DD9\n"
+    },
+    {
+      "type": "EVT",
+      "line": "EVT 1 LINK_TIMEOUT detail=elapsed_ms=1000,action=STOP_DISABLE *D5C0\n"
+    },
+    {
+      "type": "TEL",
+      "line": "TEL 1 JOINT_STATE timestamp_ms=20 q_deg=0.000,0.000,0.000,0.000,0.000,0.000,0.000 qd_deg_s=0.000,0.000,0.000,0.000,0.000,0.000,0.000 arm_state=READY *BEAE\n"
+    },
+    {
+      "type": "TEL",
+      "line": "TEL 2 MOTOR_STATE timestamp_ms=100 valid_mask=127 enabled_mask=127 fault_mask=0 arm_state=READY *B28B\n"
+    }
+  ],
+  "byte_stream_cases": [
+    {
+      "name": "fragmented_hello",
+      "chunks_ascii": ["REQ 1 H", "ELLO client=test protocol=1 *6B51\n"]
+    },
+    {
+      "name": "concatenated_queries",
+      "chunks_ascii": ["REQ 42 GET_JPOS *6B48\nREQ 2 GET_STATE *B1CB\n"]
+    },
+    {
+      "name": "bad_crc",
+      "chunks_ascii": ["REQ 42 GET_JPOS *0000\n"]
+    }
+  ]
+}

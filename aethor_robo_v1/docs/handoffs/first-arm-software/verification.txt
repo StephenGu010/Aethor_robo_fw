@@ -1,0 +1,65 @@
+Aethor first-arm software verification
+Date: 2026-08-13 Asia/Shanghai
+Branch: refactor/prd-phase-00
+
+Host and architecture results:
+- Tests/host/run_tests.ps1: HOST_TESTS_PASSED
+- Tests/host/run_phase0_tests.ps1: PHASE0_TESTS_PASSED
+- ARM_PRODUCTION compile test: PRODUCTION_PROFILE_TEST_PASSED
+- Tests/host/run_protocol_tests.ps1: PROTOCOL_TESTS_PASSED
+- Tests/host/run_motor_core_tests.ps1: MOTOR_CORE_TESTS_PASSED
+- Tests/host/run_platform_io_tests.ps1: PLATFORM_IO_TESTS_PASSED
+- Tests/host/run_motion_tests.ps1: MOTION_TESTS_PASSED
+- Tests/host/run_simulator_tests.ps1: 9 tests passed; SIMULATOR_TESTS_PASSED
+- Tests/host/check_phase0_architecture.ps1: all architecture contracts passed
+- git diff --check: passed; line-ending conversion warnings only
+
+Simulator logical soak:
+- Disabled telemetry: 8 logical hours, 1,440,000 JOINT_STATE periods at 50 Hz
+  plus 288,000 MOTOR_STATE periods at 10 Hz
+- Motion/stop/recovery: 2 logical hours, 4,800 completed moves,
+  2,400 stopped moves, 24 injected-fault recoveries
+- Replay cache stayed at or below 32 entries; pending telemetry stayed bounded
+- Fragmentation/reconnect stress: 2,000 requests, 54 bad-CRC frames, 10 sessions
+- This is accelerated logical time, not wall-clock or hardware soak evidence
+
+Keil full Rebuild:
+- Command: E:\keil\UV4\UV4.exe -r MDK-ARM\CtrBoard-H7_FDCAN.uvprojx -j0
+- Compiler: ARMCC V5.05 update 1 build 106
+- Result: 0 Error(s), 0 Warning(s)
+- Program Size: Code=71428 RO-data=3208 RW-data=476 ZI-data=92796
+- Keil FilePath references: 68 total, 0 missing
+
+Artifacts:
+- HEX: MDK-ARM\CtrBoard-H7_FDCAN\CtrBoard-H7_FDCAN.hex
+  Length: 210644 bytes
+  SHA-256: 22A9B09B4B76BEA081DED677F78473756F3A6E474EBB3083F4EDBC5DDDD27990
+- MAP: MDK-ARM\CtrBoard-H7_FDCAN\CtrBoard-H7_FDCAN.map
+  Length: 670995 bytes
+  SHA-256: 0AA6E9896A7FA5C0C71D239BCA04037B8F2BC1CE213A4A2415E81085B8D0BBAB
+- Build log: MDK-ARM\first-arm-final-rebuild.log
+  Length: 3121 bytes
+  SHA-256: 6838B3F449F99ED09DBD4A91B5873A8FBFB528F5B43ABE3C5E210E057C42A9D9
+
+Evidence boundary:
+- These results prove host software behavior and a reproducible STM32 image build.
+- Tests/host/test_com7_dual_motor_debug_script.ps1: COM7_DEBUG_SCRIPT_TESTS_PASSED.
+
+COM7 unloaded dual-motor hardware commissioning:
+- Port: COM7 USB CDC; protocol: aethor-arm-ascii-v1 with CRC-16/CCITT-FALSE.
+- Connected motors: CAN ID 1 / Master ID 0x11 and CAN ID 3 / Master ID 0x13.
+- Read-only discovery: INIT_MOTORS motors=1,3 completed; identity, mode, ranges,
+  and version masks all reached 0x05.
+- Progressive motion: CAN ID 1, CAN ID 3, then the 1+3 combination each completed
+  CLEAR_FAULT, ENABLE, MOVE_REL out/back at 0.2 deg and 1 deg/s, STOP, and DISABLE.
+- Final combined feedback: status=1,0,1,0,0,0,0; fault=0,0,0,0,0,0,0;
+  feedback age for IDs 1 and 3 was 11 ms / 7 ms; MOS temperature 36 C / 35 C;
+  rotor temperature 27 C / 27 C.
+- Final CAN diagnostics: rx=115, tx=149, rx_overflow=0, tx_error=0,
+  bus_off=0, control_group_reject=0.
+- Root causes found on hardware: undersized Protocol/Telemetry task stacks and a
+  signed DEC register value (-2.0) incorrectly rejected by discovery.
+- This proves only the unloaded two-motor COM7/CAN bench path. Production config
+  remains verified=0 with uncommissioned directions and joint limits. It does not
+  prove calibrated seven-axis motion, loaded mechanics, DH/URDF pose, hardware soak,
+  real-time full-bus load, or Aethor Studio V2 external compatibility.

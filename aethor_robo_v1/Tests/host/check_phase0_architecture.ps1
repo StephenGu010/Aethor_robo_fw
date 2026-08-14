@@ -65,12 +65,13 @@ function Invoke-Phase0ArchitectureCheck {
             Add-ArchitectureFailure -FailureList $failureList -Message "Dynamic allocation call found in $($applicationFile.FullName)."
         }
 
-        if ($applicationText -match $motorCommandPattern)
+        $relativeApplicationPath = $applicationFile.FullName.Substring($applicationPathPrefixLength)
+        if (($relativeApplicationPath -notlike 'Motor\*') -and
+            ($applicationText -match $motorCommandPattern))
         {
-            Add-ArchitectureFailure -FailureList $failureList -Message "Executable motor command found in $($applicationFile.FullName)."
+            Add-ArchitectureFailure -FailureList $failureList -Message "Motor command escaped App/Motor in $($applicationFile.FullName)."
         }
 
-        $relativeApplicationPath = $applicationFile.FullName.Substring($applicationPathPrefixLength)
         if (($relativeApplicationPath -notlike 'Platform\*') -and
             ($applicationText -match "(?m)$platformIncludePattern"))
         {
@@ -79,9 +80,20 @@ function Invoke-Phase0ArchitectureCheck {
     }
 
     $iocText = Get-Content -LiteralPath (Join-Path $projectRoot 'CtrBoard-H7_FDCAN.ioc') -Raw
-    Assert-TextContains -FailureList $failureList -Text $iocText `
-        -Pattern 'FREERTOS\.Tasks01=defaultTask,0,512,StartDefaultTask,Default,NULL,Static,defaultTaskBuffer,defaultTaskControlBlock' `
-        -Message 'CubeMX defaultTask is not configured for static allocation.'
+    $requiredStaticTasks = @(
+        'ArmControlTask',
+        'CanRxTask',
+        'ProtocolTask',
+        'UsbTxTask',
+        'TelemetryTask',
+        'DiagnosticsTask'
+    )
+    foreach ($requiredStaticTask in $requiredStaticTasks)
+    {
+        Assert-TextContains -FailureList $failureList -Text $iocText `
+            -Pattern "FREERTOS\.Tasks01=[^\r\n]*\b$requiredStaticTask,[^;]+,Static,[^;]+" `
+            -Message "CubeMX does not preserve static task $requiredStaticTask."
+    }
     Assert-TextContains -FailureList $failureList -Text $iocText `
         -Pattern 'PA15\(JTDI\)\.GPIO_Label=USER_KEY' `
         -Message 'CubeMX USER_KEY label is missing from PA15.'
@@ -91,15 +103,65 @@ function Invoke-Phase0ArchitectureCheck {
     Assert-TextContains -FailureList $failureList -Text $mainText `
         -Pattern 'aethor_app_init\s*\(' `
         -Message 'main.c does not initialize the Phase 0 application facade.'
-    Assert-TextContains -FailureList $failureList -Text $freertosText `
-        -Pattern 'osThreadStaticDef\s*\(' `
-        -Message 'freertos.c does not create defaultTask statically.'
+    foreach ($requiredStaticTask in $requiredStaticTasks)
+    {
+        Assert-TextContains -FailureList $failureList -Text $freertosText `
+            -Pattern "osThreadStaticDef\s*\(\s*$requiredStaticTask\s*," `
+            -Message "freertos.c does not create $requiredStaticTask statically."
+    }
+    if (([regex]::Matches($freertosText, 'osThreadStaticDef\s*\(')).Count -ne $requiredStaticTasks.Count)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'freertos.c must create exactly six static application tasks.'
+    }
+    $requiredTaskStackWords = [ordered]@{
+        ArmControlTask = 768
+        ProtocolTask = 1280
+        TelemetryTask = 1024
+    }
+    foreach ($taskStackRequirement in $requiredTaskStackWords.GetEnumerator())
+    {
+        $taskName = $taskStackRequirement.Key
+        $stackWords = $taskStackRequirement.Value
+        Assert-TextContains -FailureList $failureList -Text $freertosText `
+            -Pattern "osThreadStaticDef\s*\(\s*$taskName\s*,[^\r\n]*,\s*$stackWords\s*," `
+            -Message "freertos.c does not reserve $stackWords stack words for $taskName."
+        Assert-TextContains -FailureList $failureList -Text $iocText `
+            -Pattern "FREERTOS\.Tasks01=[^\r\n]*\b$taskName,[^,]+,$stackWords," `
+            -Message "CubeMX does not preserve $stackWords stack words for $taskName."
+    }
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'aethor_app_service\s*\(' `
         -Message 'freertos.c does not service the Phase 0 application facade.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_next_can_frame\s*\(' `
+        -Message 'ArmControlTask does not produce bounded discovery traffic.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'stm32_platform_can_submit\s*\(' `
+        -Message 'ArmControlTask does not submit application CAN traffic.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'stm32_platform_can_pop_received\s*\(' `
+        -Message 'CanRxTask does not drain the bounded ISR inbox.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_receive_can_frame\s*\(' `
+        -Message 'CanRxTask does not route received frames to the motor runtime.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'stm32_platform_usb_next_line\s*\(' `
+        -Message 'ProtocolTask does not drain complete USB lines in task context.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_process_protocol_line\s*\(' `
+        -Message 'ProtocolTask does not dispatch parsed requests to the protocol engine.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'pdMS_TO_TICKS\s*\(\s*4U\s*\)' `
-        -Message 'defaultTask period is not 4 ms.'
+        -Message 'ArmControlTask period is not 4 ms.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'pdMS_TO_TICKS\s*\(\s*10U\s*\)' `
+        -Message 'TelemetryTask does not service the 100 Hz maximum cadence.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'pdMS_TO_TICKS\s*\(\s*100U\s*\)' `
+        -Message 'DiagnosticsTask period is not 100 ms.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'ulTaskNotifyTake\s*\(' `
+        -Message 'RX-driven tasks do not wait on bounded task notifications.'
     if (($mainText -match 'aethor_application') -or ($freertosText -match 'aethor_application'))
     {
         Add-ArchitectureFailure -FailureList $failureList -Message 'Legacy aethor_application entry point is still referenced.'
@@ -113,8 +175,20 @@ function Invoke-Phase0ArchitectureCheck {
         'arm_config.c',
         'build_info.c',
         'arm_controller.c',
+        'joint_reference.c',
+        'joint_motion.c',
         'diagnostics.c',
-        'usb_cdc_transport.c',
+        'ascii_protocol.c',
+        'protocol_engine.c',
+        'can_frame.c',
+        'can_tx_scheduler.c',
+        'motor_bank.c',
+        'motor_discovery.c',
+        'motor_runtime.c',
+        's3519_codec.c',
+        'can_rx_inbox.c',
+        'usb_cdc_stream.c',
+        'stm32_platform.c',
         'usbd_core.c',
         'usbd_ctlreq.c',
         'usbd_ioreq.c',
@@ -129,13 +203,21 @@ function Invoke-Phase0ArchitectureCheck {
         }
     }
 
-    foreach ($legacyKeilSource in @('aethor_application.c', 'dual_motor_controller.c', 'joint_controller.c', 'bsp_fdcan.c'))
+    foreach ($legacyKeilSource in @('aethor_application.c', 'dual_motor_controller.c', 'joint_controller.c', 'bsp_fdcan.c', 'usb_cdc_transport.c'))
     {
         if ($keilFileNames -contains $legacyKeilSource)
         {
             Add-ArchitectureFailure -FailureList $failureList -Message "$legacyKeilSource must not be compiled in PRD Phase 0."
         }
     }
+
+    $usbInterfaceText = Get-Content -LiteralPath (Join-Path $projectRoot 'USB_DEVICE\App\usbd_cdc_if.c') -Raw
+    Assert-TextContains -FailureList $failureList -Text $usbInterfaceText `
+        -Pattern 'stm32_platform_usb_receive_isr\s*\(' `
+        -Message 'USB CDC receive callback is not connected to the new platform stream.'
+    Assert-TextContains -FailureList $failureList -Text $usbInterfaceText `
+        -Pattern 'stm32_platform_usb_tx_complete_isr\s*\(' `
+        -Message 'USB CDC transmit-complete callback is not connected to the in-flight buffer lifetime.'
 
     if ($failureList.Count -ne 0)
     {
@@ -148,8 +230,8 @@ function Invoke-Phase0ArchitectureCheck {
 
     Write-Host '[PASS] App sources contain no dynamic allocation calls.'
     Write-Host '[PASS] App business layers do not include platform headers.'
-    Write-Host '[PASS] App sources expose no executable motor commands.'
-    Write-Host '[PASS] CubeMX retains the static default task and USER_KEY label.'
+    Write-Host '[PASS] Executable motor frame generation is confined to App/Motor.'
+    Write-Host '[PASS] CubeMX retains six static application tasks and the USER_KEY label.'
     Write-Host '[PASS] main.c and freertos.c use the Phase 0 application entry.'
     Write-Host '[PASS] Keil compiles one copy of each required source and no legacy controller.'
     Write-Host '[PASS] Phase 0 architecture contracts are satisfied.'

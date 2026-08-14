@@ -54,6 +54,17 @@ def parse_strict_float32_token(token: str) -> tuple[str, float]:
     return "ok", float32_value
 
 
+def parse_strict_ascii_u32_token(token: str) -> int:
+    """Parses one unsigned 32-bit token using the firmware's ASCII grammar."""
+    if (not token or
+            any(character < "0" or character > "9" for character in token)):
+        raise ValueError("u32")
+    numeric_value = int(token, 10)
+    if numeric_value > 0xFFFFFFFF:
+        raise ValueError("u32")
+    return numeric_value
+
+
 def encode_line(body: str) -> bytes:
     """Encodes one plain ASCII request with the protocol LF terminator."""
     return body.encode("ascii") + b"\n"
@@ -344,6 +355,10 @@ class AethorTextSimulator:
         if self.profile != "bench":
             return ([f"error {request_id} bench {operation} code=profile "
                      "current=arm required=bench"], False)
+        if operation not in {"init", "enable", "jog", "move", "stop",
+                             "disable", "clear"}:
+            return ([f"error {request_id} bench {operation} "
+                     "code=unknown_command"], False)
         if operation == "move" and request_id == 0:
             return ["error 0 bench move code=bad_argument field=request_id"], False
         try:
@@ -356,6 +371,9 @@ class AethorTextSimulator:
                      "code=bad_argument field=motors"], False)
         if self.active_motion is not None and operation != "stop":
             return [f"error {request_id} bench {operation} code=busy"], False
+        if operation not in {"jog", "move"} and fields:
+            return ([f"error {request_id} bench {operation} "
+                     "code=bad_argument"], False)
         accepted = f"ok {request_id} bench {operation} accepted=1"
         if operation == "init":
             done = (f"done {request_id} bench init result=completed identity={mask:02x} "
@@ -514,11 +532,17 @@ class AethorTextSimulator:
         if command[0] == "show":
             return self._show(request_id, command[1], positionals, fields)
         if command[0] == "stream":
+            if command[1] not in {"off", "joints", "motors"}:
+                return [f"error {request_id} {path} code=unknown_command"], False
             if command[1] == "off":
+                if positionals or fields:
+                    return [f"error {request_id} stream off code=bad_argument"], False
                 self.stream_kind = "off"
                 self.stream_rate_hz = 0
                 return [f"ok {request_id} stream off"], True
-            rate_hz = int(fields["rate"])
+            if positionals or set(fields) != {"rate"}:
+                return [f"error {request_id} {path} code=bad_argument"], False
+            rate_hz = parse_strict_ascii_u32_token(fields["rate"])
             maximum_rate = 50 if command[1] == "joints" else 10
             if not 1 <= rate_hz <= maximum_rate:
                 return ([f"error {request_id} {path} "

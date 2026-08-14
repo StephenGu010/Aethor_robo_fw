@@ -178,6 +178,54 @@ class AethorTextSimulatorTests(unittest.TestCase):
         )
         self.assertEqual(busy_simulator.last_request_ms, 0)
 
+    def test_invalid_request_shapes_match_c_and_do_not_refresh_watchdog(
+            self) -> None:
+        """Rejects extra protocol tokens without extending energized lifetime."""
+        invalid_cases = (
+            ("50 stream bogus rate=1",
+             "error 50 stream bogus code=unknown_command"),
+            ("50 stream off extra",
+             "error 50 stream off code=bad_argument"),
+            ("50 stream joints extra rate=1",
+             "error 50 stream joints code=bad_argument"),
+            ("50 stream motors rate=1 extra=1",
+             "error 50 stream motors code=bad_argument"),
+            ("50 stream joints rate=+1",
+             "error 50 stream joints code=bad_argument"),
+            ("50 stream joints rate=4294967296",
+             "error 50 stream joints code=bad_argument"),
+            ("50 show state extra",
+             "error 50 show state code=bad_argument"),
+            ("50 show config 1 extra",
+             "error 50 show config code=bad_argument"),
+            ("50 bench init 1 unexpected=1",
+             "error 50 bench init code=bad_argument"),
+            ("50 bench enable 1 unexpected=1",
+             "error 50 bench enable code=bad_argument"),
+            ("50 bench stop 1 unexpected=1",
+             "error 50 bench stop code=bad_argument"),
+            ("50 bench disable 1 unexpected=1",
+             "error 50 bench disable code=bad_argument"),
+            ("50 bench clear 1 unexpected=1",
+             "error 50 bench clear code=bad_argument"),
+        )
+        for request_body, expected_error in invalid_cases:
+            with self.subTest(request=request_body):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                simulator.process_line(encode_line("1 hello"))
+                simulator.process_line(encode_line("2 bench enable 1"))
+                simulator.drain_outputs()
+                simulator.advance(900)
+
+                self.assertEqual(
+                    simulator.process_line(encode_line(request_body)),
+                    [expected_error],
+                )
+                self.assertEqual(simulator.last_request_ms, 0)
+                simulator.advance(100)
+                self.assertTrue(any("link_timeout" in output
+                                    for output in simulator.drain_outputs()))
+
     def test_valid_ping_show_and_replay_refresh_energized_watchdog(self) -> None:
         """Refreshes watchdog time only for valid commands and exact replay."""
         keepalive_requests = (

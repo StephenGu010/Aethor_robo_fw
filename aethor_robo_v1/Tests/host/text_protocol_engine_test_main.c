@@ -256,6 +256,68 @@ static void test_text_errors(void)
                   "error 0 parse code=line_too_long\n") == 0);
 }
 
+/** @brief Characterizes strict C rejection of extra stream, show, and bench tokens. */
+static void test_text_request_shape_rejections(void)
+{
+    static const struct
+    {
+        const char *request;
+        const char *expected_response;
+    } cases[] = {
+        {"50 stream bogus rate=1\n",
+         "error 50 stream bogus code=unknown_command\n"},
+        {"51 stream off extra\n",
+         "error 51 stream off code=bad_argument\n"},
+        {"52 stream joints extra rate=1\n",
+         "error 52 stream joints code=bad_argument\n"},
+        {"53 stream motors rate=1 extra=1\n",
+         "error 53 stream motors code=bad_argument\n"},
+        {"54 stream joints rate=+1\n",
+         "error 54 stream joints code=bad_argument\n"},
+        {"55 stream joints rate=4294967296\n",
+         "error 55 stream joints code=bad_argument\n"},
+        {"56 show state extra\n",
+         "error 56 show state code=bad_argument\n"},
+        {"57 show config 1 extra\n",
+         "error 57 show config code=bad_argument\n"},
+        {"58 bench init 1 unexpected=1\n",
+         "error 58 bench init code=bad_argument\n"},
+        {"59 bench enable 1 unexpected=1\n",
+         "error 59 bench enable code=bad_argument\n"},
+        {"60 bench stop 1 unexpected=1\n",
+         "error 60 bench stop code=bad_argument\n"},
+        {"61 bench disable 1 unexpected=1\n",
+         "error 61 bench disable code=bad_argument\n"},
+        {"62 bench clear 1 unexpected=1\n",
+         "error 62 bench clear code=bad_argument\n"},
+    };
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolQueryContext query_context = make_query_context();
+    size_t case_index;
+
+    for (case_index = 0U; case_index < (sizeof(cases) / sizeof(cases[0]));
+         ++case_index)
+    {
+        protocol_engine_init(&engine, 6800U + (uint32_t)case_index);
+        protocol_engine_update_query_context(&engine, &query_context);
+        (void)process_text_request(&engine,
+                                   "1 hello\n",
+                                   1000U,
+                                   PROTOCOL_ENGINE_STATUS_OK,
+                                   &output_batch);
+        const char *response = process_text_request(
+            &engine,
+            cases[case_index].request,
+            901000U,
+            PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+            &output_batch);
+
+        assert(strcmp(response, cases[case_index].expected_response) == 0);
+        assert(protocol_engine_watchdog_expired(&engine, 1001000U) == 1U);
+    }
+}
+
 /** @brief Verifies the concise state, joint, and motor snapshot queries. */
 static void test_text_show_queries(void)
 {
@@ -1433,6 +1495,7 @@ int main(void)
     test_text_request_replay();
     test_manual_request_is_not_cached();
     test_text_errors();
+    test_text_request_shape_rejections();
     test_text_show_queries();
     test_text_streaming();
     test_text_detailed_show_queries();

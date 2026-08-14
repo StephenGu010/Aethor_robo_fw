@@ -37,17 +37,16 @@ def parse_strict_float32_token(token: str) -> tuple[str, float]:
         return "bad_argument", 0.0
     try:
         numeric_value = float(token)
-        if (not math.isfinite(numeric_value) or
-                (numeric_value != 0.0 and
-                 (abs(numeric_value) < FLOAT32_MIN_NORMAL or
-                  abs(numeric_value) > FLOAT32_MAX))):
+        if not math.isfinite(numeric_value):
             return "bad_argument", 0.0
         float32_value = struct.unpack("!f", struct.pack("!f", numeric_value))[0]
     except (OverflowError, TypeError, ValueError, struct.error):
         return "bad_argument", 0.0
     if (not math.isfinite(float32_value) or
+            (numeric_value != 0.0 and float32_value == 0.0) or
             (float32_value != 0.0 and
-             abs(float32_value) < FLOAT32_MIN_NORMAL)):
+             (abs(float32_value) < FLOAT32_MIN_NORMAL or
+              abs(float32_value) > FLOAT32_MAX))):
         return "bad_argument", 0.0
     return "ok", float32_value
 

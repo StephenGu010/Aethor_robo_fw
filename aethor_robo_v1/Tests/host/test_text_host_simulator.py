@@ -602,6 +602,60 @@ class AethorTextSimulatorTests(unittest.TestCase):
                     [expected_terminal],
                 )
 
+    def test_real_simulator_quantizes_before_float32_range_validation(self) -> None:
+        """Accepts rounded normal endpoints and rejects inf, zero, or subnormal."""
+        maximum_rounds_to_float32 = (
+            "340282347000000000000000000000000000000")
+        minimum_rounds_to_normal = (
+            "0.000000000000000000000000000000000000011754943")
+        overflow_rounding_threshold = (
+            "340282356779733661637539395458142568448")
+        subnormal_rounding_threshold = (
+            "0.0000000000000000000000000000000000000117549428")
+        rounds_to_zero = (
+            "0.0000000000000000000000000000000000000000000001")
+
+        accepted_tokens = (
+            (maximum_rounds_to_float32, simulator_module.FLOAT32_MAX),
+            (minimum_rounds_to_normal, simulator_module.FLOAT32_MIN_NORMAL),
+        )
+        for token, expected_value in accepted_tokens:
+            with self.subTest(token=token):
+                status, parsed_value = simulator_module.parse_strict_float32_token(
+                    token)
+                self.assertEqual(status, "ok")
+                self.assertEqual(parsed_value, expected_value)
+
+        for token in (overflow_rounding_threshold,
+                      subnormal_rounding_threshold,
+                      rounds_to_zero):
+            with self.subTest(token=token):
+                self.assertEqual(
+                    simulator_module.parse_strict_float32_token(token),
+                    ("bad_argument", 0.0),
+                )
+
+        completed_transport = SimulatorTransport()
+        completed_body = (f"154 bench move 1 position={minimum_rounds_to_normal} "
+                          "speed=1")
+        completed_outputs = completed_transport.transact_until_done(
+            completed_body, 154, 2.0)
+        self.assertEqual(completed_outputs[0],
+                         "ok 154 bench move accepted=1")
+        self.assertTrue(completed_outputs[-1].startswith(
+            "done 154 bench move result=completed "))
+
+        failed_transport = SimulatorTransport()
+        failed_body = (f"155 bench move 1 position=0 "
+                       f"speed={maximum_rounds_to_float32}")
+        failed_outputs = failed_transport.transact_until_done(
+            failed_body, 155, 2.0)
+        self.assertEqual(failed_outputs, [
+            "ok 155 bench move accepted=1",
+            "done 155 bench move result=failed stage=validate "
+            "code=speed_out_of_range motor=1",
+        ])
+
     def test_real_simulator_legacy_motor_lists_require_strict_ascending_order(
             self) -> None:
         """Rejects unordered legacy masks while preserving move caller order."""

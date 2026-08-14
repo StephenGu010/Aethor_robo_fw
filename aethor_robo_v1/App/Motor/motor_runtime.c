@@ -161,6 +161,14 @@ static MotorRuntimeStatus motor_runtime_accept_mode_readback(
     }
 
     runtime->discovery.results[joint_index].observed_control_mode = expected_mode;
+    runtime->discovery.results[joint_index].verified_fields_mask |=
+        MOTOR_DISCOVERY_MODE_FIELDS_MASK;
+    if ((runtime->discovery.results[joint_index].verified_fields_mask &
+         MOTOR_DISCOVERY_ALL_FIELDS_MASK) == MOTOR_DISCOVERY_ALL_FIELDS_MASK)
+    {
+        runtime->discovery.verified_joint_mask |=
+            (uint8_t)(1U << joint_index);
+    }
     ++runtime->mode_switch_joint_index;
     motor_runtime_skip_unselected_mode_joints(runtime);
     runtime->mode_switch_attempt_count = 0U;
@@ -485,9 +493,28 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
     const MotorRuntime *runtime,
     MotorEmergencyFrameBatch *batch)
 {
+    return motor_runtime_build_emergency_disable_subset(runtime,
+                                                        0x7FU,
+                                                        batch);
+}
+
+/**
+ * @brief Builds fail-safe disable frames for only the selected motors.
+ */
+MotorRuntimeStatus motor_runtime_build_emergency_disable_subset(
+    const MotorRuntime *runtime,
+    uint8_t motor_mask,
+    MotorEmergencyFrameBatch *batch)
+{
+    MotorEmergencyFrameBatch validated_batch;
     uint8_t joint_index;
 
-    if ((runtime == NULL) || (batch == NULL))
+    if (batch != NULL)
+    {
+        memset(batch, 0, sizeof(*batch));
+    }
+    if ((runtime == NULL) || (batch == NULL) || (motor_mask == 0U) ||
+        ((motor_mask & (uint8_t)~0x7FU) != 0U))
     {
         return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
@@ -495,16 +522,28 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
     {
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
-    memset(batch, 0, sizeof(*batch));
+    memset(&validated_batch, 0, sizeof(validated_batch));
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
+        const MotorDiscoveryResult *discovery_result;
         uint8_t esc_id = (uint8_t)runtime->configuration->joints[joint_index].esc_id;
-        uint32_t observed_mode =
-            runtime->discovery.results[joint_index].observed_control_mode;
+        uint32_t observed_mode;
+        uint8_t mode_is_verified;
 
-        if (observed_mode == 1U)
+        if ((motor_mask & (uint8_t)(1U << joint_index)) == 0U)
         {
-            if (motor_runtime_append_disable(batch,
+            continue;
+        }
+        discovery_result = &runtime->discovery.results[joint_index];
+        observed_mode = discovery_result->observed_control_mode;
+        mode_is_verified =
+            (uint8_t)((discovery_result->verified_fields_mask &
+                       MOTOR_DISCOVERY_MODE_FIELDS_MASK) ==
+                      MOTOR_DISCOVERY_MODE_FIELDS_MASK);
+
+        if ((mode_is_verified != 0U) && (observed_mode == 1U))
+        {
+            if (motor_runtime_append_disable(&validated_batch,
                                              esc_id,
                                              S3519_CONTROL_MODE_MIT) !=
                 MOTOR_RUNTIME_STATUS_OK)
@@ -512,10 +551,10 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
                 return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
             }
         }
-        else if (observed_mode == 2U)
+        else if ((mode_is_verified != 0U) && (observed_mode == 2U))
         {
             if (motor_runtime_append_disable(
-                    batch,
+                    &validated_batch,
                     esc_id,
                     S3519_CONTROL_MODE_POSITION_VELOCITY) !=
                 MOTOR_RUNTIME_STATUS_OK)
@@ -525,12 +564,12 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
         }
         else
         {
-            if ((motor_runtime_append_disable(batch,
+            if ((motor_runtime_append_disable(&validated_batch,
                                               esc_id,
                                               S3519_CONTROL_MODE_MIT) !=
                  MOTOR_RUNTIME_STATUS_OK) ||
                 (motor_runtime_append_disable(
-                     batch,
+                     &validated_batch,
                      esc_id,
                      S3519_CONTROL_MODE_POSITION_VELOCITY) !=
                  MOTOR_RUNTIME_STATUS_OK))
@@ -539,6 +578,7 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
             }
         }
     }
+    memcpy(batch, &validated_batch, sizeof(*batch));
     return MOTOR_RUNTIME_STATUS_OK;
 }
 
@@ -829,6 +869,8 @@ MotorRuntimeStatus motor_runtime_begin_control_mode_switch_mask(
     S3519ControlMode control_mode,
     uint8_t motor_mask)
 {
+    uint8_t joint_index;
+
     if (runtime == NULL)
     {
         return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -863,6 +905,18 @@ MotorRuntimeStatus motor_runtime_begin_control_mode_switch_mask(
     runtime->mode_switch_attempt_count = 0U;
     runtime->mode_request_sent_at_us = 0U;
     runtime->mode_switch_state = MOTOR_MODE_SWITCH_WRITING;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+
+        if ((motor_mask & joint_bit) == 0U)
+        {
+            continue;
+        }
+        runtime->discovery.results[joint_index].verified_fields_mask &=
+            (uint16_t)~MOTOR_DISCOVERY_MODE_FIELDS_MASK;
+        runtime->discovery.verified_joint_mask &= (uint8_t)~joint_bit;
+    }
     return MOTOR_RUNTIME_STATUS_OK;
 }
 

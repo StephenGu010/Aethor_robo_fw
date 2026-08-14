@@ -151,6 +151,18 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
     MotorEmergencyFrameBatch *batch);
 
 /**
+ * @brief Builds fail-safe disable frames for only the selected motors.
+ * @param runtime Initialized seven-motor runtime owning discovered modes.
+ * @param motor_mask Nonzero J1-J7 selection mask.
+ * @param batch Destination bounded emergency batch, cleared on failure.
+ * @return OK or an argument, initialization, or codec error.
+ */
+MotorRuntimeStatus motor_runtime_build_emergency_disable_subset(
+    const MotorRuntime *runtime,
+    uint8_t motor_mask,
+    MotorEmergencyFrameBatch *batch);
+
+/**
  * @brief Encodes one ordered all-or-nothing J1-J7 motor control group.
  * @param runtime Initialized runtime owning identities, gains, and ranges.
  * @param control_mode Confirmed S3519 POS_VEL or MIT mode.

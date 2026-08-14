@@ -397,7 +397,7 @@ static ProtocolCommandError aethor_app_map_runtime_error(
 }
 
 /**
- * @brief Records a one-shot failure and starts selected cleanup when enable was attempted.
+ * @brief Records a one-shot failure and starts mode-safe selected cleanup.
  * @param failed_stage Setup stage that failed.
  * @param failure_error Stable public failure reason.
  * @param failed_motor_number One-based failed motor number, or zero when unknown.
@@ -426,12 +426,23 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
                                           timestamp_us);
     }
 
-    runtime_status = motor_runtime_build_mode_command_batch(
-        &application_motor_runtime,
-        S3519_CONTROL_MODE_POSITION_VELOCITY,
-        S3519_MODE_COMMAND_DISABLE,
-        application_action.cleanup_disable_mask,
-        &application_action.frames);
+    if ((failed_stage == PROTOCOL_COMMAND_STAGE_DISCOVERY) ||
+        (failed_stage == PROTOCOL_COMMAND_STAGE_MODE))
+    {
+        runtime_status = motor_runtime_build_emergency_disable_subset(
+            &application_motor_runtime,
+            application_action.cleanup_disable_mask,
+            &application_action.frames);
+    }
+    else
+    {
+        runtime_status = motor_runtime_build_mode_command_batch(
+            &application_motor_runtime,
+            S3519_CONTROL_MODE_POSITION_VELOCITY,
+            S3519_MODE_COMMAND_DISABLE,
+            application_action.cleanup_disable_mask,
+            &application_action.frames);
+    }
     if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
     {
         return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_FAILED,

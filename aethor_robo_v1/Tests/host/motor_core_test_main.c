@@ -492,6 +492,82 @@ static void test_motor_runtime_builds_fail_safe_disable_batch(void)
 }
 
 /**
+ * @brief Verifies selected unknown modes emit both identifiers in joint order.
+ */
+static void test_motor_runtime_builds_selected_unknown_mode_disable_batch(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0x05U, &batch) == MOTOR_RUNTIME_STATUS_OK);
+    assert(batch.count == 4U);
+    assert(batch.frames[0].identifier == 0x001U);
+    assert(batch.frames[1].identifier == 0x101U);
+    assert(batch.frames[2].identifier == 0x003U);
+    assert(batch.frames[3].identifier == 0x103U);
+    assert(batch.frames[0].data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(batch.frames[1].data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(batch.frames[2].data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(batch.frames[3].data[7] == S3519_MODE_COMMAND_DISABLE);
+}
+
+/**
+ * @brief Verifies selected verified mixed modes use only their known identifiers.
+ */
+static void test_motor_runtime_builds_selected_known_mode_disable_batch(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_MODE_FIELDS_MASK;
+    runtime.discovery.results[0].observed_control_mode = 1U;
+    runtime.discovery.results[2].verified_fields_mask =
+        MOTOR_DISCOVERY_MODE_FIELDS_MASK;
+    runtime.discovery.results[2].observed_control_mode = 2U;
+
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0x05U, &batch) == MOTOR_RUNTIME_STATUS_OK);
+    assert(batch.count == 2U);
+    assert(batch.frames[0].identifier == 0x001U);
+    assert(batch.frames[1].identifier == 0x103U);
+    assert(batch.frames[0].data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(batch.frames[1].data[7] == S3519_MODE_COMMAND_DISABLE);
+}
+
+/**
+ * @brief Verifies invalid subset requests never expose partial emergency frames.
+ */
+static void test_motor_runtime_rejects_invalid_emergency_disable_subset(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    memset(&batch, 0xA5, sizeof(batch));
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0U, &batch) == MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0x80U, &batch) == MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    runtime.initialized = 0U;
+    memset(&batch, 0xA5, sizeof(batch));
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0x01U, &batch) == MOTOR_RUNTIME_STATUS_NOT_INITIALIZED);
+    assert_motor_frame_batch_is_zeroed(&batch);
+}
+
+/**
  * @brief Verifies seven mode writes are followed by exact register readbacks.
  */
 static void test_motor_runtime_switches_mode_with_readback(void)
@@ -588,6 +664,9 @@ static void test_motor_runtime_masked_mode_switch_serializes_unselected_discover
                &runtime,
                S3519_CONTROL_MODE_POSITION_VELOCITY,
                0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert((runtime.discovery.verified_joint_mask & 0x01U) == 0U);
+    assert((runtime.discovery.results[0].verified_fields_mask &
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK) == 0U);
     assert(motor_runtime_next_control_mode_frame(&runtime, 1000U, &request) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(request.data[0] == 1U);
@@ -612,6 +691,9 @@ static void test_motor_runtime_masked_mode_switch_serializes_unselected_discover
            CAN_FRAME_STATUS_OK);
     assert(motor_runtime_accept_frame(&runtime, &response, 2100U) ==
            MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+    assert((runtime.discovery.verified_joint_mask & 0x01U) != 0U);
+    assert((runtime.discovery.results[0].verified_fields_mask &
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK) != 0U);
     assert(runtime.discovery.state == MOTOR_DISCOVERY_STATE_READY);
     assert(runtime.discovery.current_joint_index == 1U);
 }
@@ -1172,6 +1254,9 @@ int main(void)
     test_can_scheduler_prioritizes_emergency_frames();
     test_can_scheduler_reserves_progress_for_emergency_frames();
     test_motor_runtime_builds_fail_safe_disable_batch();
+    test_motor_runtime_builds_selected_unknown_mode_disable_batch();
+    test_motor_runtime_builds_selected_known_mode_disable_batch();
+    test_motor_runtime_rejects_invalid_emergency_disable_subset();
     test_motor_runtime_switches_mode_with_readback();
     test_motor_runtime_masked_mode_switch_serializes_unselected_discovery();
     test_motor_runtime_masked_mode_switch_requires_selected_readiness();

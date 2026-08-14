@@ -1390,6 +1390,59 @@ static void test_aethor_app_legacy_jog_rejects_dynamic_validation_failures(void)
 }
 
 /**
+ * @brief Verifies discovery failure disables only selected motors in both modes.
+ */
+static void test_aethor_app_one_shot_discovery_failure_disables_selected_unknown_modes(void)
+{
+    ProtocolOutputBatch output_batch;
+    CanFrame frame;
+    CanTxPriority priority;
+    MotorRuntimeStatus runtime_status;
+    uint64_t timestamp_us = 5500U;
+    uint8_t retry_index;
+
+    phase0_start_text_session(&timestamp_us, 11016U);
+    phase0_submit_request(
+        "50 bench move 1,3 position=90,-45 speed=30,20",
+        ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.data[0] == 1U);
+    for (retry_index = 1U;
+         retry_index < MOTOR_DISCOVERY_MAX_ATTEMPTS;
+         ++retry_index)
+    {
+        timestamp_us += MOTOR_DISCOVERY_REQUEST_TIMEOUT_US;
+        assert(aethor_app_next_can_frame(timestamp_us, &frame, &priority) ==
+               MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(frame.data[0] == 1U);
+    }
+    timestamp_us += MOTOR_DISCOVERY_REQUEST_TIMEOUT_US;
+    runtime_status = aethor_app_next_can_frame(timestamp_us, &frame, &priority);
+    assert(runtime_status == MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR);
+    assert(aethor_app_service(++timestamp_us) == 0U);
+
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(priority == CAN_TX_PRIORITY_EMERGENCY);
+    assert(frame.identifier == 0x001U);
+    assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_DISABLE));
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.identifier == 0x101U);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.identifier == 0x003U);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.identifier == 0x103U);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) !=
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
+}
+
+/**
  * @brief Verifies a pre-enabled motor receives selected disable after mode failure.
  */
 static void test_aethor_app_one_shot_mode_failure_disables_pre_enabled_motor(void)
@@ -1432,8 +1485,14 @@ static void test_aethor_app_one_shot_mode_failure_disables_pre_enabled_motor(voi
     assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
            MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(priority == CAN_TX_PRIORITY_EMERGENCY);
+    assert(frame.identifier == 0x001U);
+    assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_DISABLE));
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(frame.identifier == 0x101U);
     assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_DISABLE));
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) !=
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
     assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
 }
 
@@ -1705,6 +1764,7 @@ int main(void)
     test_aethor_app_one_shot_move_fails_before_enable_on_invalid_target();
     test_aethor_app_legacy_jog_accepts_dynamic_range_above_three_degrees();
     test_aethor_app_legacy_jog_rejects_dynamic_validation_failures();
+    test_aethor_app_one_shot_discovery_failure_disables_selected_unknown_modes();
     test_aethor_app_one_shot_mode_failure_disables_pre_enabled_motor();
     test_aethor_app_one_shot_clear_timeout_disables_selected_motor();
     test_aethor_app_one_shot_clear_deadline_starts_after_final_frame();

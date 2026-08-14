@@ -574,7 +574,7 @@ static void test_text_bench_move_rejections(void)
         PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
         &output_batch);
     assert(strcmp(response,
-                  "error 60 bench move code=bad_argument field=position\n") == 0);
+                  "error 60 bench move code=count_mismatch field=position\n") == 0);
 
     response = process_text_request(&engine,
                                     "61 bench move 1 position=inf speed=1\n",
@@ -590,7 +590,7 @@ static void test_text_bench_move_rejections(void)
                                     PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
                                     &output_batch);
     assert(strcmp(response,
-                  "error 63 bench move code=bad_argument field=position\n") == 0);
+                  "error 63 bench move code=count_mismatch field=position\n") == 0);
 
     response = process_text_request(&engine,
                                     "64 bench move 1 position=1\n",
@@ -608,6 +608,67 @@ static void test_text_bench_move_rejections(void)
         &output_batch);
     assert(strcmp(response,
                   "error 65 bench move code=bad_argument field=motors\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "66 bench move 1,3 position=,90 speed=30,20\n",
+        12000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 66 bench move code=count_mismatch field=position\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "67 bench move 1,3 position=90,,45 speed=30,20\n",
+        13000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 67 bench move code=count_mismatch field=position\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "68 bench move 1,3 position=90,45 speed=30,\n",
+        14000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 68 bench move code=count_mismatch field=speed\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "69 bench move 1,3 position=90,45 speed=,30\n",
+        15000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 69 bench move code=count_mismatch field=speed\n") == 0);
+
+    response = process_text_request(
+        &engine,
+        "70 bench move 1,3 position=90,45 speed=30,,20\n",
+        16000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 70 bench move code=count_mismatch field=speed\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "71 bench move 1 position=abc speed=1\n",
+                                    17000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 71 bench move code=bad_argument field=position\n") == 0);
+
+    response = process_text_request(&engine,
+                                    "72 bench move 1 position=1,2 speed=1\n",
+                                    18000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 72 bench move code=count_mismatch field=position\n") == 0);
 }
 
 /** @brief Verifies accepted bench moves replay without a second queue entry. */

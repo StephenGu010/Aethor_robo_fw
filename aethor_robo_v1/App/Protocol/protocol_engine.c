@@ -1212,7 +1212,8 @@ static ProtocolTextListParseStatus protocol_engine_parse_text_motor_list(
  * @param joint_order Zero-based joint indices in caller motor order.
  * @param motor_count Required value count.
  * @param values Destination joint-indexed values.
- * @return OK, BAD_ARGUMENT, or COUNT_MISMATCH for the parsed list.
+ * @return COUNT_MISMATCH for empty or wrong-count tokens, BAD_ARGUMENT for
+ * invalid numeric tokens, otherwise OK.
  */
 static ProtocolTextListParseStatus
 protocol_engine_parse_text_selected_motor_values(
@@ -1238,7 +1239,7 @@ protocol_engine_parse_text_selected_motor_values(
         {
             if (character_index == token_start)
             {
-                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+                return PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH;
             }
             ++token_count;
             token_start = character_index + 1U;
@@ -1246,7 +1247,7 @@ protocol_engine_parse_text_selected_motor_values(
     }
     if (token_start == span->length)
     {
-        return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+        return PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH;
     }
     if (token_count != motor_count)
     {

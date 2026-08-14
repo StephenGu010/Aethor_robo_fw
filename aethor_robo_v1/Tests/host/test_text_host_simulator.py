@@ -103,10 +103,10 @@ class AethorTextSimulatorTests(unittest.TestCase):
         self.simulator.drain_outputs()
         accepted = self.request("4 bench jog 1,3 delta=0.2 speed=1")
         self.assertEqual(accepted, ["ok 4 bench jog accepted=1"])
-        self.simulator.advance(200)
-        self.assertIn("done 4 bench jog result=completed elapsed_ms=200 arrived=05",
+        self.simulator.advance(201)
+        self.assertIn("done 4 bench jog result=completed elapsed_ms=201 arrived=05",
                       self.simulator.drain_outputs())
-        self.simulator.advance(800)
+        self.simulator.advance(799)
         self.assertEqual(self.simulator.motor_enabled_mask, 0)
         self.assertTrue(any("link_timeout" in item
                             for item in self.simulator.drain_outputs()))
@@ -545,6 +545,61 @@ class AethorTextSimulatorTests(unittest.TestCase):
                         f"position={position_token} speed={speed_token}")),
                     [f"error {case_index} bench move "
                      f"code=bad_argument field={field_name}"],
+                )
+
+    def test_real_simulator_uses_float32_values_for_motion_and_limits(self) -> None:
+        """Rounds parsed decimals to float32 before move and jog validation."""
+        accepted_moves = (
+            ("145 bench move 1 position=180.000001 speed=360.000001", 180.0),
+            ("146 bench move 1 position=-180.000001 speed=360.000001", -180.0),
+        )
+        for request_body, expected_position in accepted_moves:
+            with self.subTest(request=request_body):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                request_id = request_body.split()[0]
+                self.assertEqual(
+                    simulator.process_line(encode_line(request_body)),
+                    [f"ok {request_id} bench move accepted=1"],
+                )
+                self.assertEqual(simulator.active_motion.target_deg[0],
+                                 expected_position)
+                simulator.advance(500)
+                terminal = simulator.drain_outputs()[0]
+                self.assertEqual(
+                    simulator.process_line(encode_line(request_body)),
+                    [terminal],
+                )
+
+        jog_simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+        self.assertEqual(
+            jog_simulator.process_line(encode_line(
+                "147 bench jog 1 delta=180.000001 speed=360.000001")),
+            ["ok 147 bench jog accepted=1"],
+        )
+        self.assertEqual(jog_simulator.active_motion.target_deg[0], 180.0)
+
+        rejected_moves = (
+            ("148 bench move 1 position=180.00001 speed=360",
+             "position_out_of_range"),
+            ("149 bench move 1 position=-180.00001 speed=360",
+             "position_out_of_range"),
+            ("153 bench move 1 position=180 speed=360.00002",
+             "speed_out_of_range"),
+        )
+        for request_body, expected_code in rejected_moves:
+            with self.subTest(request=request_body):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                request_id = request_body.split()[0]
+                expected_terminal = (f"done {request_id} bench move result=failed "
+                                     f"stage=validate code={expected_code} motor=1")
+                self.assertEqual(
+                    simulator.process_line(encode_line(request_body)),
+                    [f"ok {request_id} bench move accepted=1"],
+                )
+                self.assertEqual(simulator.drain_outputs(), [expected_terminal])
+                self.assertEqual(
+                    simulator.process_line(encode_line(request_body)),
+                    [expected_terminal],
                 )
 
     def test_real_simulator_legacy_motor_lists_require_strict_ascending_order(

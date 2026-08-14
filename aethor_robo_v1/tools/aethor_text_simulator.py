@@ -49,7 +49,7 @@ def parse_strict_float32_token(token: str) -> tuple[str, float]:
             (float32_value != 0.0 and
              abs(float32_value) < FLOAT32_MIN_NORMAL)):
         return "bad_argument", 0.0
-    return "ok", numeric_value
+    return "ok", float32_value
 
 
 def encode_line(body: str) -> bytes:

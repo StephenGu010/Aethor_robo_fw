@@ -150,7 +150,7 @@ static void test_text_protocol_validates_request_id(void)
 }
 
 /**
- * @brief Verifies decimal parsing rejects scientific notation and non-finite tokens.
+ * @brief Verifies strict decimal parsing and the exact strtof rounding result.
  */
 static void test_text_protocol_float_conversion_is_strict(void)
 {
@@ -160,6 +160,11 @@ static void test_text_protocol_float_conversion_is_strict(void)
     static const char positive_fraction_text[] = "+.5";
     static const char trailing_decimal_text[] = "5.";
     static const char decimal_point_only_text[] = ".";
+    static const char positive_position_rounds_to_limit_text[] = "180.000001";
+    static const char negative_position_rounds_to_limit_text[] = "-180.000001";
+    static const char position_rounds_over_limit_text[] = "180.00001";
+    static const char speed_rounds_to_limit_text[] = "360.000001";
+    static const char speed_rounds_over_limit_text[] = "360.00002";
     TextProtocolSpan scientific = {scientific_text, sizeof(scientific_text) - 1U};
     TextProtocolSpan nan_value = {nan_text, sizeof(nan_text) - 1U};
     TextProtocolSpan signed_decimal = {
@@ -177,6 +182,26 @@ static void test_text_protocol_float_conversion_is_strict(void)
     TextProtocolSpan decimal_point_only = {
         decimal_point_only_text,
         sizeof(decimal_point_only_text) - 1U
+    };
+    TextProtocolSpan positive_position_rounds_to_limit = {
+        positive_position_rounds_to_limit_text,
+        sizeof(positive_position_rounds_to_limit_text) - 1U
+    };
+    TextProtocolSpan negative_position_rounds_to_limit = {
+        negative_position_rounds_to_limit_text,
+        sizeof(negative_position_rounds_to_limit_text) - 1U
+    };
+    TextProtocolSpan position_rounds_over_limit = {
+        position_rounds_over_limit_text,
+        sizeof(position_rounds_over_limit_text) - 1U
+    };
+    TextProtocolSpan speed_rounds_to_limit = {
+        speed_rounds_to_limit_text,
+        sizeof(speed_rounds_to_limit_text) - 1U
+    };
+    TextProtocolSpan speed_rounds_over_limit = {
+        speed_rounds_over_limit_text,
+        sizeof(speed_rounds_over_limit_text) - 1U
     };
     char maximum_token[64];
     char overlength_token[65];
@@ -210,6 +235,21 @@ static void test_text_protocol_float_conversion_is_strict(void)
     assert(value == 5.0F);
     assert(text_protocol_span_to_float(&decimal_point_only, &value) ==
            TEXT_PROTOCOL_STATUS_BAD_NUMBER);
+    assert(text_protocol_span_to_float(&positive_position_rounds_to_limit,
+                                       &value) == TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 180.0F);
+    assert(text_protocol_span_to_float(&negative_position_rounds_to_limit,
+                                       &value) == TEXT_PROTOCOL_STATUS_OK);
+    assert(value == -180.0F);
+    assert(text_protocol_span_to_float(&position_rounds_over_limit, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value > 180.0F);
+    assert(text_protocol_span_to_float(&speed_rounds_to_limit, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 360.0F);
+    assert(text_protocol_span_to_float(&speed_rounds_over_limit, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value > 360.0F);
     assert(text_protocol_span_to_float(&maximum_length_decimal, &value) ==
            TEXT_PROTOCOL_STATUS_OK);
     assert(value == 1.0F);

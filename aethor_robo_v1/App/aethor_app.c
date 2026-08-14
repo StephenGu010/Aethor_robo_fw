@@ -81,6 +81,89 @@ static AethorAppAction application_action;
 static uint64_t application_last_service_timestamp_us;
 static uint8_t application_initialized;
 
+static void aethor_app_update_protocol_context(uint64_t timestamp_us);
+
+/**
+ * @brief Calculates a saturated one-shot travel, settle, and safety timeout.
+ */
+bool aethor_app_calculate_one_shot_motion_timeout_us(
+    float current_position_rad,
+    float target_position_rad,
+    float speed_rad_s,
+    uint64_t *timeout_us)
+{
+    double travel_time_us;
+    double total_timeout_us;
+
+    if ((timeout_us == NULL) || !isfinite(current_position_rad) ||
+        !isfinite(target_position_rad) || !isfinite(speed_rad_s) ||
+        (speed_rad_s <= 0.0F))
+    {
+        return false;
+    }
+
+    travel_time_us =
+        fabs((double)target_position_rad - (double)current_position_rad) /
+        (double)speed_rad_s * 1000000.0;
+    total_timeout_us = travel_time_us +
+                       (double)AETHOR_APP_MOTION_SETTLE_US +
+                       (double)AETHOR_APP_MOTION_TIMEOUT_MARGIN_US;
+    if (!isfinite(total_timeout_us) ||
+        (total_timeout_us >= (double)UINT64_MAX))
+    {
+        *timeout_us = UINT64_MAX;
+        return true;
+    }
+
+    *timeout_us = (uint64_t)ceil(total_timeout_us);
+    return true;
+}
+
+/** @brief Adds two monotonic intervals without wrapping the 64-bit time base. */
+static uint64_t aethor_app_saturating_add_us(uint64_t timestamp_us,
+                                             uint64_t interval_us)
+{
+    if (interval_us > (UINT64_MAX - timestamp_us))
+    {
+        return UINT64_MAX;
+    }
+    return timestamp_us + interval_us;
+}
+
+/** @brief Reports whether the accepted one-shot action owns its link lifecycle. */
+static uint8_t aethor_app_active_action_owns_link_lifecycle(void)
+{
+    if (application_action.command.type !=
+        PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+    {
+        return 0U;
+    }
+    switch (application_action.state)
+    {
+        case AETHOR_APP_ACTION_ONE_SHOT_DISCOVERY:
+        case AETHOR_APP_ACTION_ONE_SHOT_MODE_SWITCH:
+        case AETHOR_APP_ACTION_ONE_SHOT_CLEAR_WAIT:
+        case AETHOR_APP_ACTION_ONE_SHOT_ENABLE_WAIT:
+        case AETHOR_APP_ACTION_ONE_SHOT_MOVE_WAIT:
+        case AETHOR_APP_ACTION_ONE_SHOT_HOLD_WAIT:
+        case AETHOR_APP_ACTION_ONE_SHOT_DISABLE_WAIT:
+        case AETHOR_APP_ACTION_ONE_SHOT_CLEANUP_DISABLE_WAIT:
+            return 1U;
+        case AETHOR_APP_ACTION_IDLE:
+        case AETHOR_APP_ACTION_MODE_SWITCH:
+        case AETHOR_APP_ACTION_DISCOVERY:
+        case AETHOR_APP_ACTION_BENCH_MODE_SWITCH:
+        case AETHOR_APP_ACTION_ENABLE_WAIT:
+        case AETHOR_APP_ACTION_BENCH_MOVE_WAIT:
+        case AETHOR_APP_ACTION_DISABLE_WAIT:
+        case AETHOR_APP_ACTION_CLEAR_FAULT_WAIT:
+        case AETHOR_APP_ACTION_MOTION:
+        case AETHOR_APP_ACTION_CONTROLLED_STOP:
+        default:
+            return 0U;
+    }
+}
+
 /** @brief Maps the public arm mode to the vendor identifier offset. */
 static S3519ControlMode aethor_app_vendor_mode(ArmControlMode control_mode)
 {
@@ -505,6 +588,185 @@ static uint8_t aethor_app_validate_one_shot_targets(
 }
 
 /**
+ * @brief Starts fixed target transmission with a feedback-derived bounded deadline.
+ * @param motor_snapshot Fresh selected feedback captured after enable.
+ * @param timestamp_us Current monotonic timestamp.
+ * @return One when a terminal result was queued, otherwise zero.
+ */
+static uint8_t aethor_app_start_one_shot_motion(
+    const MotorFeedbackSnapshot *motor_snapshot,
+    uint64_t timestamp_us)
+{
+    MotorRuntimeStatus runtime_status;
+    uint64_t maximum_timeout_us = 0U;
+    uint8_t joint_index;
+
+    if ((motor_snapshot == NULL) ||
+        ((motor_snapshot->valid_joint_mask &
+          application_action.command.motor_mask) !=
+         application_action.command.motor_mask))
+    {
+        return aethor_app_begin_one_shot_cleanup(
+            PROTOCOL_COMMAND_STAGE_MOTION,
+            PROTOCOL_COMMAND_ERROR_STALE_FEEDBACK,
+            0U,
+            timestamp_us);
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+        uint64_t joint_timeout_us;
+
+        if ((application_action.command.motor_mask & joint_bit) == 0U)
+        {
+            continue;
+        }
+        if (!aethor_app_calculate_one_shot_motion_timeout_us(
+                motor_snapshot->joints[joint_index].position_rad,
+                application_action.target_position_rad[joint_index],
+                application_action.target_speed_rad_s[joint_index],
+                &joint_timeout_us))
+        {
+            return aethor_app_begin_one_shot_cleanup(
+                PROTOCOL_COMMAND_STAGE_MOTION,
+                PROTOCOL_COMMAND_ERROR_ACTION_FAILED,
+                (uint8_t)(joint_index + 1U),
+                timestamp_us);
+        }
+        if (joint_timeout_us > maximum_timeout_us)
+        {
+            maximum_timeout_us = joint_timeout_us;
+        }
+    }
+
+    runtime_status = motor_runtime_build_position_velocity_subset(
+        &application_motor_runtime,
+        application_action.command.motor_mask,
+        application_action.target_position_rad,
+        application_action.target_speed_rad_s,
+        &application_action.frames);
+    if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
+    {
+        return aethor_app_begin_one_shot_cleanup(
+            PROTOCOL_COMMAND_STAGE_MOTION,
+            aethor_app_map_runtime_error(runtime_status),
+            0U,
+            timestamp_us);
+    }
+
+    memcpy(application_action.motion_plan.target_position_rad,
+           application_action.target_position_rad,
+           sizeof(application_action.target_position_rad));
+    application_action.state = AETHOR_APP_ACTION_ONE_SHOT_MOVE_WAIT;
+    application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
+    application_action.frame_read_index = 0U;
+    application_action.deadline_us =
+        aethor_app_saturating_add_us(timestamp_us, maximum_timeout_us);
+    return 0U;
+}
+
+/**
+ * @brief Checks whether every selected motor is fault-free and within 0.5 degree.
+ * @param motor_snapshot Current freshness-filtered motor feedback.
+ * @return One when all selected motors have arrived, otherwise zero.
+ */
+static uint8_t aethor_app_one_shot_targets_arrived(
+    const MotorFeedbackSnapshot *motor_snapshot)
+{
+    uint8_t joint_index;
+    uint8_t motor_mask = application_action.command.motor_mask;
+
+    if ((motor_snapshot == NULL) ||
+        ((motor_snapshot->valid_joint_mask & motor_mask) != motor_mask))
+    {
+        return 0U;
+    }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+        float position_error_rad;
+
+        if ((motor_mask & joint_bit) == 0U)
+        {
+            continue;
+        }
+        position_error_rad =
+            fabsf(motor_snapshot->joints[joint_index].position_rad -
+                  application_action.target_position_rad[joint_index]);
+        if ((position_error_rad > (0.5F * AETHOR_APP_DEG_TO_RAD)) ||
+            (motor_snapshot->joints[joint_index].fault_flags != 0U))
+        {
+            return 0U;
+        }
+    }
+    return 1U;
+}
+
+/**
+ * @brief Replaces motion targets with final-position zero-speed HOLD frames.
+ * @param timestamp_us Current monotonic timestamp.
+ * @return One when a terminal result was queued, otherwise zero.
+ */
+static uint8_t aethor_app_start_one_shot_hold(uint64_t timestamp_us)
+{
+    float hold_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+    MotorRuntimeStatus runtime_status =
+        motor_runtime_build_position_velocity_subset(
+            &application_motor_runtime,
+            application_action.command.motor_mask,
+            application_action.target_position_rad,
+            hold_speed_rad_s,
+            &application_action.frames);
+
+    if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
+    {
+        return aethor_app_begin_one_shot_cleanup(
+            PROTOCOL_COMMAND_STAGE_HOLD,
+            aethor_app_map_runtime_error(runtime_status),
+            0U,
+            timestamp_us);
+    }
+    application_action.state = AETHOR_APP_ACTION_ONE_SHOT_HOLD_WAIT;
+    application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
+    application_action.frame_read_index = 0U;
+    application_action.deadline_us = 0U;
+    return 0U;
+}
+
+/**
+ * @brief Starts selected POS_VEL disable after every HOLD frame was emitted.
+ * @param timestamp_us Current monotonic timestamp.
+ * @return One when a terminal result was queued, otherwise zero.
+ */
+static uint8_t aethor_app_start_one_shot_disable(uint64_t timestamp_us)
+{
+    MotorRuntimeStatus runtime_status = motor_runtime_build_mode_command_batch(
+        &application_motor_runtime,
+        S3519_CONTROL_MODE_POSITION_VELOCITY,
+        S3519_MODE_COMMAND_DISABLE,
+        application_action.command.motor_mask,
+        &application_action.frames);
+
+    if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
+    {
+        application_action.failed_stage = PROTOCOL_COMMAND_STAGE_DISABLE;
+        application_action.failure_error =
+            aethor_app_map_runtime_error(runtime_status);
+        application_action.failed_motor_number = 0U;
+        return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_FAILED,
+                                          (uint16_t)application_action
+                                              .failure_error,
+                                          timestamp_us);
+    }
+    application_action.state = AETHOR_APP_ACTION_ONE_SHOT_DISABLE_WAIT;
+    application_action.priority = CAN_TX_PRIORITY_EMERGENCY;
+    application_action.frame_read_index = 0U;
+    application_action.feedback_not_before_us = 0U;
+    application_action.deadline_us = 0U;
+    return 0U;
+}
+
+/**
  * @brief Starts a fixed-capacity self-contained absolute POS_VEL move setup.
  * @param command Parsed joint-indexed degrees and degrees-per-second request.
  * @param motor_snapshot Current freshness-filtered feedback snapshot.
@@ -699,28 +961,55 @@ static uint8_t aethor_app_advance_one_shot_setup(
                   motor_mask,
                   S3519_DRIVER_STATE_ENABLED) != 0U))
     {
-        runtime_status = motor_runtime_build_position_velocity_subset(
-            &application_motor_runtime,
-            motor_mask,
-            application_action.target_position_rad,
-            application_action.target_speed_rad_s,
-            &application_action.frames);
-        if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
+        return aethor_app_start_one_shot_motion(motor_snapshot,
+                                                timestamp_us);
+    }
+    else if (application_action.state ==
+             AETHOR_APP_ACTION_ONE_SHOT_MOVE_WAIT)
+    {
+        if (aethor_app_one_shot_targets_arrived(motor_snapshot) != 0U)
+        {
+            return aethor_app_start_one_shot_hold(timestamp_us);
+        }
+        if ((application_action.deadline_us != 0U) &&
+            (timestamp_us >= application_action.deadline_us))
         {
             return aethor_app_begin_one_shot_cleanup(
                 PROTOCOL_COMMAND_STAGE_MOTION,
-                aethor_app_map_runtime_error(runtime_status),
+                PROTOCOL_COMMAND_ERROR_TIMEOUT,
                 0U,
                 timestamp_us);
         }
-        memcpy(application_action.motion_plan.target_position_rad,
-               application_action.target_position_rad,
-               sizeof(application_action.target_position_rad));
-        application_action.state = AETHOR_APP_ACTION_ONE_SHOT_MOVE_WAIT;
-        application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
-        application_action.frame_read_index = 0U;
-        application_action.deadline_us = 0U;
-        return 0U;
+        if (application_action.frame_read_index >=
+            application_action.frames.count)
+        {
+            application_action.frame_read_index = 0U;
+        }
+    }
+    else if ((application_action.state ==
+              AETHOR_APP_ACTION_ONE_SHOT_HOLD_WAIT) &&
+             (application_action.frame_read_index >=
+              application_action.frames.count))
+    {
+        return aethor_app_start_one_shot_disable(timestamp_us);
+    }
+    else if ((application_action.state ==
+              AETHOR_APP_ACTION_ONE_SHOT_DISABLE_WAIT) &&
+             (application_action.frame_read_index >=
+              application_action.frames.count) &&
+             (aethor_app_selected_feedback_is_newer(
+                  motor_snapshot,
+                  motor_mask,
+                  application_action.feedback_not_before_us) != 0U) &&
+             (aethor_app_selected_motors_have_state(
+                  motor_snapshot,
+                  motor_mask,
+                  S3519_DRIVER_STATE_DISABLED) != 0U))
+    {
+        aethor_app_update_protocol_context(timestamp_us);
+        return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_COMPLETED,
+                                          0U,
+                                          timestamp_us);
     }
     else if ((application_action.state ==
               AETHOR_APP_ACTION_ONE_SHOT_CLEANUP_DISABLE_WAIT) &&
@@ -735,6 +1024,7 @@ static uint8_t aethor_app_advance_one_shot_setup(
                   application_action.cleanup_disable_mask,
                   S3519_DRIVER_STATE_DISABLED) != 0U))
     {
+        aethor_app_update_protocol_context(timestamp_us);
         return aethor_app_complete_action(
             PROTOCOL_COMMAND_RESULT_FAILED,
             (uint16_t)application_action.failure_error,
@@ -778,6 +1068,19 @@ static uint8_t aethor_app_advance_one_shot_setup(
                 PROTOCOL_COMMAND_STAGE_ENABLE,
                 PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT,
                 0U,
+                timestamp_us);
+        }
+        if (application_action.state ==
+            AETHOR_APP_ACTION_ONE_SHOT_DISABLE_WAIT)
+        {
+            application_action.failed_stage =
+                PROTOCOL_COMMAND_STAGE_DISABLE;
+            application_action.failure_error =
+                PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT;
+            application_action.failed_motor_number = 0U;
+            return aethor_app_complete_action(
+                PROTOCOL_COMMAND_RESULT_FAILED,
+                (uint16_t)application_action.failure_error,
                 timestamp_us);
         }
         if (application_action.state ==
@@ -988,6 +1291,8 @@ MotorRuntimeStatus aethor_app_next_can_frame(uint64_t timestamp_us,
               AETHOR_APP_ACTION_ONE_SHOT_CLEAR_WAIT) ||
              (application_action.state ==
               AETHOR_APP_ACTION_ONE_SHOT_ENABLE_WAIT) ||
+             (application_action.state ==
+              AETHOR_APP_ACTION_ONE_SHOT_DISABLE_WAIT) ||
              (application_action.state ==
               AETHOR_APP_ACTION_ONE_SHOT_CLEANUP_DISABLE_WAIT)))
         {
@@ -1977,8 +2282,9 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             }
         }
 
-        if (protocol_engine_watchdog_expired(&application_protocol_engine,
-                                             timestamp_us) != 0U)
+        if ((aethor_app_active_action_owns_link_lifecycle() == 0U) &&
+            (protocol_engine_watchdog_expired(&application_protocol_engine,
+                                              timestamp_us) != 0U))
         {
             ProtocolCommandResult timeout_result;
 

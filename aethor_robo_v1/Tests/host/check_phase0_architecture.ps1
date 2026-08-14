@@ -205,11 +205,52 @@ function Invoke-Phase0ArchitectureCheck {
     {
         Add-ArchitectureFailure -FailureList $failureList -Message 'Legacy aethor_application entry point is still referenced.'
     }
+    # Lower-priority Protocol/Telemetry readers use application-injected hooks
+    # so the platform and host share the same short scheduling boundary.
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'EnterAethorAppTaskCritical[\s\S]{0,160}taskENTER_CRITICAL\s*\(\s*\)' `
+        -Message 'freertos.c does not provide the application task-critical enter hook.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'ExitAethorAppTaskCritical[\s\S]{0,160}taskEXIT_CRITICAL\s*\(\s*\)' `
+        -Message 'freertos.c does not provide the application task-critical exit hook.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_set_task_critical_hooks\s*\(\s*EnterAethorAppTaskCritical\s*,\s*ExitAethorAppTaskCritical\s*\)' `
+        -Message 'FreeRTOS initialization does not register application query critical hooks.'
 
     # Cleanup HOLD is allowed only after this one-shot confirmed every selected
     # motor enabled; keep this lifecycle gate explicit in the application layer.
     $aethorAppText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\aethor_app.c') -Raw
     $protocolEngineText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\Protocol\protocol_engine.c') -Raw
+    $protocolContextMatch = [regex]::Match(
+        $aethorAppText,
+        'static\s+void\s+aethor_app_update_protocol_context\s*\([^)]*\)[\s\S]*?(?=/\*\*[\r\n]+ \* @brief Initializes all static Phase 0 application state\.)')
+    if (-not $protocolContextMatch.Success)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'Protocol query-context update body could not be isolated.'
+    }
+    else
+    {
+        Assert-TextContains -FailureList $failureList -Text $protocolContextMatch.Value `
+            -Pattern 'aethor_app_enter_task_critical\s*\(\s*\)[\s\S]{0,240}arm_controller_get_snapshot[\s\S]*protocol_engine_update_query_context[\s\S]{0,160}aethor_app_exit_task_critical\s*\(\s*\)' `
+            -Message 'Protocol query snapshots are not published inside paired task-critical hooks.'
+        $queryCriticalMatch = [regex]::Match(
+            $protocolContextMatch.Value,
+            'aethor_app_enter_task_critical\s*\(\s*\)\s*;(?<Body>[\s\S]*?)aethor_app_exit_task_critical\s*\(\s*\)')
+        if ($queryCriticalMatch.Success -and
+            ($queryCriticalMatch.Groups['Body'].Value -match 'process_text|generate_stream|append_|format_|stm32_platform_|\bHAL_|\b(?:ul|x|v)Task|taskYIELD|portMAX_DELAY'))
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'Protocol query critical section contains parsing, formatting, I/O, or blocking work.'
+        }
+    }
+    Assert-TextContains -FailureList $failureList -Text $aethorAppText `
+        -Pattern 'aethor_app_process_protocol_line[\s\S]{0,700}aethor_app_update_protocol_context\s*\([^;]+;[\s\S]{0,200}protocol_engine_process_text_line' `
+        -Message 'Protocol parsing is not kept after the bounded query snapshot update.'
+    Assert-TextContains -FailureList $failureList -Text $aethorAppText `
+        -Pattern 'aethor_app_generate_stream_output[\s\S]{0,500}aethor_app_update_protocol_context\s*\([^;]+;[\s\S]{0,200}protocol_engine_generate_stream_output' `
+        -Message 'Stream formatting is not kept after the bounded query snapshot update.'
+    Assert-TextContains -FailureList $failureList -Text $aethorAppText `
+        -Pattern 'aethor_app_get_motor_snapshot[\s\S]{0,500}aethor_app_enter_task_critical[\s\S]{0,240}motor_runtime_get_snapshot[\s\S]{0,240}aethor_app_exit_task_critical' `
+        -Message 'Public MotorRuntime snapshot reads do not use the shared task-critical hooks.'
     Assert-TextContains -FailureList $failureList -Text $aethorAppText `
         -Pattern 'application_action\.enabled_by_action_mask\s*&\s*application_action\.cleanup_disable_mask\)\s*==\s*application_action\.cleanup_disable_mask' `
         -Message 'One-shot cleanup HOLD does not require enabled_by_action_mask to cover the cleanup mask.'

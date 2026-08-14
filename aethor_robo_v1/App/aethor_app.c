@@ -98,9 +98,44 @@ static AethorAppTransportFaultEvent
 static volatile uint8_t application_transport_fault_read_sequence;
 static volatile uint8_t application_transport_fault_write_sequence;
 static uint64_t application_last_service_timestamp_us;
+static AethorAppTaskCriticalHook application_enter_task_critical_hook;
+static AethorAppTaskCriticalHook application_exit_task_critical_hook;
 static uint8_t application_initialized;
 
 static void aethor_app_update_protocol_context(uint64_t timestamp_us);
+
+/** @brief Enters the injected task boundary when a platform installed one. */
+static void aethor_app_enter_task_critical(void)
+{
+    if (application_enter_task_critical_hook != NULL)
+    {
+        application_enter_task_critical_hook();
+    }
+}
+
+/** @brief Exits the task boundary paired with the latest local entry. */
+static void aethor_app_exit_task_critical(void)
+{
+    if (application_exit_task_critical_hook != NULL)
+    {
+        application_exit_task_critical_hook();
+    }
+}
+
+/** @brief Installs or clears paired platform task-critical hooks. */
+void aethor_app_set_task_critical_hooks(
+    AethorAppTaskCriticalHook enter_hook,
+    AethorAppTaskCriticalHook exit_hook)
+{
+    if ((enter_hook == NULL) || (exit_hook == NULL))
+    {
+        application_enter_task_critical_hook = NULL;
+        application_exit_task_critical_hook = NULL;
+        return;
+    }
+    application_enter_task_critical_hook = enter_hook;
+    application_exit_task_critical_hook = exit_hook;
+}
 
 /** @brief Prevents compiler reordering across SPSC mailbox ownership edges. */
 static void aethor_app_compiler_barrier(void)
@@ -1660,6 +1695,7 @@ static void aethor_app_update_protocol_context(uint64_t timestamp_us)
     uint8_t joint_index;
 
     memset(&query_context, 0, sizeof(query_context));
+    aethor_app_enter_task_critical();
     (void)arm_controller_get_snapshot(&application_controller,
                                       &query_context.arm);
     (void)joint_reference_get_snapshot(&application_joint_reference,
@@ -1715,6 +1751,7 @@ static void aethor_app_update_protocol_context(uint64_t timestamp_us)
     query_context.timestamp_us = timestamp_us;
     protocol_engine_update_query_context(&application_protocol_engine,
                                          &query_context);
+    aethor_app_exit_task_critical();
 }
 
 /**
@@ -1726,6 +1763,8 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
 {
     MotorRuntimeStatus motor_status;
 
+    application_enter_task_critical_hook = NULL;
+    application_exit_task_critical_hook = NULL;
     diagnostics_init(&application_diagnostics);
     arm_controller_init(&application_controller,
                         arm_config_get_production(),
@@ -1928,14 +1967,20 @@ MotorRuntimeStatus aethor_app_receive_can_frame(const CanFrame *frame,
 bool aethor_app_get_motor_snapshot(uint64_t timestamp_us,
                                   MotorFeedbackSnapshot *snapshot)
 {
+    MotorRuntimeStatus snapshot_status;
+
     if (application_initialized == 0U)
     {
         return false;
     }
-    return motor_runtime_get_snapshot(&application_motor_runtime,
-                                      timestamp_us,
-                                      MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
-                                      snapshot) == MOTOR_RUNTIME_STATUS_OK;
+    aethor_app_enter_task_critical();
+    snapshot_status = motor_runtime_get_snapshot(
+        &application_motor_runtime,
+        timestamp_us,
+        MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US,
+        snapshot);
+    aethor_app_exit_task_critical();
+    return (snapshot_status == MOTOR_RUNTIME_STATUS_OK);
 }
 
 /** @brief Starts one motor-backed lifecycle command after protocol admission. */

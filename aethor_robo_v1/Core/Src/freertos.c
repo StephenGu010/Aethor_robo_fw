@@ -76,6 +76,8 @@ static void NotifyProtocolTaskFromIsr(void);
 static void NotifyUsbTxTaskFromIsr(void);
 static void QueueProtocolOutputBatch(const ProtocolOutputBatch *outputBatch);
 static uint64_t AethorMonotonicTimestampUs(void);
+static void EnterAethorAppTaskCritical(void);
+static void ExitAethorAppTaskCritical(void);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -112,6 +114,8 @@ void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackTy
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
+  aethor_app_set_task_critical_hooks(EnterAethorAppTaskCritical,
+                                     ExitAethorAppTaskCritical);
 
   /* USER CODE END Init */
 
@@ -474,6 +478,18 @@ void StartDiagnosticsTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+/** @brief Enters the scheduler boundary shared by app query readers. */
+static void EnterAethorAppTaskCritical(void)
+{
+  taskENTER_CRITICAL();
+}
+
+/** @brief Exits the scheduler boundary shared by app query readers. */
+static void ExitAethorAppTaskCritical(void)
+{
+  taskEXIT_CRITICAL();
+}
 
 /**
  * @brief Returns one shared 64-bit timestamp extended from the wrapping HAL tick.

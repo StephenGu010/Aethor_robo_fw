@@ -27,6 +27,33 @@
 
 #define PHASE0_TEST_ACTION_TIMEOUT_US (500000ULL)
 
+static uint32_t phase0_critical_enter_count;
+static uint32_t phase0_critical_exit_count;
+static uint32_t phase0_critical_depth;
+
+/** @brief Records one injected host-side task-critical entry. */
+static void phase0_test_enter_task_critical(void)
+{
+    ++phase0_critical_enter_count;
+    ++phase0_critical_depth;
+}
+
+/** @brief Records one injected host-side task-critical exit. */
+static void phase0_test_exit_task_critical(void)
+{
+    assert(phase0_critical_depth == 1U);
+    --phase0_critical_depth;
+    ++phase0_critical_exit_count;
+}
+
+/** @brief Clears host-side task-critical hook observations. */
+static void phase0_reset_task_critical_observations(void)
+{
+    phase0_critical_enter_count = 0U;
+    phase0_critical_exit_count = 0U;
+    phase0_critical_depth = 0U;
+}
+
 /**
  * @brief Builds deterministic commissioned joint parameters for domain tests.
  * @return Valid seven-axis configuration independent of real hardware values.
@@ -3863,6 +3890,43 @@ static void test_aethor_app_transport_fault_stops_and_disables(void)
 }
 
 /**
+ * @brief Verifies query readers always pair injected task-critical hooks.
+ */
+static void test_aethor_app_query_snapshot_critical_hooks_are_balanced(void)
+{
+    static const char hello_line[] = "1 hello\n";
+    ProtocolOutputBatch output_batch;
+
+    aethor_app_init(1000U, 8890U);
+    aethor_app_set_task_critical_hooks(phase0_test_enter_task_critical,
+                                       phase0_test_exit_task_critical);
+
+    phase0_reset_task_critical_observations();
+    assert(aethor_app_process_protocol_line(hello_line,
+                                            strlen(hello_line),
+                                            1001U,
+                                            &output_batch) ==
+           PROTOCOL_ENGINE_STATUS_OK);
+    assert(phase0_critical_enter_count == 1U);
+    assert(phase0_critical_exit_count == 1U);
+    assert(phase0_critical_depth == 0U);
+
+    phase0_reset_task_critical_observations();
+    (void)aethor_app_generate_stream_output(1002U, &output_batch);
+    assert(phase0_critical_enter_count == 1U);
+    assert(phase0_critical_exit_count == 1U);
+    assert(phase0_critical_depth == 0U);
+
+    phase0_reset_task_critical_observations();
+    assert(!aethor_app_get_motor_snapshot(1003U, NULL));
+    assert(phase0_critical_enter_count == 1U);
+    assert(phase0_critical_exit_count == 1U);
+    assert(phase0_critical_depth == 0U);
+
+    aethor_app_set_task_critical_hooks(NULL, NULL);
+}
+
+/**
  * @brief Runs the Phase 0 configuration and identity test suite.
  * @return Zero when every assertion passes.
  */
@@ -3932,6 +3996,7 @@ int main(void)
     test_aethor_app_one_shot_clear_deadline_starts_after_final_frame();
     test_aethor_app_one_shot_uses_selected_verified_after_unselected_failure();
     test_aethor_app_transport_fault_stops_and_disables();
+    test_aethor_app_query_snapshot_critical_hooks_are_balanced();
 
     printf("PHASE0_TESTS_PASSED\n");
     return 0;

@@ -505,6 +505,11 @@ static void test_motor_runtime_switches_mode_with_readback(void)
            MOTOR_RUNTIME_STATUS_OK);
     runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
     runtime.discovery.verified_joint_mask = 0x7FU;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        runtime.discovery.results[joint_index].verified_fields_mask =
+            MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    }
     assert(motor_runtime_begin_control_mode_switch(
                &runtime,
                S3519_CONTROL_MODE_POSITION_VELOCITY) == MOTOR_RUNTIME_STATUS_OK);
@@ -551,6 +556,99 @@ static void test_motor_runtime_switches_mode_with_readback(void)
                                                  timestamp_us,
                                                  &frame) ==
            MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+}
+
+/**
+ * @brief Verifies a complete selected motor can switch mode while another discovery waits.
+ */
+static void test_motor_runtime_masked_mode_switch_serializes_unselected_discovery(void)
+{
+    MotorRuntime runtime;
+    CanFrame request;
+    CanFrame response;
+    CanFrame unselected_discovery_response;
+    uint8_t selected_response_payload[8] = {
+        1U, 0U, 0x33U, S3519_REGISTER_CONTROL_MODE, 2U, 0U, 0U, 0U
+    };
+    uint8_t unselected_response_payload[8] = {
+        2U, 0U, 0x33U, S3519_REGISTER_CONTROL_MODE, 2U, 0U, 0U, 0U
+    };
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.verified_joint_mask = 0x01U;
+    runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_WAITING;
+    runtime.discovery.target_joint_mask = 0x02U;
+    runtime.discovery.current_joint_index = 1U;
+    runtime.discovery.current_register_index = 2U;
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime, 1000U, &request) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[0] == 1U);
+    assert(request.data[2] == 0x55U);
+    assert(motor_runtime_next_control_mode_frame(&runtime, 2000U, &request) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[0] == 1U);
+    assert(request.data[2] == 0x33U);
+    assert(can_frame_init(&unselected_discovery_response,
+                          0x12U,
+                          unselected_response_payload,
+                          sizeof(unselected_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime,
+                                      &unselected_discovery_response,
+                                      2050U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING);
+    assert(can_frame_init(&response,
+                          0x11U,
+                          selected_response_payload,
+                          sizeof(selected_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response, 2100U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+    assert(runtime.discovery.state == MOTOR_DISCOVERY_STATE_READY);
+    assert(runtime.discovery.current_joint_index == 1U);
+}
+
+/**
+ * @brief Verifies masked mode admission ignores unselected failure but rejects selected gaps.
+ */
+static void test_motor_runtime_masked_mode_switch_requires_selected_readiness(void)
+{
+    MotorRuntime runtime;
+    CanFrame request;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.verified_joint_mask = 0x01U;
+    runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_FAILED;
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime, 1000U, &request) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[0] == 1U);
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.verified_joint_mask = 0x01U;
+    runtime.discovery.results[0].verified_fields_mask =
+        (uint16_t)(MOTOR_DISCOVERY_ALL_FIELDS_MASK &
+                   (uint16_t)~MOTOR_DISCOVERY_RANGE_FIELDS_MASK);
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_FAILED;
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR);
 }
 
 /**
@@ -1075,6 +1173,8 @@ int main(void)
     test_can_scheduler_reserves_progress_for_emergency_frames();
     test_motor_runtime_builds_fail_safe_disable_batch();
     test_motor_runtime_switches_mode_with_readback();
+    test_motor_runtime_masked_mode_switch_serializes_unselected_discovery();
+    test_motor_runtime_masked_mode_switch_requires_selected_readiness();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();

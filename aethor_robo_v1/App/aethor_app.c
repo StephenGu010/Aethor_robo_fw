@@ -66,6 +66,7 @@ typedef struct
     uint8_t control_group_ready;
     uint8_t failed_motor_number;
     uint8_t enabled_by_action_mask;
+    uint8_t cleanup_disable_mask;
     uint8_t missing_discovery_mask;
 } AethorAppAction;
 
@@ -414,7 +415,11 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
     application_action.failed_stage = failed_stage;
     application_action.failure_error = failure_error;
     application_action.failed_motor_number = failed_motor_number;
-    if (application_action.enabled_by_action_mask == 0U)
+    application_action.cleanup_disable_mask =
+        (failed_stage == PROTOCOL_COMMAND_STAGE_VALIDATE)
+            ? 0U
+            : application_action.command.motor_mask;
+    if (application_action.cleanup_disable_mask == 0U)
     {
         return aethor_app_complete_action(PROTOCOL_COMMAND_RESULT_FAILED,
                                           (uint16_t)failure_error,
@@ -425,7 +430,7 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
         &application_motor_runtime,
         S3519_CONTROL_MODE_POSITION_VELOCITY,
         S3519_MODE_COMMAND_DISABLE,
-        application_action.enabled_by_action_mask,
+        application_action.cleanup_disable_mask,
         &application_action.frames);
     if (runtime_status != MOTOR_RUNTIME_STATUS_OK)
     {
@@ -437,9 +442,8 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
         AETHOR_APP_ACTION_ONE_SHOT_CLEANUP_DISABLE_WAIT;
     application_action.priority = CAN_TX_PRIORITY_EMERGENCY;
     application_action.frame_read_index = 0U;
-    application_action.feedback_not_before_us = timestamp_us;
-    application_action.deadline_us = timestamp_us +
-                                     AETHOR_APP_ACTION_TIMEOUT_US;
+    application_action.feedback_not_before_us = 0U;
+    application_action.deadline_us = 0U;
     return 0U;
 }
 
@@ -611,9 +615,8 @@ static uint8_t aethor_app_advance_one_shot_setup(
                 AETHOR_APP_ACTION_ONE_SHOT_CLEAR_WAIT;
             application_action.priority = CAN_TX_PRIORITY_EMERGENCY;
             application_action.frame_read_index = 0U;
-            application_action.feedback_not_before_us = timestamp_us;
-            application_action.deadline_us = timestamp_us +
-                                             AETHOR_APP_ACTION_TIMEOUT_US;
+            application_action.feedback_not_before_us = 0U;
+            application_action.deadline_us = 0U;
             return 0U;
         }
         if (application_motor_runtime.mode_switch_state ==
@@ -668,9 +671,8 @@ static uint8_t aethor_app_advance_one_shot_setup(
         application_action.state = AETHOR_APP_ACTION_ONE_SHOT_ENABLE_WAIT;
         application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
         application_action.frame_read_index = 0U;
-        application_action.feedback_not_before_us = timestamp_us;
-        application_action.deadline_us = timestamp_us +
-                                         AETHOR_APP_ACTION_TIMEOUT_US;
+        application_action.feedback_not_before_us = 0U;
+        application_action.deadline_us = 0U;
         return 0U;
     }
     else if ((application_action.state ==
@@ -715,11 +717,11 @@ static uint8_t aethor_app_advance_one_shot_setup(
               application_action.frames.count) &&
              (aethor_app_selected_feedback_is_newer(
                   motor_snapshot,
-                  application_action.enabled_by_action_mask,
+                  application_action.cleanup_disable_mask,
                   application_action.feedback_not_before_us) != 0U) &&
              (aethor_app_selected_motors_have_state(
                   motor_snapshot,
-                  application_action.enabled_by_action_mask,
+                  application_action.cleanup_disable_mask,
                   S3519_DRIVER_STATE_DISABLED) != 0U))
     {
         return aethor_app_complete_action(
@@ -979,6 +981,8 @@ MotorRuntimeStatus aethor_app_next_can_frame(uint64_t timestamp_us,
               AETHOR_APP_ACTION_ONE_SHOT_CLEANUP_DISABLE_WAIT)))
         {
             application_action.feedback_not_before_us = timestamp_us;
+            application_action.deadline_us = timestamp_us +
+                                             AETHOR_APP_ACTION_TIMEOUT_US;
         }
         *priority = application_action.priority;
         return MOTOR_RUNTIME_STATUS_FRAME_READY;

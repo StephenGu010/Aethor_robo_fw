@@ -49,6 +49,37 @@ static void motor_runtime_skip_unselected_mode_joints(MotorRuntime *runtime)
 }
 
 /**
+ * @brief Checks that every selected motor retains a complete verified discovery result.
+ * @param runtime Initialized runtime owning discovery results.
+ * @param motor_mask Nonzero selected J1-J7 mask.
+ * @return One when every selected result is complete, otherwise zero.
+ */
+static uint8_t motor_runtime_selected_discovery_is_ready(
+    const MotorRuntime *runtime,
+    uint8_t motor_mask)
+{
+    uint8_t joint_index;
+
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+
+        if ((motor_mask & joint_bit) == 0U)
+        {
+            continue;
+        }
+        if (((runtime->discovery.verified_joint_mask & joint_bit) == 0U) ||
+            ((runtime->discovery.results[joint_index].verified_fields_mask &
+              MOTOR_DISCOVERY_ALL_FIELDS_MASK) !=
+             MOTOR_DISCOVERY_ALL_FIELDS_MASK))
+        {
+            return 0U;
+        }
+    }
+    return 1U;
+}
+
+/**
  * @brief Maps a discovery state-machine result to the public runtime result.
  * @param discovery_status Discovery result to map.
  * @return Equivalent runtime result.
@@ -92,9 +123,17 @@ static uint8_t motor_runtime_is_mode_readback_response(
     const MotorRuntime *runtime,
     const CanFrame *frame)
 {
+    uint8_t joint_index = runtime->mode_switch_joint_index;
+
     return (uint8_t)((runtime->mode_switch_state ==
                       MOTOR_MODE_SWITCH_READ_WAITING) &&
+                     (joint_index < ARM_JOINT_COUNT) &&
                      (frame->length == CAN_CLASSIC_MAX_DATA_LENGTH) &&
+                     (frame->identifier ==
+                      runtime->configuration->joints[joint_index].master_id) &&
+                     (frame->data[0] ==
+                      (uint8_t)runtime->configuration->joints[joint_index]
+                          .esc_id) &&
                      (frame->data[2] == 0x33U) &&
                      (frame->data[3] == S3519_REGISTER_CONTROL_MODE));
 }
@@ -807,8 +846,7 @@ MotorRuntimeStatus motor_runtime_begin_control_mode_switch_mask(
     {
         return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
-    if ((runtime->discovery.state != MOTOR_DISCOVERY_STATE_COMPLETE) ||
-        ((runtime->discovery.verified_joint_mask & motor_mask) != motor_mask))
+    if (motor_runtime_selected_discovery_is_ready(runtime, motor_mask) == 0U)
     {
         return MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR;
     }

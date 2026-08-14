@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "can_rx_inbox.h"
+#include "monotonic_time.h"
 #include "usb_cdc_stream.h"
 
 static UsbCdcStreamTransmitResult simulated_usb_result;
@@ -200,6 +201,37 @@ static void test_usb_busy_retry(void)
 }
 
 /**
+ * @brief Verifies a 32-bit millisecond tick extends monotonically across wraparound.
+ */
+static void test_monotonic_time_extends_hal_tick_wraparound(void)
+{
+    AethorMonotonicTimeState time_state = {0};
+    uint64_t timestamp_us;
+
+    timestamp_us = aethor_monotonic_time_update(&time_state, 0xFFFFFFFEUL);
+    assert(timestamp_us == 0xFFFFFFFEULL * 1000ULL);
+    timestamp_us = aethor_monotonic_time_update(&time_state, 0xFFFFFFFFUL);
+    assert(timestamp_us == (0xFFFFFFFEULL * 1000ULL) + 1000ULL);
+    timestamp_us = aethor_monotonic_time_update(&time_state, 0U);
+    assert(timestamp_us == (0xFFFFFFFEULL * 1000ULL) + 2000ULL);
+    timestamp_us = aethor_monotonic_time_update(&time_state, 1U);
+    assert(timestamp_us == (0xFFFFFFFEULL * 1000ULL) + 3000ULL);
+}
+
+/**
+ * @brief Verifies ordinary and repeated ticks never move extended time backward.
+ */
+static void test_monotonic_time_handles_increment_and_repeated_tick(void)
+{
+    AethorMonotonicTimeState time_state = {0};
+
+    assert(aethor_monotonic_time_update(&time_state, 100U) == 100000ULL);
+    assert(aethor_monotonic_time_update(&time_state, 125U) == 125000ULL);
+    assert(aethor_monotonic_time_update(&time_state, 125U) == 125000ULL);
+    assert(aethor_monotonic_time_update(&time_state, 126U) == 126000ULL);
+}
+
+/**
  * @brief Runs all ISR-to-task platform queue tests.
  */
 int main(void)
@@ -208,6 +240,8 @@ int main(void)
     test_usb_receive_line_assembly();
     test_usb_transmit_lifetime_and_priority();
     test_usb_busy_retry();
+    test_monotonic_time_extends_hal_tick_wraparound();
+    test_monotonic_time_handles_increment_and_repeated_tick();
     puts("PLATFORM_IO_TESTS_PASSED");
     return 0;
 }

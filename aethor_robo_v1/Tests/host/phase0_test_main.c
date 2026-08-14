@@ -24,6 +24,8 @@
 #include "protocol_contract.h"
 #include "s3519_codec.h"
 
+#define PHASE0_TEST_ACTION_TIMEOUT_US (500000ULL)
+
 /**
  * @brief Builds deterministic commissioned joint parameters for domain tests.
  * @return Valid seven-axis configuration independent of real hardware values.
@@ -1351,6 +1353,9 @@ static void phase0_assert_legacy_jog_validation_failure(
     assert(aethor_app_service(++timestamp_us) == 1U);
     phase0_assert_no_pending_can_frame(++timestamp_us);
     assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    assert(strcmp(output_batch.messages[0].data,
+                  "done 4 bench jog result=failed elapsed_ms=0 arrived=00\n") ==
+           0);
 }
 
 /**
@@ -1382,6 +1387,174 @@ static void test_aethor_app_legacy_jog_rejects_dynamic_validation_failures(void)
         1U,
         0U,
         11011U);
+}
+
+/**
+ * @brief Verifies a pre-enabled motor receives selected disable after mode failure.
+ */
+static void test_aethor_app_one_shot_mode_failure_disables_pre_enabled_motor(void)
+{
+    ProtocolOutputBatch output_batch;
+    CanFrame frame;
+    CanTxPriority priority;
+    MotorRuntimeStatus runtime_status;
+    uint64_t timestamp_us = 6000U;
+    uint8_t retry_index;
+
+    phase0_start_text_session(&timestamp_us, 11012U);
+    phase0_initialize_motor_subset("2 bench init 1", 0x01U, &timestamp_us);
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_ENABLED, ++timestamp_us);
+    phase0_submit_request("50 bench move 1 position=90 speed=30",
+                          ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.data[0] == 1U);
+    assert(frame.data[2] == 0x55U);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.data[0] == 1U);
+    assert(frame.data[2] == 0x33U);
+    for (retry_index = 1U;
+         retry_index < MOTOR_DISCOVERY_MAX_ATTEMPTS;
+         ++retry_index)
+    {
+        timestamp_us += MOTOR_DISCOVERY_REQUEST_TIMEOUT_US;
+        assert(aethor_app_next_can_frame(timestamp_us, &frame, &priority) ==
+               MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(frame.data[0] == 1U);
+        assert(frame.data[2] == 0x33U);
+    }
+    timestamp_us += MOTOR_DISCOVERY_REQUEST_TIMEOUT_US;
+    runtime_status = aethor_app_next_can_frame(timestamp_us, &frame, &priority);
+    assert(runtime_status == MOTOR_RUNTIME_STATUS_ACTION_FAILED);
+    assert(aethor_app_service(++timestamp_us) == 0U);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(priority == CAN_TX_PRIORITY_EMERGENCY);
+    assert(frame.identifier == 0x101U);
+    assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_DISABLE));
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
+}
+
+/**
+ * @brief Verifies clear feedback timeout starts selected best-effort disable.
+ */
+static void test_aethor_app_one_shot_clear_timeout_disables_selected_motor(void)
+{
+    ProtocolOutputBatch output_batch;
+    CanFrame frame;
+    CanTxPriority priority;
+    uint64_t timestamp_us = 7000U;
+
+    phase0_start_text_session(&timestamp_us, 11013U);
+    phase0_initialize_motor_subset("2 bench init 1", 0x01U, &timestamp_us);
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_ENABLED, ++timestamp_us);
+    phase0_submit_request("50 bench move 1 position=90 speed=30",
+                          ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    phase0_complete_mode_switch_subset(0x01U, &timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_CLEAR_ERROR));
+
+    timestamp_us += PHASE0_TEST_ACTION_TIMEOUT_US + 1U;
+    assert(aethor_app_service(timestamp_us) == 0U);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(priority == CAN_TX_PRIORITY_EMERGENCY);
+    assert(frame.identifier == 0x101U);
+    assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_DISABLE));
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
+}
+
+/**
+ * @brief Verifies the final clear frame starts a complete new feedback deadline window.
+ */
+static void test_aethor_app_one_shot_clear_deadline_starts_after_final_frame(void)
+{
+    ProtocolOutputBatch output_batch;
+    CanFrame frame;
+    CanTxPriority priority;
+    uint64_t timestamp_us = 8000U;
+    uint64_t clear_batch_started_us;
+
+    phase0_start_text_session(&timestamp_us, 11014U);
+    phase0_initialize_motor_subset("2 bench init 1,2", 0x03U, &timestamp_us);
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_DISABLED, ++timestamp_us);
+    phase0_feed_feedback(2U, S3519_DRIVER_STATE_DISABLED, ++timestamp_us);
+    phase0_submit_request(
+        "50 bench move 1,2 position=90,-45 speed=30,20",
+        ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    phase0_complete_mode_switch_subset(0x03U, &timestamp_us);
+    clear_batch_started_us = timestamp_us;
+
+    timestamp_us = clear_batch_started_us + 400000U;
+    assert(aethor_app_next_can_frame(timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.identifier == 0x101U);
+    timestamp_us = clear_batch_started_us + 499000U;
+    assert(aethor_app_next_can_frame(timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.identifier == 0x102U);
+
+    timestamp_us = clear_batch_started_us +
+                   PHASE0_TEST_ACTION_TIMEOUT_US + 1U;
+    assert(aethor_app_service(timestamp_us) == 0U);
+    phase0_assert_no_pending_can_frame(++timestamp_us);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_DISABLED, ++timestamp_us);
+    phase0_feed_feedback(2U, S3519_DRIVER_STATE_DISABLED, ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_ENABLE));
+}
+
+/**
+ * @brief Verifies retained selected discovery survives an unselected discovery failure.
+ */
+static void test_aethor_app_one_shot_uses_selected_verified_after_unselected_failure(void)
+{
+    ProtocolOutputBatch output_batch;
+    CanFrame frame;
+    CanTxPriority priority;
+    MotorRuntimeStatus runtime_status;
+    uint64_t timestamp_us = 9000U;
+    uint8_t retry_index;
+
+    phase0_start_text_session(&timestamp_us, 11015U);
+    phase0_initialize_motor_subset("2 bench init 1", 0x01U, &timestamp_us);
+    phase0_submit_request("3 bench init 2", ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.data[0] == 2U);
+    for (retry_index = 1U;
+         retry_index < MOTOR_DISCOVERY_MAX_ATTEMPTS;
+         ++retry_index)
+    {
+        timestamp_us += MOTOR_DISCOVERY_REQUEST_TIMEOUT_US;
+        assert(aethor_app_next_can_frame(timestamp_us, &frame, &priority) ==
+               MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(frame.data[0] == 2U);
+    }
+    timestamp_us += MOTOR_DISCOVERY_REQUEST_TIMEOUT_US;
+    runtime_status = aethor_app_next_can_frame(timestamp_us, &frame, &priority);
+    assert(runtime_status != MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(aethor_app_service(++timestamp_us) == 1U);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_DISABLED, ++timestamp_us);
+    phase0_submit_request("50 bench move 1 position=90 speed=30",
+                          ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+    phase0_complete_mode_switch_subset(0x01U, &timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.identifier == 0x101U);
+    assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_CLEAR_ERROR));
 }
 
 /**
@@ -1532,6 +1705,10 @@ int main(void)
     test_aethor_app_one_shot_move_fails_before_enable_on_invalid_target();
     test_aethor_app_legacy_jog_accepts_dynamic_range_above_three_degrees();
     test_aethor_app_legacy_jog_rejects_dynamic_validation_failures();
+    test_aethor_app_one_shot_mode_failure_disables_pre_enabled_motor();
+    test_aethor_app_one_shot_clear_timeout_disables_selected_motor();
+    test_aethor_app_one_shot_clear_deadline_starts_after_final_frame();
+    test_aethor_app_one_shot_uses_selected_verified_after_unselected_failure();
     test_aethor_app_transport_fault_stops_and_disables();
 
     printf("PHASE0_TESTS_PASSED\n");

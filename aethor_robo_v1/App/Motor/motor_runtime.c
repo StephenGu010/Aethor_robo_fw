@@ -215,6 +215,10 @@ static MotorRuntimeStatus motor_runtime_accept_parameter_response(
                                                         &response);
     if (discovery_status != MOTOR_DISCOVERY_STATUS_OK)
     {
+        if (runtime->discovery.state == MOTOR_DISCOVERY_STATE_FAILED)
+        {
+            runtime->discovery_active = 0U;
+        }
         ++runtime->rejected_parameter_response_count;
         return motor_runtime_map_discovery_status(discovery_status);
     }
@@ -228,6 +232,10 @@ static MotorRuntimeStatus motor_runtime_accept_parameter_response(
         motor->state = MOTOR_LIFECYCLE_DISABLED;
     }
     ++runtime->accepted_parameter_response_count;
+    if (runtime->discovery.state == MOTOR_DISCOVERY_STATE_COMPLETE)
+    {
+        runtime->discovery_active = 0U;
+    }
     return MOTOR_RUNTIME_STATUS_OK;
 }
 
@@ -366,6 +374,7 @@ MotorRuntimeStatus motor_runtime_begin_discovery(MotorRuntime *runtime,
     {
         return MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR;
     }
+    runtime->discovery_active = 1U;
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
         uint8_t joint_bit = (uint8_t)(1U << joint_index);
@@ -392,6 +401,8 @@ MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
                                                       uint64_t timestamp_us,
                                                       CanFrame *frame)
 {
+    MotorDiscoveryStatus discovery_status;
+
     if ((runtime == NULL) || (frame == NULL))
     {
         return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
@@ -401,8 +412,78 @@ MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
 
-    return motor_runtime_map_discovery_status(
-        motor_discovery_next_request(&runtime->discovery, timestamp_us, frame));
+    discovery_status = motor_discovery_next_request(&runtime->discovery,
+                                                     timestamp_us,
+                                                     frame);
+    if ((runtime->discovery.state == MOTOR_DISCOVERY_STATE_COMPLETE) ||
+        (runtime->discovery.state == MOTOR_DISCOVERY_STATE_FAILED))
+    {
+        runtime->discovery_active = 0U;
+    }
+    return motor_runtime_map_discovery_status(discovery_status);
+}
+
+/** @brief Aborts only active discovery and mode-switch parameter sequences. */
+MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
+    MotorRuntime *runtime)
+{
+    uint8_t joint_index;
+    uint8_t mode_switch_is_active;
+
+    if (runtime == NULL)
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+
+    if (runtime->discovery_active != 0U)
+    {
+        runtime->discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+        runtime->discovery.target_joint_mask = 0U;
+        runtime->discovery.current_joint_index = 0U;
+        runtime->discovery.current_register_index = 0U;
+        runtime->discovery.attempt_count = 0U;
+        runtime->discovery.request_sent_at_us = 0U;
+        runtime->discovery_active = 0U;
+    }
+
+    mode_switch_is_active =
+        (uint8_t)((runtime->mode_switch_state == MOTOR_MODE_SWITCH_WRITING) ||
+                  (runtime->mode_switch_state == MOTOR_MODE_SWITCH_READ_READY) ||
+                  (runtime->mode_switch_state ==
+                   MOTOR_MODE_SWITCH_READ_WAITING));
+    if (mode_switch_is_active != 0U)
+    {
+        for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+        {
+            uint8_t joint_bit = (uint8_t)(1U << joint_index);
+            MotorDiscoveryResult *result =
+                &runtime->discovery.results[joint_index];
+
+            if (((runtime->mode_switch_joint_mask & joint_bit) != 0U) &&
+                ((result->observed_control_mode == 1U) ||
+                 (result->observed_control_mode == 2U)))
+            {
+                result->verified_fields_mask |=
+                    MOTOR_DISCOVERY_MODE_FIELDS_MASK;
+                if ((result->verified_fields_mask &
+                     MOTOR_DISCOVERY_ALL_FIELDS_MASK) ==
+                    MOTOR_DISCOVERY_ALL_FIELDS_MASK)
+                {
+                    runtime->discovery.verified_joint_mask |= joint_bit;
+                }
+            }
+        }
+        runtime->mode_switch_state = MOTOR_MODE_SWITCH_IDLE;
+        runtime->mode_switch_joint_mask = 0U;
+        runtime->mode_switch_joint_index = 0U;
+        runtime->mode_switch_attempt_count = 0U;
+        runtime->mode_request_sent_at_us = 0U;
+    }
+    return MOTOR_RUNTIME_STATUS_OK;
 }
 
 /**

@@ -1841,6 +1841,13 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
     static const char profile[] = "arm";
 #endif
 
+    if (engine->active_motion_request_id != 0U)
+    {
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        request,
+                                                        "busy");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
     if ((request->positional_count != 0U) || (request->field_count != 0U))
     {
         (void)protocol_engine_append_text_command_error(output_batch,
@@ -2747,6 +2754,14 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
             request->command_words[1].data);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
+    if ((engine->active_motion_request_id != 0U) &&
+        (command_type != PROTOCOL_COMMAND_STOP))
+    {
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        request,
+                                                        "busy");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
     if (command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
     {
         TextProtocolSpan position_span;
@@ -2917,6 +2932,12 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                                                         request,
                                                         "busy");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+    {
+        engine->active_motion_request_id = request->request_id;
+        engine->active_motion_accepted_at_us = timestamp_us;
+        engine->active_motion_planned_duration_us = 0U;
     }
     return protocol_engine_append_text_format(
         output_batch,
@@ -4314,6 +4335,13 @@ uint8_t protocol_engine_submit_command_result(
     engine->results[slot_index] = *result;
     protocol_engine_compiler_barrier();
     ++engine->result_write_sequence;
+    if ((result->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+        (result->request_id == engine->active_motion_request_id))
+    {
+        engine->active_motion_request_id = 0U;
+        engine->active_motion_accepted_at_us = 0U;
+        engine->active_motion_planned_duration_us = 0U;
+    }
     return 1U;
 }
 

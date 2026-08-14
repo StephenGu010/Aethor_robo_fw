@@ -84,6 +84,7 @@ typedef struct
     uint8_t mode_switch_joint_mask;
     uint8_t mode_switch_joint_index;
     uint8_t mode_switch_attempt_count;
+    uint8_t discovery_active;
     uint8_t initialized;
 } MotorRuntime;
 
@@ -115,6 +116,14 @@ MotorRuntimeStatus motor_runtime_begin_discovery(MotorRuntime *runtime,
 MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
                                                       uint64_t timestamp_us,
                                                       CanFrame *frame);
+
+/**
+ * @brief Aborts only active discovery and mode-switch parameter sequences.
+ * @param runtime Initialized runtime whose verified results and feedback remain intact.
+ * @return OK, INVALID_ARGUMENT, or NOT_INITIALIZED; repeated calls are idempotent.
+ */
+MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
+    MotorRuntime *runtime);
 
 /**
  * @brief Routes one validated Classic CAN frame to discovery or feedback decode.

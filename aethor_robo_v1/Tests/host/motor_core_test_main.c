@@ -734,6 +734,69 @@ static void test_motor_runtime_masked_mode_switch_requires_selected_readiness(vo
 }
 
 /**
+ * @brief Verifies aborting active discovery and mode sequences is idempotent,
+ *        emits no old parameter frame, and preserves verified runtime data.
+ */
+static void test_motor_runtime_aborts_active_parameter_sequences(void)
+{
+    MotorRuntime runtime;
+    CanFrame frame;
+    MotorDiscoveryResult preserved_result;
+    uint32_t preserved_feedback_count;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.verified_joint_mask = 0x02U;
+    runtime.discovery.results[1].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.results[1].observed_control_mode = 2U;
+    runtime.discovery.results[1].maximum_speed_rad_s = 20.0F;
+    runtime.accepted_feedback_count = 7U;
+    preserved_result = runtime.discovery.results[1];
+    preserved_feedback_count = runtime.accepted_feedback_count;
+    assert(motor_runtime_begin_discovery(&runtime, 0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_discovery_frame(&runtime, 1000U, &frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.discovery.state == MOTOR_DISCOVERY_STATE_COMPLETE);
+    assert(motor_runtime_next_discovery_frame(&runtime, 2000U, &frame) ==
+           MOTOR_RUNTIME_STATUS_DISCOVERY_COMPLETE);
+    assert(runtime.discovery.verified_joint_mask == 0x02U);
+    assert(memcmp(&runtime.discovery.results[1],
+                  &preserved_result,
+                  sizeof(preserved_result)) == 0);
+    assert(runtime.accepted_feedback_count == preserved_feedback_count);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime) ==
+           MOTOR_RUNTIME_STATUS_OK);
+
+    runtime.discovery.verified_joint_mask = 0x01U;
+    runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.results[0].observed_control_mode = 2U;
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime, 3000U, &frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_IDLE);
+    assert(runtime.mode_switch_joint_mask == 0U);
+    assert(runtime.mode_switch_joint_index == 0U);
+    assert(runtime.mode_switch_attempt_count == 0U);
+    assert(runtime.mode_request_sent_at_us == 0U);
+    assert((runtime.discovery.results[0].verified_fields_mask &
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK) != 0U);
+    assert((runtime.discovery.verified_joint_mask & 0x01U) != 0U);
+    assert(motor_runtime_next_control_mode_frame(&runtime, 4000U, &frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+}
+
+/**
  * @brief Verifies seven control frames are accepted atomically or not at all.
  */
 static void test_can_scheduler_accepts_atomic_seven_frame_groups(void)
@@ -1260,6 +1323,7 @@ int main(void)
     test_motor_runtime_switches_mode_with_readback();
     test_motor_runtime_masked_mode_switch_serializes_unselected_discovery();
     test_motor_runtime_masked_mode_switch_requires_selected_readiness();
+    test_motor_runtime_aborts_active_parameter_sequences();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();

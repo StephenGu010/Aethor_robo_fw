@@ -93,6 +93,27 @@ static void assert_normal_command_queue_empty(ProtocolEngine *engine)
     assert(protocol_engine_pop_command(engine, &command) == 0U);
 }
 
+/** @brief Completes one parser-only one-shot command so the next case is independent. */
+static void complete_parser_one_shot(ProtocolEngine *engine,
+                                     const ProtocolCommand *command,
+                                     uint64_t completed_at_us)
+{
+    ProtocolCommandResult result;
+
+    assert(engine != NULL);
+    assert(command != NULL);
+    memset(&result, 0, sizeof(result));
+    result.request_id = command->request_id;
+    result.session_id = command->session_id;
+    result.type = command->type;
+    result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
+    result.accepted_at_us = command->accepted_at_us;
+    result.completed_at_us = completed_at_us;
+    result.motor_mask = command->motor_mask;
+    result.bench_relative_scope = command->bench_relative_scope;
+    assert(protocol_engine_submit_command_result(engine, &result) == 1U);
+}
+
 /** @brief Verifies HELLO and PING expose only the short public identity fields. */
 static void test_text_lifecycle(void)
 {
@@ -476,6 +497,7 @@ static void test_text_bench_move_ordered_values(void)
     assert(command.motor_mask == 0x01U);
     assert(command.values[0] == 90.0F);
     assert(command.speeds[0] == 30.0F);
+    complete_parser_one_shot(&engine, &command, 1500U);
 
     response = process_text_request(
         &engine,
@@ -491,6 +513,7 @@ static void test_text_bench_move_ordered_values(void)
     assert(command.values[2] == -45.0F);
     assert(command.speeds[0] == 30.0F);
     assert(command.speeds[2] == 20.0F);
+    complete_parser_one_shot(&engine, &command, 2500U);
 
     response = process_text_request(
         &engine,
@@ -514,6 +537,7 @@ static void test_text_bench_move_ordered_values(void)
             assert(command.speeds[joint_index] == 0.0F);
         }
     }
+    complete_parser_one_shot(&engine, &command, 3500U);
 
     response = process_text_request(
         &engine,
@@ -779,6 +803,82 @@ static void test_text_bench_move_replay(void)
     assert(strcmp(response,
                   "error 62 bench move code=request_conflict\n") == 0);
     assert(protocol_engine_pop_command(&engine, &command) == 0U);
+}
+
+/**
+ * @brief Verifies an accepted one-shot move rejects new business work but keeps
+ *        exact replay, conflict detection, and the priority STOP slot live.
+ */
+static void test_text_bench_move_busy_and_stop_arbitration(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    const char *response;
+
+    protocol_engine_init(&engine, 4322U);
+    (void)process_text_request(&engine,
+                               "1 hello\n",
+                               1000U,
+                               PROTOCOL_ENGINE_STATUS_OK,
+                               &output_batch);
+    response = process_text_request(
+        &engine,
+        "50 bench move 1 position=90 speed=30\n",
+        2000U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 50 bench move accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED);
+
+    response = process_text_request(&engine,
+                                    "51 bench disable 1\n",
+                                    3000U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response,
+                  "error 51 bench disable code=busy\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(
+        &engine,
+        "50 bench move 1 position=90 speed=30\n",
+        4000U,
+        PROTOCOL_ENGINE_STATUS_REPLAYED,
+        &output_batch);
+    assert(strcmp(response, "ok 50 bench move accepted=1\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(
+        &engine,
+        "50 bench move 1 position=89 speed=30\n",
+        5000U,
+        PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 50 bench move code=request_conflict\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(&engine,
+                                    "53 hello\n",
+                                    5500U,
+                                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                                    &output_batch);
+    assert(strcmp(response, "error 53 hello code=busy\n") == 0);
+    assert(engine.session_active != 0U);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(&engine,
+                                    "52 bench stop 1\n",
+                                    6000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 52 bench stop accepted=1\n") == 0);
+    assert(protocol_engine_pop_stop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_STOP);
+    assert(command.motor_mask == 0x01U);
+    assert_normal_command_queue_empty(&engine);
 }
 
 /** @brief Verifies bench structural rules and compile-time profile gate. */
@@ -1167,6 +1267,7 @@ int main(void)
     test_text_bench_move_ordered_values();
     test_text_bench_move_rejections();
     test_text_bench_move_replay();
+    test_text_bench_move_busy_and_stop_arbitration();
     test_text_bench_done_output();
     test_text_bench_move_done_output();
     test_text_watchdog_scope();

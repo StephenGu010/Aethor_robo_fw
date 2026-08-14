@@ -1,4 +1,6 @@
-# 首组七轴固件软件交接
+# 首组七轴固件软件交接（历史 aethor-arm-ascii-v1 切片）
+
+> 状态：已被根目录 `HANDOFF.md`、`docs/compatibility/aethor-text-v1-migration.md` 和 `docs/handoffs/aethor-text-v1-bench/verification.txt` 取代。本文件保留迁移前 CRC 协议的软件交付边界和验证记录，不是当前固件接口说明。
 
 ## 结论
 

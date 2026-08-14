@@ -23,20 +23,6 @@
 void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id);
 
 /**
- * @brief Calculates a saturated one-shot travel, settle, and safety timeout.
- * @param current_position_rad Fresh position captured before motion starts.
- * @param target_position_rad Fixed accepted absolute target position.
- * @param speed_rad_s Fixed accepted positive travel speed.
- * @param timeout_us Destination relative timeout in microseconds.
- * @return true for valid finite inputs, otherwise false.
- */
-bool aethor_app_calculate_one_shot_motion_timeout_us(
-    float current_position_rad,
-    float target_position_rad,
-    float speed_rad_s,
-    uint64_t *timeout_us);
-
-/**
  * @brief Executes one non-blocking Phase 0 application service cycle.
  * @param timestamp_us Current monotonic time in microseconds.
  */

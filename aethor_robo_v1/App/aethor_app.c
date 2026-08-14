@@ -84,9 +84,9 @@ static uint8_t application_initialized;
 static void aethor_app_update_protocol_context(uint64_t timestamp_us);
 
 /**
- * @brief Calculates a saturated one-shot travel, settle, and safety timeout.
+ * @brief Calculates a finite representable travel, settle, and safety timeout.
  */
-bool aethor_app_calculate_one_shot_motion_timeout_us(
+static bool aethor_app_calculate_one_shot_motion_timeout_us(
     float current_position_rad,
     float target_position_rad,
     float speed_rad_s,
@@ -111,23 +111,25 @@ bool aethor_app_calculate_one_shot_motion_timeout_us(
     if (!isfinite(total_timeout_us) ||
         (total_timeout_us >= (double)UINT64_MAX))
     {
-        *timeout_us = UINT64_MAX;
-        return true;
+        return false;
     }
 
     *timeout_us = (uint64_t)ceil(total_timeout_us);
     return true;
 }
 
-/** @brief Adds two monotonic intervals without wrapping the 64-bit time base. */
-static uint64_t aethor_app_saturating_add_us(uint64_t timestamp_us,
-                                             uint64_t interval_us)
+/** @brief Adds a timeout only when the absolute deadline is finite and representable. */
+static bool aethor_app_calculate_deadline_us(uint64_t timestamp_us,
+                                             uint64_t interval_us,
+                                             uint64_t *deadline_us)
 {
-    if (interval_us > (UINT64_MAX - timestamp_us))
+    if ((deadline_us == NULL) ||
+        (interval_us >= (UINT64_MAX - timestamp_us)))
     {
-        return UINT64_MAX;
+        return false;
     }
-    return timestamp_us + interval_us;
+    *deadline_us = timestamp_us + interval_us;
+    return true;
 }
 
 /** @brief Reports whether the accepted one-shot action owns its link lifecycle. */
@@ -599,6 +601,7 @@ static uint8_t aethor_app_start_one_shot_motion(
 {
     MotorRuntimeStatus runtime_status;
     uint64_t maximum_timeout_us = 0U;
+    uint64_t motion_deadline_us;
     uint8_t joint_index;
 
     if ((motor_snapshot == NULL) ||
@@ -639,6 +642,17 @@ static uint8_t aethor_app_start_one_shot_motion(
         }
     }
 
+    if (!aethor_app_calculate_deadline_us(timestamp_us,
+                                          maximum_timeout_us,
+                                          &motion_deadline_us))
+    {
+        return aethor_app_begin_one_shot_cleanup(
+            PROTOCOL_COMMAND_STAGE_MOTION,
+            PROTOCOL_COMMAND_ERROR_ACTION_FAILED,
+            0U,
+            timestamp_us);
+    }
+
     runtime_status = motor_runtime_build_position_velocity_subset(
         &application_motor_runtime,
         application_action.command.motor_mask,
@@ -660,8 +674,7 @@ static uint8_t aethor_app_start_one_shot_motion(
     application_action.state = AETHOR_APP_ACTION_ONE_SHOT_MOVE_WAIT;
     application_action.priority = CAN_TX_PRIORITY_JOINT_CONTROL;
     application_action.frame_read_index = 0U;
-    application_action.deadline_us =
-        aethor_app_saturating_add_us(timestamp_us, maximum_timeout_us);
+    application_action.deadline_us = motion_deadline_us;
     return 0U;
 }
 

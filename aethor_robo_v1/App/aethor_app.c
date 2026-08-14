@@ -166,6 +166,45 @@ static uint8_t aethor_app_active_action_owns_link_lifecycle(void)
     }
 }
 
+/** @brief Maps the current one-shot state to stable terminal-result stage metadata. */
+static ProtocolCommandStage aethor_app_current_one_shot_stage(void)
+{
+    switch (application_action.state)
+    {
+        case AETHOR_APP_ACTION_ONE_SHOT_DISCOVERY:
+            return PROTOCOL_COMMAND_STAGE_DISCOVERY;
+        case AETHOR_APP_ACTION_ONE_SHOT_MODE_SWITCH:
+            return PROTOCOL_COMMAND_STAGE_MODE;
+        case AETHOR_APP_ACTION_ONE_SHOT_CLEAR_WAIT:
+            return PROTOCOL_COMMAND_STAGE_CLEAR;
+        case AETHOR_APP_ACTION_ONE_SHOT_ENABLE_WAIT:
+            return PROTOCOL_COMMAND_STAGE_ENABLE;
+        case AETHOR_APP_ACTION_ONE_SHOT_MOVE_WAIT:
+            return PROTOCOL_COMMAND_STAGE_MOTION;
+        case AETHOR_APP_ACTION_ONE_SHOT_HOLD_WAIT:
+            return PROTOCOL_COMMAND_STAGE_HOLD;
+        case AETHOR_APP_ACTION_ONE_SHOT_DISABLE_WAIT:
+            return PROTOCOL_COMMAND_STAGE_DISABLE;
+        case AETHOR_APP_ACTION_ONE_SHOT_CLEANUP_DISABLE_WAIT:
+            return (application_action.failed_stage !=
+                    PROTOCOL_COMMAND_STAGE_NONE)
+                       ? application_action.failed_stage
+                       : PROTOCOL_COMMAND_STAGE_DISABLE;
+        case AETHOR_APP_ACTION_IDLE:
+        case AETHOR_APP_ACTION_MODE_SWITCH:
+        case AETHOR_APP_ACTION_DISCOVERY:
+        case AETHOR_APP_ACTION_BENCH_MODE_SWITCH:
+        case AETHOR_APP_ACTION_ENABLE_WAIT:
+        case AETHOR_APP_ACTION_BENCH_MOVE_WAIT:
+        case AETHOR_APP_ACTION_DISABLE_WAIT:
+        case AETHOR_APP_ACTION_CLEAR_FAULT_WAIT:
+        case AETHOR_APP_ACTION_MOTION:
+        case AETHOR_APP_ACTION_CONTROLLED_STOP:
+        default:
+            return PROTOCOL_COMMAND_STAGE_NONE;
+    }
+}
+
 /** @brief Maps the public arm mode to the vendor identifier offset. */
 static S3519ControlMode aethor_app_vendor_mode(ArmControlMode control_mode)
 {
@@ -2327,14 +2366,6 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         memset(&arm_snapshot, 0, sizeof(arm_snapshot));
         (void)arm_controller_get_snapshot(&application_controller,
                                           &arm_snapshot);
-        result_generated = aethor_app_check_one_shot_motor_safety(
-            &motor_snapshot,
-            timestamp_us,
-            &one_shot_motor_failure_detected);
-        if (one_shot_motor_failure_detected != 0U)
-        {
-            return result_generated;
-        }
         if ((arm_snapshot.enabled != 0U) || (arm_snapshot.moving != 0U) ||
             (aethor_app_active_action_owns_link_lifecycle() != 0U))
         {
@@ -2370,6 +2401,16 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
             {
                 if (application_action.state != AETHOR_APP_ACTION_IDLE)
                 {
+                    if ((runtime_fault == ARM_FAULT_CONTROL_DEADLINE) &&
+                        (application_action.command.type ==
+                         PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED))
+                    {
+                        application_action.failed_stage =
+                            aethor_app_current_one_shot_stage();
+                        application_action.failure_error =
+                            PROTOCOL_COMMAND_ERROR_ACTION_FAILED;
+                        application_action.failed_motor_number = 0U;
+                    }
                     result_generated = aethor_app_complete_action(
                         PROTOCOL_COMMAND_RESULT_FAILED,
                         (uint16_t)runtime_fault,
@@ -2388,6 +2429,14 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                     &application_protocol_engine);
                 return result_generated;
             }
+        }
+        result_generated = aethor_app_check_one_shot_motor_safety(
+            &motor_snapshot,
+            timestamp_us,
+            &one_shot_motor_failure_detected);
+        if (one_shot_motor_failure_detected != 0U)
+        {
+            return result_generated;
         }
 
         if ((aethor_app_active_action_owns_link_lifecycle() == 0U) &&

@@ -1124,6 +1124,31 @@ static void phase0_enter_one_shot_move_wait(
 }
 
 /**
+ * @brief Asserts the complete standardized global control-deadline failure line.
+ * @param output_batch Single formatted terminal result.
+ * @param expected_stage Stable stage token for the interrupted one-shot phase.
+ */
+static void phase0_assert_control_deadline_failure(
+    const ProtocolOutputBatch *output_batch,
+    const char *expected_stage)
+{
+    char expected_output[PROTOCOL_ENGINE_MESSAGE_CAPACITY];
+    int formatted_length;
+
+    assert(output_batch != NULL);
+    assert(expected_stage != NULL);
+    assert(output_batch->count == 1U);
+    formatted_length = snprintf(
+        expected_output,
+        sizeof(expected_output),
+        "done 50 bench move result=failed stage=%s code=action_failed motor=?\n",
+        expected_stage);
+    assert(formatted_length > 0);
+    assert((size_t)formatted_length < sizeof(expected_output));
+    assert(strcmp(output_batch->messages[0].data, expected_output) == 0);
+}
+
+/**
  * @brief Completes selected motor discovery and POS_VEL mode readback.
  * @param timestamp_us Mutable monotonic timestamp used by the setup.
  */
@@ -2266,6 +2291,57 @@ static void test_aethor_app_one_shot_control_deadline_is_global(void)
     assert(aethor_app_get_snapshot(&arm_snapshot));
     assert(arm_snapshot.fault == ARM_FAULT_CONTROL_DEADLINE);
     assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    phase0_assert_control_deadline_failure(&output_batch, "motion");
+}
+
+/**
+ * @brief Verifies a third control miss outranks simultaneous selected stale feedback.
+ */
+static void test_aethor_app_one_shot_control_deadline_outranks_selected_stale(void)
+{
+    ProtocolOutputBatch output_batch;
+    ArmSnapshot arm_snapshot;
+    CanFrame frame;
+    CanTxPriority priority;
+    uint64_t timestamp_us = 19500U;
+    uint8_t disabled_motor_mask = 0U;
+    uint8_t service_index;
+
+    phase0_enter_one_shot_move_wait(
+        "2 bench init 1",
+        0x01U,
+        "50 bench move 1 position=1 speed=0.000001",
+        0x01U,
+        11027U,
+        &timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    for (service_index = 0U; service_index < 2U; ++service_index)
+    {
+        timestamp_us += 5001U;
+        phase0_feed_feedback(1U, S3519_DRIVER_STATE_ENABLED, timestamp_us);
+        assert(aethor_app_service(timestamp_us) == 0U);
+    }
+    timestamp_us += MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US + 1U;
+    (void)aethor_app_service(timestamp_us);
+
+    while (aethor_app_pop_emergency_can_frame(&frame) != 0U)
+    {
+        uint8_t motor_number = (frame.identifier >= 0x101U)
+                                   ? (uint8_t)(frame.identifier - 0x100U)
+                                   : (uint8_t)frame.identifier;
+
+        assert(motor_number >= 1U);
+        assert(motor_number <= ARM_JOINT_COUNT);
+        assert(phase0_is_mode_command(&frame, S3519_MODE_COMMAND_DISABLE));
+        disabled_motor_mask |= (uint8_t)(1U << (motor_number - 1U));
+    }
+    assert(disabled_motor_mask == 0x7FU);
+    assert(aethor_app_get_snapshot(&arm_snapshot));
+    assert(arm_snapshot.fault == ARM_FAULT_CONTROL_DEADLINE);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    phase0_assert_control_deadline_failure(&output_batch, "motion");
+    phase0_assert_no_pending_can_frame(++timestamp_us);
 }
 
 /**
@@ -2440,6 +2516,7 @@ int main(void)
     test_aethor_app_one_shot_move_selected_stale_fails_immediately();
     test_aethor_app_one_shot_move_ignores_unselected_fault();
     test_aethor_app_one_shot_control_deadline_is_global();
+    test_aethor_app_one_shot_control_deadline_outranks_selected_stale();
     test_aethor_app_one_shot_shutdown_safety_fails_closed();
     test_aethor_app_legacy_bench_actions_still_require_keepalive();
     test_aethor_app_repeats_unfinished_bench_target_batch();

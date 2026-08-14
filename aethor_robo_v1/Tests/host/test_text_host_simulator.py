@@ -224,6 +224,40 @@ class AethorTextSimulatorTests(unittest.TestCase):
              "error 50 bench code=unknown_command"),
             ("50 show",
              "error 50 show code=unknown_command"),
+            ("50 help SHOW",
+             "error 50 help code=bad_argument"),
+            ("50 help STREAM",
+             "error 50 help code=bad_argument"),
+            ("50 help ARM",
+             "error 50 help code=bad_argument"),
+            ("50 help BENCH",
+             "error 50 help code=bad_argument"),
+            ("50 help show extra",
+             "error 50 help code=bad_argument"),
+            ("50 help topic=show",
+             "error 50 help code=bad_argument"),
+            ("50 show diag CAN",
+             "error 50 show diag code=bad_argument"),
+            ("50 show diag MOTION",
+             "error 50 show diag code=bad_argument"),
+            ("50 show diag USB",
+             "error 50 show diag code=bad_argument"),
+            ("50 show diag RTOS",
+             "error 50 show diag code=bad_argument"),
+            ("50 show diag unknown",
+             "error 50 show diag code=bad_argument"),
+            ("50 show diag can extra",
+             "error 50 show diag code=bad_argument"),
+            ("50 show diag can unexpected=1",
+             "error 50 show diag code=bad_argument"),
+            ("50 show info extra",
+             "error 50 show info code=bad_argument"),
+            ("50 show joints extra",
+             "error 50 show joints code=bad_argument"),
+            ("50 show motors extra",
+             "error 50 show motors code=bad_argument"),
+            ("50 show motor 1 extra",
+             "error 50 show motor code=bad_argument"),
         )
         for request_body, expected_error in invalid_cases:
             with self.subTest(request=request_body):
@@ -242,6 +276,51 @@ class AethorTextSimulatorTests(unittest.TestCase):
                 self.assertTrue(any("link_timeout" in output
                                     for output in simulator.drain_outputs()))
 
+    def test_c_command_shape_table_accepts_and_refreshes_watchdog(self) -> None:
+        """Accepts every public lower-case help, show, stream, and bench shape."""
+        valid_cases = (
+            ("80 help", "ok 80 help "),
+            ("80 help show", "ok 80 help show "),
+            ("80 help stream", "ok 80 help stream "),
+            ("80 help arm", "ok 80 help arm "),
+            ("80 help bench", "ok 80 help bench "),
+            ("80 show info", "ok 80 show info "),
+            ("80 show state", "ok 80 show state "),
+            ("80 show joints", "ok 80 show joints "),
+            ("80 show motors", "ok 80 show motors "),
+            ("80 show motor 1", "ok 80 show motor joint=1 "),
+            ("80 show config", "ok 80 show config "),
+            ("80 show config 1", "ok 80 show config "),
+            ("80 show diag", "ok 80 show diag "),
+            ("80 show diag can", "ok 80 show diag can "),
+            ("80 show diag motion", "ok 80 show diag motion "),
+            ("80 show diag usb", "ok 80 show diag usb "),
+            ("80 show diag rtos", "ok 80 show diag rtos "),
+            ("80 stream off", "ok 80 stream off"),
+            ("80 stream joints rate=1", "ok 80 stream joints rate=1"),
+            ("80 stream motors rate=1", "ok 80 stream motors rate=1"),
+            ("80 bench init 1", "ok 80 bench init accepted=1"),
+            ("80 bench enable 1", "ok 80 bench enable accepted=1"),
+            ("80 bench jog 1 delta=1 speed=1",
+             "ok 80 bench jog accepted=1"),
+            ("80 bench move 1 position=1 speed=1",
+             "ok 80 bench move accepted=1"),
+            ("80 bench stop 1", "ok 80 bench stop accepted=1"),
+            ("80 bench disable 1", "ok 80 bench disable accepted=1"),
+            ("80 bench clear 1", "ok 80 bench clear accepted=1"),
+        )
+        for request_body, expected_prefix in valid_cases:
+            with self.subTest(request=request_body):
+                simulator = AethorTextSimulator(boot_id=1234, profile="bench")
+                simulator.process_line(encode_line("1 hello"))
+                simulator.process_line(encode_line("2 bench enable 1"))
+                simulator.drain_outputs()
+                simulator.advance(900)
+
+                responses = simulator.process_line(encode_line(request_body))
+                self.assertTrue(responses[0].startswith(expected_prefix), responses)
+                self.assertEqual(simulator.last_request_ms, 900)
+
     def test_valid_ping_show_and_replay_refresh_energized_watchdog(self) -> None:
         """Refreshes watchdog time only for valid commands and exact replay."""
         keepalive_requests = (
@@ -250,6 +329,14 @@ class AethorTextSimulatorTests(unittest.TestCase):
             ("3 show config 1", None),
             ("3 show config 7", None),
             ("3 show config 01", None),
+            ("3 help show", None),
+            ("3 help stream", None),
+            ("3 help arm", None),
+            ("3 help bench", None),
+            ("3 show diag can", None),
+            ("3 show diag motion", None),
+            ("3 show diag usb", None),
+            ("3 show diag rtos", None),
             ("50 show state", "50 show state"),
         )
         for request_body, replay_seed in keepalive_requests:

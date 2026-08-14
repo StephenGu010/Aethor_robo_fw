@@ -306,6 +306,40 @@ static void test_text_request_shape_rejections(void)
          "error 69 bench code=unknown_command\n"},
         {"70 show\n",
          "error 70 show code=unknown_command\n"},
+        {"71 help SHOW\n",
+         "error 71 help code=bad_argument\n"},
+        {"72 help STREAM\n",
+         "error 72 help code=bad_argument\n"},
+        {"73 help ARM\n",
+         "error 73 help code=bad_argument\n"},
+        {"74 help BENCH\n",
+         "error 74 help code=bad_argument\n"},
+        {"75 help show extra\n",
+         "error 75 help code=bad_argument\n"},
+        {"76 help topic=show\n",
+         "error 76 help code=bad_argument\n"},
+        {"77 show diag CAN\n",
+         "error 77 show diag code=bad_argument\n"},
+        {"78 show diag MOTION\n",
+         "error 78 show diag code=bad_argument\n"},
+        {"79 show diag USB\n",
+         "error 79 show diag code=bad_argument\n"},
+        {"80 show diag RTOS\n",
+         "error 80 show diag code=bad_argument\n"},
+        {"81 show diag unknown\n",
+         "error 81 show diag code=bad_argument\n"},
+        {"82 show diag can extra\n",
+         "error 82 show diag code=bad_argument\n"},
+        {"83 show diag can unexpected=1\n",
+         "error 83 show diag code=bad_argument\n"},
+        {"84 show info extra\n",
+         "error 84 show info code=bad_argument\n"},
+        {"85 show joints extra\n",
+         "error 85 show joints code=bad_argument\n"},
+        {"86 show motors extra\n",
+         "error 86 show motors code=bad_argument\n"},
+        {"87 show motor 1 extra\n",
+         "error 87 show motor code=bad_argument\n"},
     };
     ProtocolEngine engine;
     ProtocolOutputBatch output_batch;
@@ -331,6 +365,73 @@ static void test_text_request_shape_rejections(void)
 
         assert(strcmp(response, cases[case_index].expected_response) == 0);
         assert(protocol_engine_watchdog_expired(&engine, 1001000U) == 1U);
+    }
+}
+
+/** @brief Characterizes every valid lower-case help, show, stream, and bench shape. */
+static void test_text_public_command_shape_table(void)
+{
+    static const struct
+    {
+        const char *request;
+        const char *expected_prefix;
+    } cases[] = {
+        {"80 help\n", "ok 80 help "},
+        {"80 help show\n", "ok 80 help show "},
+        {"80 help stream\n", "ok 80 help stream "},
+        {"80 help arm\n", "ok 80 help arm "},
+        {"80 help bench\n", "ok 80 help bench "},
+        {"80 show info\n", "ok 80 show info "},
+        {"80 show state\n", "ok 80 show state "},
+        {"80 show joints\n", "ok 80 show joints "},
+        {"80 show motors\n", "ok 80 show motors "},
+        {"80 show motor 1\n", "ok 80 show motor joint=1 "},
+        {"80 show config\n", "ok 80 show config "},
+        {"80 show config 1\n", "ok 80 show config joint=1 "},
+        {"80 show diag\n", "ok 80 show diag "},
+        {"80 show diag can\n", "ok 80 show diag can "},
+        {"80 show diag motion\n", "ok 80 show diag motion "},
+        {"80 show diag usb\n", "ok 80 show diag usb "},
+        {"80 show diag rtos\n", "ok 80 show diag rtos "},
+        {"80 stream off\n", "ok 80 stream off\n"},
+        {"80 stream joints rate=1\n", "ok 80 stream joints rate=1\n"},
+        {"80 stream motors rate=1\n", "ok 80 stream motors rate=1\n"},
+        {"80 bench init 1\n", "ok 80 bench init accepted=1\n"},
+        {"80 bench enable 1\n", "ok 80 bench enable accepted=1\n"},
+        {"80 bench jog 1 delta=1 speed=1\n",
+         "ok 80 bench jog accepted=1\n"},
+        {"80 bench move 1 position=1 speed=1\n",
+         "ok 80 bench move accepted=1\n"},
+        {"80 bench stop 1\n", "ok 80 bench stop accepted=1\n"},
+        {"80 bench disable 1\n", "ok 80 bench disable accepted=1\n"},
+        {"80 bench clear 1\n", "ok 80 bench clear accepted=1\n"},
+    };
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolQueryContext query_context = make_query_context();
+    size_t case_index;
+
+    for (case_index = 0U; case_index < (sizeof(cases) / sizeof(cases[0]));
+         ++case_index)
+    {
+        const char *response;
+
+        protocol_engine_init(&engine, 7000U + (uint32_t)case_index);
+        protocol_engine_update_query_context(&engine, &query_context);
+        (void)process_text_request(&engine,
+                                   "1 hello\n",
+                                   1000U,
+                                   PROTOCOL_ENGINE_STATUS_OK,
+                                   &output_batch);
+        response = process_text_request(&engine,
+                                        cases[case_index].request,
+                                        901000U,
+                                        PROTOCOL_ENGINE_STATUS_OK,
+                                        &output_batch);
+        assert(strncmp(response,
+                       cases[case_index].expected_prefix,
+                       strlen(cases[case_index].expected_prefix)) == 0);
+        assert(protocol_engine_watchdog_expired(&engine, 1001000U) == 0U);
     }
 }
 
@@ -1526,6 +1627,7 @@ int main(void)
     test_manual_request_is_not_cached();
     test_text_errors();
     test_text_request_shape_rejections();
+    test_text_public_command_shape_table();
     test_text_show_queries();
     test_text_streaming();
     test_text_detailed_show_queries();

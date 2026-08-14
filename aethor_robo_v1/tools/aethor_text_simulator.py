@@ -314,7 +314,10 @@ class AethorTextSimulator:
                 "move_speed_limit_deg_s="
                 f"{compact_number(SIMULATED_MOVE_SPEED_LIMIT_DEG_S)}")
             return [response], True
-        if target == "config":
+        if target == "diag":
+            if len(positionals) > 1:
+                return [f"error {request_id} show diag code=bad_argument"], False
+        elif target == "config":
             if len(positionals) > 1:
                 return [f"error {request_id} show config code=bad_argument"], False
             if positionals:
@@ -354,6 +357,29 @@ class AethorTextSimulator:
             return ([f"ok {request_id} show config map=sim required=ff verified=7f "
                      "enable_ready=1"], True)
         if target == "diag":
+            if positionals:
+                section = positionals[0]
+                if section == "can":
+                    return ([f"ok {request_id} show diag can rx=0 tx=0 drop=0 "
+                             "error=0 busoff=0 queue_hwm=0"], True)
+                if section == "motion":
+                    active_request_id = (self.active_motion.request_id
+                                         if self.active_motion else 0)
+                    predicted_ms = (self.active_motion.duration_ms
+                                    if self.active_motion else 0)
+                    return ([f"ok {request_id} show diag motion "
+                             f"active={active_request_id} "
+                             f"predicted_ms={predicted_ms} elapsed_ms=0 "
+                             "max_error_deg=0.000"], True)
+                if section == "usb":
+                    return ([f"ok {request_id} show diag usb rx_lines=? "
+                             "bad_lines=0 rx_overflow=0 tx_drop_data=0 "
+                             "busy_max_ms=?"], True)
+                if section == "rtos":
+                    return ([f"ok {request_id} show diag rtos control_stack=? "
+                             "can_stack=? protocol_stack=? usb_stack=? "
+                             "heap_min=0"], True)
+                return [f"error {request_id} show diag code=bad_argument"], False
             return ([f"ok {request_id} show diag loop_max_us=4000 deadline_miss=0 "
                      "can_error=0 usb_drop=0 fault=none"], True)
         return [f"error {request_id} show {target} code=unknown_command"], False
@@ -536,7 +562,7 @@ class AethorTextSimulator:
                 "arm": "commands=align,enable,move,stop,disable,clear",
                 "bench": "commands=init,enable,jog,move,stop,disable,clear",
             }
-            topic = positionals[0].lower()
+            topic = positionals[0]
             if topic not in help_topics:
                 return [f"error {request_id} help code=bad_argument"], False
             return [f"ok {request_id} help {topic} {help_topics[topic]}"], True

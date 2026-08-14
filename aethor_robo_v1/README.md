@@ -1,6 +1,6 @@
 # Aethor 七自由度机械臂固件
 
-当前分支已经实现 PRD 首组七自由度机械臂的固件软件与上位机兼容性测试包：电脑通过板卡 Type-C USB CDC 发送 `aethor-arm-ascii-v1` 指令，可按正式整组或台架显式子集控制 S3519 电机。真实机械、电气和驱动参数仍未逐轴验证，因此默认台架 Profile 只开放 `±3°`、不超过 `3°/s` 的显式选轴相对控制；生产 Profile 继续锁定真实使能。
+当前分支已经实现 PRD 首组七自由度机械臂的固件软件与上位机兼容性测试包：电脑通过板卡 Type-C USB CDC 发送可手工输入的 `aethor-text-v1` 文本指令，可按正式整组或台架显式子集控制 S3519 电机。真实机械、电气和驱动参数仍未逐轴验证，因此默认台架 Profile 只开放绝对值不超过 `3°`、速度不超过 `3°/s` 的显式选轴相对控制；生产 Profile 继续锁定真实使能。旧 `aethor-arm-ascii-v1` 及其 CRC 测试资产仅用于回归，不进入固件正式协议入口。
 
 ## 当前入口与范围
 
@@ -9,7 +9,7 @@
 - 物理参数：方向、零位/限位、速度、加速度、MIT 增益、电机量程和外部减速比均保持未验证状态，因此配置不能通过使能就绪检查。
 - 旧验证代码：`User/` 原样保留作为迁移参考，但旧按键双电机和旧七轴控制链不进入当前 Keil 目标。
 - 正式传输：板卡Type-C USB CDC虚拟串口；USART不作为第二套正式协议入口。
-- 当前默认配置：`USB_BENCH_RELATIVE`，允许 `INIT_MOTORS/ENABLE/MOVE_REL/STOP/DISABLE/CLEAR_FAULT` 显式选取一个或多个电机；未选电机不变。
+- 当前默认配置：`USB_BENCH_RELATIVE`，允许使用 `bench init/enable/jog/stop/disable/clear` 显式选取一个或多个电机；未选电机不变。
 - `ARM_PRODUCTION` 已实现参考位、整组 POS_VEL、MIT 五次时间标度、受控停止、反馈确认、故障和通信看门狗，但需全部参数验证位有效才可真实使能。
 - STM32 只执行关节空间控制。DH/URDF、逆运动学、笛卡尔控制、动力学和碰撞规划不在固件范围内。
 - 首组 `arm-1` 完成；第二组只保留 `controller_id/arm_id` 扩展边界，尚未实现双会话。
@@ -19,7 +19,7 @@
 ```text
 App/
 ├─ Config/       七轴只读配置、构建身份、验证位
-├─ Protocol/     会话、CRC、请求重放、命令和遥测
+├─ Protocol/     可读文本解析、请求重放、命令生命周期和遥测
 ├─ Arm/          状态唯一所有者、参考位和安全门控
 ├─ Motion/       POS_VEL、MIT 五次时间标度和受控停止
 ├─ Motor/        S3519 编解码、七电机发现、反馈和 CAN 调度
@@ -28,6 +28,25 @@ App/
 ```
 
 核心业务层不包含 HAL、FreeRTOS 或 USB/FDCAN 头文件；`App/` 禁止动态分配。架构规则由脚本持续检查。
+
+## 串口快速调试
+
+请求使用可打印 ASCII，以 LF 或 CRLF 结尾，不需要应用层 CRC。请求编号是可选的十进制 `uint32`；编号 `0` 适合手工调试且不进入结果重放，非零编号用于上位机匹配 `ok/done/error`：
+
+```text
+hello
+show state
+show motors
+1 bench init 1
+2 bench enable 1
+3 bench jog 1 delta=0.2 speed=1
+4 bench stop 1
+5 bench disable 1
+```
+
+`bench jog` 等动作命令只提交一次：收到 `ok <id> ... accepted=1` 后等待同一请求编号的 `done`，不要换新请求编号重复发送动作。运动未到位时，固件会在内部周期重发同一批固定 CAN 目标。电机使能或运动期间，上位机仍需每 250 ms 或更快发送有效 `ping`；固件连续 1000 ms 未收到有效请求会执行停止和失能。所有电机均未使能且无运动时，不执行该通信超时动作。
+
+只读探测和小角度台架调试见 `Tests/hardware/debug_com7_aethor_text_v1.ps1`；现行接口契约见 `docs/compatibility/`。
 
 ## 构建与自动化验证
 
@@ -39,6 +58,10 @@ powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_motor_core_tests.p
 powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_platform_io_tests.ps1
 powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_motion_tests.ps1
 powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_simulator_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_text_protocol_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_text_protocol_engine_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\run_text_protocol_arm_profile_tests.ps1
+powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\test_com7_dual_motor_debug_script.ps1
 powershell.exe -ExecutionPolicy Bypass -File .\Tests\host\check_phase0_architecture.ps1
 ```
 
@@ -46,11 +69,11 @@ Keil 工程：`MDK-ARM\CtrBoard-H7_FDCAN.uvprojx`
 
 CubeMX 工程：`CtrBoard-H7_FDCAN.ioc`
 
-最近一次 ARMCC 5 构建结果为 `0 Error(s), 0 Warning(s)`。兼容性 Schema、Golden Frames、模拟器、参考客户端和外部验收模板见 `docs/compatibility/`。软件构建和模拟结果不证明 USB、CAN、电机、关节方向、限位、减速比或运动精度已通过实机验证。
+最近一次 ARMCC 5 构建结果为 `0 Error(s), 0 Warning(s)`，生成镜像已通过 CMSIS-DAP 下载和校验。COM7 已验证空载 S3519 CAN ID 1、3 的发现、使能、正反向 `1°` 台架点动、停止与失能；该结果不证明实际输出角度/速度标定、带载性能或七轴机械臂运动。兼容性 Manifest、测试向量、模拟器、参考客户端和外部验收模板见 `docs/compatibility/`。
 
 ## 后续入口
 
-下一入口是按 `Tests/hardware/` 的脚本执行 USB CDC、安全隔离单轴和七轴硬件验收：先确认真实 CAN/Master ID、量程、方向、参考位、限位和反馈查询，再逐轴解锁；不得直接进行七轴同时使能。Aethor Studio V2 仍需用共享兼容性包做外部契约验收。
+下一入口是按 `Tests/hardware/` 的脚本继续执行安全隔离单轴和七轴硬件验收：先确认真实 CAN/Master ID、量程、方向、参考位、限位、速度比例和反馈查询，再逐轴解锁；不得直接进行七轴同时使能。Aethor Studio V2 仍需用共享兼容性包做外部契约验收。
 
 <details>
 <summary>历史 PA15 双电机验证资料（保留源码参考，不是当前固件入口）</summary>

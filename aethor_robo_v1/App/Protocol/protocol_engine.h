@@ -80,6 +80,10 @@ typedef struct
     MotorFeedbackSnapshot motors;
     DiagnosticCounters diagnostics;
     uint64_t timestamp_us;
+    float motor_position_max_rad[ARM_JOINT_COUNT];
+    float motor_velocity_max_rad_s[ARM_JOINT_COUNT];
+    float motor_maximum_speed_rad_s[ARM_JOINT_COUNT];
+    uint8_t motor_motion_limits_valid_mask;
     uint8_t motor_identity_verified_mask;
     uint8_t motor_mode_verified_mask;
     uint8_t motor_ranges_verified_mask;

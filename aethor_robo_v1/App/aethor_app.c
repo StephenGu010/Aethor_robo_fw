@@ -323,11 +323,25 @@ static void aethor_app_update_protocol_context(uint64_t timestamp_us)
                                    &query_context.diagnostics);
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
+        MotorPositionVelocityLimits motion_limits;
         uint8_t joint_bit = (uint8_t)(1U << joint_index);
         uint16_t verified_fields = application_motor_runtime.discovery
                                        .results[joint_index]
                                        .verified_fields_mask;
 
+        if (motor_runtime_get_position_velocity_limits(
+                &application_motor_runtime,
+                joint_index,
+                &motion_limits) == MOTOR_RUNTIME_STATUS_OK)
+        {
+            query_context.motor_position_max_rad[joint_index] =
+                motion_limits.position_max_rad;
+            query_context.motor_velocity_max_rad_s[joint_index] =
+                motion_limits.velocity_mapping_max_rad_s;
+            query_context.motor_maximum_speed_rad_s[joint_index] =
+                motion_limits.maximum_speed_rad_s;
+            query_context.motor_motion_limits_valid_mask |= joint_bit;
+        }
         if ((verified_fields & MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK) ==
             MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK)
         {

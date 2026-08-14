@@ -1022,6 +1022,27 @@ static uint8_t protocol_engine_append_compact_float(char *body,
                                        token);
 }
 
+/** @brief Appends one compact value or an explicit unknown marker. */
+static uint8_t protocol_engine_append_optional_compact_float(
+    char *body,
+    size_t body_capacity,
+    size_t *body_length,
+    float value,
+    uint8_t valid)
+{
+    if (valid == 0U)
+    {
+        return protocol_engine_append_text(body,
+                                           body_capacity,
+                                           body_length,
+                                           "?");
+    }
+    return protocol_engine_append_compact_float(body,
+                                                body_capacity,
+                                                body_length,
+                                                value);
+}
+
 /** @brief Appends seven compact public joint values separated by commas. */
 static uint8_t protocol_engine_append_text_joint_vector(
     char *body,
@@ -2084,9 +2105,11 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_motor(
     const MotorJointFeedback *feedback;
     char body[TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH];
     size_t body_length = 0U;
+    float move_speed_limit_rad_s;
     uint32_t joint_number;
     uint32_t age_ms = UINT32_MAX;
     uint8_t joint_bit;
+    uint8_t motion_limits_valid;
     uint8_t valid;
 
     if ((request->positional_count != 1U) || (request->field_count != 0U) ||
@@ -2118,6 +2141,13 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_motor(
     feedback = &engine->query_context.motors.joints[joint_number - 1U];
     joint_bit = (uint8_t)(1U << (joint_number - 1U));
     valid = (uint8_t)((engine->query_context.motors.valid_joint_mask & joint_bit) != 0U);
+    motion_limits_valid = (uint8_t)(
+        (engine->query_context.motor_motion_limits_valid_mask & joint_bit) != 0U);
+    move_speed_limit_rad_s =
+        (engine->query_context.motor_velocity_max_rad_s[joint_number - 1U] <
+         engine->query_context.motor_maximum_speed_rad_s[joint_number - 1U])
+            ? engine->query_context.motor_velocity_max_rad_s[joint_number - 1U]
+            : engine->query_context.motor_maximum_speed_rad_s[joint_number - 1U];
     if ((feedback->timestamp_us != 0U) && (timestamp_us >= feedback->timestamp_us))
     {
         const uint64_t age_value = (timestamp_us - feedback->timestamp_us) / 1000ULL;
@@ -2178,9 +2208,48 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_motor(
         (protocol_engine_append_text(body,
                                      sizeof(body),
                                      &body_length,
-                                     " fault=%lu age_ms=%lu",
+                                     " fault=%lu age_ms=%lu pmax_deg=",
                                      (unsigned long)feedback->fault_flags,
-                                     (unsigned long)age_ms) == 0U))
+                                     (unsigned long)age_ms) == 0U) ||
+        (protocol_engine_append_optional_compact_float(
+             body,
+             sizeof(body),
+             &body_length,
+             engine->query_context.motor_position_max_rad[joint_number - 1U] *
+                 PROTOCOL_ENGINE_RAD_TO_DEG,
+             motion_limits_valid) == 0U) ||
+        (protocol_engine_append_text(body,
+                                     sizeof(body),
+                                     &body_length,
+                                     " vmax_deg_s=") == 0U) ||
+        (protocol_engine_append_optional_compact_float(
+             body,
+             sizeof(body),
+             &body_length,
+             engine->query_context.motor_velocity_max_rad_s[joint_number - 1U] *
+                 PROTOCOL_ENGINE_RAD_TO_DEG,
+             motion_limits_valid) == 0U) ||
+        (protocol_engine_append_text(body,
+                                     sizeof(body),
+                                     &body_length,
+                                     " max_speed_deg_s=") == 0U) ||
+        (protocol_engine_append_optional_compact_float(
+             body,
+             sizeof(body),
+             &body_length,
+             engine->query_context.motor_maximum_speed_rad_s[joint_number - 1U] *
+                 PROTOCOL_ENGINE_RAD_TO_DEG,
+             motion_limits_valid) == 0U) ||
+        (protocol_engine_append_text(body,
+                                     sizeof(body),
+                                     &body_length,
+                                     " move_speed_limit_deg_s=") == 0U) ||
+        (protocol_engine_append_optional_compact_float(
+             body,
+             sizeof(body),
+             &body_length,
+             move_speed_limit_rad_s * PROTOCOL_ENGINE_RAD_TO_DEG,
+             motion_limits_valid) == 0U))
     {
         return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
     }

@@ -44,6 +44,10 @@ static ProtocolQueryContext make_query_context(void)
     query_context.motors.joints[0].torque_nm = 0.12F;
     query_context.motors.joints[0].mos_temperature_c = 32.0F;
     query_context.motors.joints[0].rotor_temperature_c = 30.0F;
+    query_context.motor_position_max_rad[0] = 12.5F;
+    query_context.motor_velocity_max_rad_s[0] = 45.0F;
+    query_context.motor_maximum_speed_rad_s[0] = 20.0F;
+    query_context.motor_motion_limits_valid_mask = 0x01U;
     query_context.diagnostics.control_period_max_us = 4102U;
     query_context.diagnostics.can_tx_error_count = 2U;
     query_context.diagnostics.usb_telemetry_drop_count = 3U;
@@ -336,10 +340,21 @@ static void test_text_detailed_show_queries(void)
                                     183925000ULL,
                                     PROTOCOL_ENGINE_STATUS_OK,
                                     &output_batch);
-    assert(strcmp(response,
-                  "ok 0 show motor joint=1 esc=01 master=11 state=holding "
-                  "pos_deg=3 speed_deg_s=0 torque_nm=0.12 mos_c=32 "
-                  "rotor_c=30 fault=0 age_ms=5\n") == 0);
+    assert(strstr(response,
+                  "pmax_deg=716.197 vmax_deg_s=2578.31 "
+                  "max_speed_deg_s=1145.916 "
+                  "move_speed_limit_deg_s=1145.916") != NULL);
+    assert(strlen(response) < TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH);
+    assert(response[strlen(response) - 1U] == '\n');
+
+    response = process_text_request(&engine,
+                                    "show motor 2\n",
+                                    183925000ULL,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strstr(response,
+                  "pmax_deg=? vmax_deg_s=? max_speed_deg_s=? "
+                  "move_speed_limit_deg_s=?") != NULL);
 
     response = process_text_request(&engine,
                                     "show motor 8\n",

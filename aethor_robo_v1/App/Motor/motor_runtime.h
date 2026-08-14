@@ -100,6 +100,16 @@ typedef struct
 } MotorParameterResponseSet;
 
 /**
+ * @brief Removes one bounded parameter response without underflowing the set.
+ * @param set Mutable expectation or quarantine collection.
+ * @param entry_index Zero-based entry selected by the receive router.
+ * @return One when the indexed entry was removed, otherwise zero with no mutation.
+ */
+uint8_t motor_runtime_remove_parameter_response(
+    MotorParameterResponseSet *set,
+    uint8_t entry_index);
+
+/**
  * @brief Owns all static receive-side state for the first seven-axis arm.
  */
 typedef struct

@@ -145,6 +145,36 @@ function Invoke-Phase0ArchitectureCheck {
         -Pattern 'aethor_app_receive_can_frame\s*\(' `
         -Message 'CanRxTask does not route received frames to the motor runtime.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'osThreadStaticDef\s*\(\s*ArmControlTask\s*,[^\r\n]*osPriorityRealtime' `
+        -Message 'ArmControlTask must remain higher priority than CanRxTask.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'osThreadStaticDef\s*\(\s*CanRxTask\s*,[^\r\n]*osPriorityHigh' `
+        -Message 'CanRxTask priority evidence changed; re-evaluate MotorRuntime ownership.'
+    # CanRxTask and the higher-priority ArmControlTask share MotorRuntime. Keep
+    # only the in-memory receive decode inside a task critical section; obtain
+    # time and perform platform/blocking work outside it.
+    $canRxTaskMatch = [regex]::Match(
+        $freertosText,
+        'void\s+StartCanRxTask\s*\([^)]*\)[\s\S]*?(?=/\* USER CODE BEGIN Header_StartProtocolTask \*/)')
+    if (-not $canRxTaskMatch.Success)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'CanRxTask body could not be isolated for concurrency checks.'
+    }
+    else
+    {
+        Assert-TextContains -FailureList $failureList -Text $canRxTaskMatch.Value `
+            -Pattern 'timestampUs\s*=\s*AethorMonotonicTimestampUs\s*\(\s*\)\s*;\s*taskENTER_CRITICAL\s*\(\s*\)\s*;\s*\(void\)aethor_app_receive_can_frame\s*\(\s*&receivedFrame\s*,\s*timestampUs\s*\)\s*;\s*taskEXIT_CRITICAL\s*\(\s*\)' `
+            -Message 'CanRxTask does not serialize the in-memory MotorRuntime receive update.'
+        $canRxCriticalMatch = [regex]::Match(
+            $canRxTaskMatch.Value,
+            'taskENTER_CRITICAL\s*\(\s*\)\s*;(?<Body>[\s\S]*?)taskEXIT_CRITICAL\s*\(\s*\)')
+        if ($canRxCriticalMatch.Success -and
+            ($canRxCriticalMatch.Groups['Body'].Value -match 'AethorMonotonicTimestampUs|stm32_platform_|\bHAL_|\b(?:ul|x|v)Task|taskYIELD|portMAX_DELAY'))
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'CanRxTask critical section contains timestamp, platform I/O, or blocking work.'
+        }
+    }
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'stm32_platform_usb_next_line\s*\(' `
         -Message 'ProtocolTask does not drain complete USB lines in task context.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
@@ -188,6 +218,11 @@ function Invoke-Phase0ArchitectureCheck {
     Assert-TextContains -FailureList $failureList -Text $protocolEngineText `
         -Pattern 'active_stop_request_id\s*=\s*command->request_id;[\s\S]{0,160}\+\+engine->stop_write_sequence' `
         -Message 'STOP lifecycle ownership is published after its priority command slot.'
+    # A normal motion slot is visible only after its admission metadata. This
+    # prevents ArmControlTask from consuming a MOVE before its gate is owned.
+    Assert-TextContains -FailureList $failureList -Text $protocolEngineText `
+        -Pattern 'protocol_engine_publish_normal_command[\s\S]{0,900}commands\[slot_index\]\s*=\s*\*command;[\s\S]{0,500}active_motion_request_id\s*=\s*command->request_id;[\s\S]{0,240}active_motion_accepted_at_us\s*=\s*command->accepted_at_us;[\s\S]{0,240}active_motion_planned_duration_us\s*=\s*command->planned_duration_us;[\s\S]{0,240}protocol_engine_compiler_barrier\s*\(\s*\)\s*;[\s\S]{0,120}\+\+engine->command_write_sequence' `
+        -Message 'Normal MOVE ownership metadata is not published before command_write_sequence.'
 
     $keilProjectPath = Join-Path $projectRoot 'MDK-ARM\CtrBoard-H7_FDCAN.uvprojx'
     $keilProjectXml = [xml](Get-Content -LiteralPath $keilProjectPath -Raw)

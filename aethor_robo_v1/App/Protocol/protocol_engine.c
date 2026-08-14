@@ -414,9 +414,6 @@ static ProtocolEngineStatus protocol_engine_handle_text_arm_move(
                                                         "busy");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    engine->active_motion_request_id = request->request_id;
-    engine->active_motion_accepted_at_us = timestamp_us;
-    engine->active_motion_planned_duration_us = motion_plan.duration_us;
     return protocol_engine_append_text_format(output_batch,
                                               PROTOCOL_OUTPUT_HIGH_PRIORITY,
                                               "ok %lu arm move accepted=1",
@@ -799,14 +796,47 @@ static uint8_t protocol_engine_parse_selected_motor_values(
 }
 #endif
 
-/** @brief Enqueues one normal business command into the bounded SPSC ring. */
-static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
-                                               const ProtocolCommand *command)
+/**
+ * @brief Publishes one normal slot after any motion ownership metadata.
+ * @return One after the consumer-visible sequence advances, otherwise zero.
+ */
+static uint8_t protocol_engine_publish_normal_command(
+    ProtocolEngine *engine,
+    const ProtocolCommand *command)
 {
     uint8_t used_count = (uint8_t)(engine->command_write_sequence -
                                    engine->command_read_sequence);
     uint8_t slot_index;
+    uint8_t owns_motion_lifecycle =
+        (uint8_t)((command->type == PROTOCOL_COMMAND_MOVE_JOINTS) ||
+                  (command->type ==
+                   PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED));
 
+    if ((used_count >= PROTOCOL_ENGINE_COMMAND_CAPACITY) ||
+        ((owns_motion_lifecycle != 0U) &&
+         (engine->active_motion_request_id != 0U)))
+    {
+        return 0U;
+    }
+    slot_index = (uint8_t)(engine->command_write_sequence %
+                           PROTOCOL_ENGINE_COMMAND_CAPACITY);
+    engine->commands[slot_index] = *command;
+    if (owns_motion_lifecycle != 0U)
+    {
+        engine->active_motion_request_id = command->request_id;
+        engine->active_motion_accepted_at_us = command->accepted_at_us;
+        engine->active_motion_planned_duration_us =
+            command->planned_duration_us;
+    }
+    protocol_engine_compiler_barrier();
+    ++engine->command_write_sequence;
+    return 1U;
+}
+
+/** @brief Enqueues one business command into its bounded SPSC channel. */
+static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
+                                               const ProtocolCommand *command)
+{
     if ((command->type != PROTOCOL_COMMAND_STOP) &&
         (engine->active_stop_request_id != 0U))
     {
@@ -825,16 +855,7 @@ static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
         ++engine->stop_write_sequence;
         return 1U;
     }
-    if (used_count >= PROTOCOL_ENGINE_COMMAND_CAPACITY)
-    {
-        return 0U;
-    }
-    slot_index = (uint8_t)(engine->command_write_sequence %
-                           PROTOCOL_ENGINE_COMMAND_CAPACITY);
-    engine->commands[slot_index] = *command;
-    protocol_engine_compiler_barrier();
-    ++engine->command_write_sequence;
-    return 1U;
+    return protocol_engine_publish_normal_command(engine, command);
 }
 
 /**
@@ -2944,12 +2965,6 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                                                         "busy");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if (command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
-    {
-        engine->active_motion_request_id = request->request_id;
-        engine->active_motion_accepted_at_us = timestamp_us;
-        engine->active_motion_planned_duration_us = 0U;
-    }
     return protocol_engine_append_text_format(
         output_batch,
         PROTOCOL_OUTPUT_HIGH_PRIORITY,
@@ -4112,9 +4127,6 @@ static ProtocolEngineStatus protocol_engine_handle_move_joints(
                                             (unsigned long)request->request_id);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    engine->active_motion_request_id = request->request_id;
-    engine->active_motion_accepted_at_us = timestamp_us;
-    engine->active_motion_planned_duration_us = motion_plan.duration_us;
     return protocol_engine_append_format(
         output_batch,
         PROTOCOL_OUTPUT_HIGH_PRIORITY,

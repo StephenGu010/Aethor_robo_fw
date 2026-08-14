@@ -246,9 +246,11 @@ void StartCanRxTask(void const * argument)
            (stm32_platform_can_pop_received(&receivedFrame) ==
             CAN_RX_INBOX_STATUS_OK))
     {
-      (void)aethor_app_receive_can_frame(
-          &receivedFrame,
-          AethorMonotonicTimestampUs());
+      uint64_t timestampUs = AethorMonotonicTimestampUs();
+
+      taskENTER_CRITICAL();
+      (void)aethor_app_receive_can_frame(&receivedFrame, timestampUs);
+      taskEXIT_CRITICAL();
       ++processedFrameCount;
     }
     if (processedFrameCount < CAN_RX_INBOX_CAPACITY)

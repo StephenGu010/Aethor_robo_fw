@@ -567,6 +567,40 @@ static void test_text_bench_move_ordered_values(void)
     assert(protocol_engine_pop_command(&engine, &command) == 0U);
 }
 
+/**
+ * @brief Verifies visible MOVE slots own their gate until one terminal clears it.
+ */
+static void test_text_bench_move_publication_gate_lifecycle(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    const char *response;
+
+    protocol_engine_init(&engine, 9179U);
+    response = process_text_request(&engine,
+                                    "50 bench move 1 position=1 speed=1\n",
+                                    1000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 50 bench move accepted=1\n") == 0);
+    assert(engine.command_write_sequence == 1U);
+    assert(engine.active_motion_request_id == 50U);
+    assert(engine.active_motion_accepted_at_us == 1000U);
+    assert(engine.active_motion_planned_duration_us == 0U);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    complete_parser_one_shot(&engine, &command, 1500U);
+    assert(engine.active_motion_request_id == 0U);
+
+    response = process_text_request(&engine,
+                                    "51 bench move 1 position=2 speed=1\n",
+                                    2000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 51 bench move accepted=1\n") == 0);
+    assert(engine.active_motion_request_id == 51U);
+}
+
 /** @brief Verifies one-shot bench moves reject malformed one-to-one lists. */
 static void test_text_bench_move_rejections(void)
 {
@@ -1304,6 +1338,7 @@ int main(void)
     test_text_bench_commands();
     test_text_bench_rejections();
     test_text_bench_move_ordered_values();
+    test_text_bench_move_publication_gate_lifecycle();
     test_text_bench_move_rejections();
     test_text_bench_move_replay();
     test_text_bench_move_busy_and_stop_arbitration();

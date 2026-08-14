@@ -1403,6 +1403,53 @@ static void test_motor_runtime_mode_rollover_fails_closed_at_capacity(void)
 }
 
 /**
+ * @brief Verifies invalid parameter removals preserve count and mode state.
+ */
+static void test_motor_runtime_parameter_remove_is_defensive(void)
+{
+    MotorParameterResponseSet parameter_set = {0};
+    MotorRuntime runtime;
+    CanFrame response_frame;
+    MotorModeSwitchState mode_state_before_response;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    assert(motor_runtime_remove_parameter_response(NULL, 0U) == 0U);
+    assert(motor_runtime_remove_parameter_response(&parameter_set, 0U) == 0U);
+    assert(parameter_set.count == 0U);
+    parameter_set.count = 1U;
+    parameter_set.entries[0].valid = 1U;
+    parameter_set.entries[0].identifier = 0x11U;
+    assert(motor_runtime_remove_parameter_response(&parameter_set, 1U) == 0U);
+    assert(parameter_set.count == 1U);
+    assert(parameter_set.entries[0].valid == 1U);
+    assert(parameter_set.entries[0].identifier == 0x11U);
+    assert(motor_runtime_remove_parameter_response(&parameter_set, 0U) == 1U);
+    assert(parameter_set.count == 0U);
+    assert(parameter_set.entries[0].valid == 0U);
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    runtime.mode_switch_state = MOTOR_MODE_SWITCH_READ_WAITING;
+    runtime.parameter_expectations.count = 0U;
+    mode_state_before_response = runtime.mode_switch_state;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    (void)motor_runtime_accept_frame(&runtime, &response_frame, 5900U);
+    assert(runtime.parameter_expectations.count == 0U);
+    assert(runtime.mode_switch_state == mode_state_before_response);
+}
+
+/**
  * @brief Verifies abort quarantines the maximum discovery-plus-mode burst.
  */
 static void test_motor_runtime_quarantines_every_outstanding_parameter_response(void)
@@ -2066,6 +2113,7 @@ int main(void)
     test_motor_runtime_mode_rollover_preserves_prior_generation();
     test_motor_runtime_mode_rollover_allows_different_tuple();
     test_motor_runtime_mode_rollover_fails_closed_at_capacity();
+    test_motor_runtime_parameter_remove_is_defensive();
     test_motor_runtime_quarantines_every_outstanding_parameter_response();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();

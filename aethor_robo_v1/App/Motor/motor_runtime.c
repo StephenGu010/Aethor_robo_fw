@@ -50,15 +50,18 @@ static uint8_t motor_runtime_frame_matches_parameter_signature(
                      (frame->data[3] == signature->register_address));
 }
 
-/** @brief Removes one entry while preserving the collection's FIFO order. */
-static void motor_runtime_remove_parameter_entry(MotorParameterResponseSet *set,
-                                                 uint8_t entry_index)
+/**
+ * @brief Removes one entry while preserving FIFO order and bounded count.
+ */
+uint8_t motor_runtime_remove_parameter_response(
+    MotorParameterResponseSet *set,
+    uint8_t entry_index)
 {
     uint8_t move_index;
 
     if ((set == NULL) || (entry_index >= set->count))
     {
-        return;
+        return 0U;
     }
     for (move_index = entry_index;
          (uint8_t)(move_index + 1U) < set->count;
@@ -70,6 +73,7 @@ static void motor_runtime_remove_parameter_entry(MotorParameterResponseSet *set,
     --set->count;
     memset(&set->entries[set->count], 0, sizeof(set->entries[set->count]));
     set->sources[set->count] = MOTOR_PARAMETER_SOURCE_DISCOVERY;
+    return 1U;
 }
 
 /** @brief Expires entries after the existing parameter-response timeout. */
@@ -87,7 +91,7 @@ static void motor_runtime_expire_parameter_set(MotorParameterResponseSet *set,
             ((timestamp_us - signature->timestamp_us) >=
              MOTOR_DISCOVERY_REQUEST_TIMEOUT_US))
         {
-            motor_runtime_remove_parameter_entry(set, entry_index);
+            (void)motor_runtime_remove_parameter_response(set, entry_index);
         }
         else
         {
@@ -144,7 +148,7 @@ static void motor_runtime_remove_parameter_source(
 
         if ((source >= first_source) && (source <= last_source))
         {
-            motor_runtime_remove_parameter_entry(set, entry_index);
+            (void)motor_runtime_remove_parameter_response(set, entry_index);
         }
         else
         {
@@ -235,7 +239,7 @@ static uint8_t motor_runtime_move_parameter_sources_to_quarantine(
                 runtime->parameter_expectations.entries[entry_index];
             runtime->parameter_quarantine.sources[quarantine_index] = source;
             ++runtime->parameter_quarantine.count;
-            motor_runtime_remove_parameter_entry(
+            (void)motor_runtime_remove_parameter_response(
                 &runtime->parameter_expectations,
                 entry_index);
         }
@@ -876,8 +880,12 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              &expectation_index) != 0U) &&
         (motor_runtime_is_mode_readback_response(runtime, frame) != 0U))
     {
-        motor_runtime_remove_parameter_entry(&runtime->parameter_expectations,
-                                             expectation_index);
+        if (motor_runtime_remove_parameter_response(
+                &runtime->parameter_expectations,
+                expectation_index) == 0U)
+        {
+            return MOTOR_RUNTIME_STATUS_OK;
+        }
         return motor_runtime_accept_mode_readback(runtime, frame);
     }
     if ((motor_runtime_find_parameter_entry(
@@ -889,8 +897,12 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              &expectation_index) != 0U) &&
         (frame->data[2] == 0x55U))
     {
-        motor_runtime_remove_parameter_entry(&runtime->parameter_expectations,
-                                             expectation_index);
+        if (motor_runtime_remove_parameter_response(
+                &runtime->parameter_expectations,
+                expectation_index) == 0U)
+        {
+            return MOTOR_RUNTIME_STATUS_OK;
+        }
         return MOTOR_RUNTIME_STATUS_OK;
     }
 
@@ -903,8 +915,12 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              &expectation_index) != 0U) &&
         (motor_runtime_is_parameter_response(runtime, frame) != 0U))
     {
-        motor_runtime_remove_parameter_entry(&runtime->parameter_expectations,
-                                             expectation_index);
+        if (motor_runtime_remove_parameter_response(
+                &runtime->parameter_expectations,
+                expectation_index) == 0U)
+        {
+            return MOTOR_RUNTIME_STATUS_OK;
+        }
         return motor_runtime_accept_parameter_response(runtime, frame);
     }
     if ((motor_runtime_parameter_quarantine_blocks(runtime,
@@ -917,8 +933,9 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              1U,
              &expectation_index) != 0U))
     {
-        motor_runtime_remove_parameter_entry(&runtime->parameter_quarantine,
-                                             expectation_index);
+        (void)motor_runtime_remove_parameter_response(
+            &runtime->parameter_quarantine,
+            expectation_index);
         return MOTOR_RUNTIME_STATUS_OK;
     }
     if ((motor_runtime_find_parameter_entry(
@@ -929,8 +946,9 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
              1U,
              &expectation_index) != 0U))
     {
-        motor_runtime_remove_parameter_entry(&runtime->parameter_expectations,
-                                             expectation_index);
+        (void)motor_runtime_remove_parameter_response(
+            &runtime->parameter_expectations,
+            expectation_index);
         return MOTOR_RUNTIME_STATUS_OK;
     }
     return motor_runtime_accept_control_feedback(runtime, frame, timestamp_us);

@@ -31,13 +31,18 @@ App/
 
 ## 串口快速调试
 
-请求使用可打印 ASCII，以 LF 或 CRLF 结尾，不需要应用层 CRC。请求编号是可选的十进制 `uint32`；编号 `0` 适合手工调试且不进入结果重放，非零编号用于上位机匹配 `ok/done/error`：
+Windows 串口工具使用 COM7（以实际枚举为准）、115200、8N1、串口校验位 `NONE` 和 ASCII 发送；USB CDC 不使用该波特率进行物理定时。协议不需要 CRC 或其他应用层校验，每条请求必须以 LF 或 CRLF 结束。常见串口助手应选择“校验算法：无”，并把自动附加的指令结束符设为 `0D 0A`。如果曾发送不带结束符的正文，应先复位板卡或发送一个单独换行清空残留半行，再开始 `hello` 探测。
+
+请求编号是可选的十进制 `uint32`；编号 `0` 适合只读手工调试且不进入结果重放，`bench move` 必须使用未被其他正文占用的非零编号，以便匹配 `ok/done/error`：
 
 ```text
-hello
-show state
-show motors
-show motor 1
+1 hello
+2 stream off
+3 show state
+4 show motors
+5 show motor 1
+70 bench move 1 position=30 speed=5
+71 bench move 1 position=0 speed=5
 50 bench move 1 position=90 speed=30
 51 bench move 1,3 position=90,-45 speed=30,20
 1 bench init 1
@@ -76,7 +81,9 @@ Keil 工程：`MDK-ARM\CtrBoard-H7_FDCAN.uvprojx`
 
 CubeMX 工程：`CtrBoard-H7_FDCAN.ioc`
 
-最近一次 ARMCC 5 构建结果为 `0 Error(s), 0 Warning(s)`，生成镜像已通过 CMSIS-DAP 下载和校验。COM7 已验证空载 S3519 CAN ID 1、3 的发现、使能、正反向 `1°` 台架点动、停止与失能；该结果不证明实际输出角度/速度标定、带载性能或七轴机械臂运动。兼容性 Manifest、测试向量、模拟器、参考客户端和外部验收模板见 `docs/compatibility/`。
+最近一次 ARMCC 5 构建结果为 `0 Error(s), 0 Warning(s)`，生成镜像已通过 CMSIS-DAP 下载和校验。COM7 已验证空载 S3519 CAN ID 1、3 的一次性绝对运动：两轴分别完成 `35°`、`100°`、`360°` 和回零，随后共同完成同角度 `35°/100°/360°`、独立目标 `ID1=35°/ID3=100°` 以及共同回零。所有动作均只发送一条 `bench move`、无串口 `ping`，终态为 `completed`，最终 `present=05 enabled=00 moving=00 holding=00 fault=00`，CAN `drop/error/busoff=0`。详细实机记录见 `docs/handoffs/aethor-text-v1-bench/verification.txt`。
+
+上述结果证明所选空载电机的位置到达、列表映射、内部目标重发、HOLD 和自动失能链路，不证明请求速度等于真实机械速度。实测完成时间明显短于按命令 `5°/s` 推算的时间，因此速度比例、机械软限位、带载性能和七轴机械臂联动仍未标定或验收。兼容性 Manifest、测试向量、模拟器、参考客户端和外部验收模板见 `docs/compatibility/`。
 
 ## 后续入口
 

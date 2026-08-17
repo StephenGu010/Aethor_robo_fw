@@ -23,6 +23,30 @@ show motors
 show diag
 ```
 
+### Windows 手工串口设置
+
+常见串口调试助手按以下值配置：
+
+- 串口：STM32 USB CDC 实际枚举的 COM 口；当前台架为 COM7。
+- 显示和发送：ASCII；115200、8 数据位、1 停止位、流控 `NONE`、串口校验位 `NONE`。
+- 应用层校验算法：`无`，不附加 CRC、校验和或帧头。
+- 自动附加指令结束符：CRLF，HEX 为 `0D 0A`；也可只附加 LF `0A`。
+- 关闭循环发送。自包含 `bench move` 正文只发送一次。
+
+固件只有收到行结束符才会解析并响应。若调试工具已多次发送不带结束符的正文，应先复位板卡或发送一个单独换行清空残留半行，然后重新打开串口并从 `1 hello` 开始。确认只读响应后，可用新的非零编号执行和回零：
+
+```text
+1 hello
+2 stream off
+3 show motor 1
+70 bench move 1 position=30 speed=5
+71 bench move 1 position=0 speed=5
+72 bench move 1,3 position=35,100 speed=5,5
+73 bench move 1,3 position=0,0 speed=5,5
+```
+
+`position=0` 表示运动到本次上电电机坐标系的绝对零位，不执行机械零点标定，也不写入零偏。每条新正文使用新的非零请求编号；旧编号与相同正文只重放结果，旧编号与不同正文返回 `request_conflict`。
+
 ## 请求与输出格式
 
 请求格式：

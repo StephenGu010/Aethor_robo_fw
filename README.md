@@ -197,7 +197,7 @@ E:\oss-cad-suite\bin\openocd.exe `
   -f interface/cmsis-dap.cfg `
   -f target/stm32h7x.cfg `
   -c "adapter speed 2000" `
-  -c "program E:/Desktop_E/TCG/Aethor_robo_fw/aethor_robo_v1/MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.hex verify reset exit"
+  -c "program E:/Desktop_E/TCG/Aethor_robo_fw/MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.hex verify reset exit"
 ```
 
 当前 PA15 镜像已完成主机测试和 Keil 构建，但尚未由本轮烧录，按键、CAN 反馈和双电机一圈运动仍属于待完成的实机验收。烧录前应可靠固定两台空载电机，并准备可立即切断 24 V 电机电源的措施。

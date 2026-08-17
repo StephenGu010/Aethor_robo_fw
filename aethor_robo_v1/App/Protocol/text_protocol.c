@@ -13,7 +13,7 @@
 #define TEXT_PROTOCOL_MAX_TOKEN_COUNT                                      \
     (1U + TEXT_PROTOCOL_MAX_COMMAND_WORDS +                               \
      TEXT_PROTOCOL_MAX_POSITIONAL_COUNT + TEXT_PROTOCOL_MAX_FIELD_COUNT)
-#define TEXT_PROTOCOL_FLOAT_BUFFER_CAPACITY (48U)
+#define TEXT_PROTOCOL_FLOAT_BUFFER_CAPACITY (64U)
 
 /**
  * @brief Converts one ASCII letter to lowercase and preserves other bytes.
@@ -482,6 +482,7 @@ TextProtocolStatus text_protocol_span_to_float(const TextProtocolSpan *span,
     char *conversion_end;
     size_t index = 0U;
     uint8_t digit_seen = 0U;
+    uint8_t nonzero_digit_seen = 0U;
     uint8_t decimal_point_seen = 0U;
     float converted_value;
 
@@ -502,6 +503,10 @@ TextProtocolStatus text_protocol_span_to_float(const TextProtocolSpan *span,
         if ((character >= '0') && (character <= '9'))
         {
             digit_seen = 1U;
+            if (character != '0')
+            {
+                nonzero_digit_seen = 1U;
+            }
         }
         else if ((character == '.') && (decimal_point_seen == 0U))
         {
@@ -522,7 +527,10 @@ TextProtocolStatus text_protocol_span_to_float(const TextProtocolSpan *span,
     converted_value = strtof(buffer, &conversion_end);
     if ((errno == ERANGE) || (conversion_end != &buffer[span->length]) ||
         (converted_value != converted_value) ||
-        (converted_value > FLT_MAX) || (converted_value < -FLT_MAX))
+        (converted_value > FLT_MAX) || (converted_value < -FLT_MAX) ||
+        ((nonzero_digit_seen != 0U) && (converted_value == 0.0F)) ||
+        ((converted_value > 0.0F) && (converted_value < FLT_MIN)) ||
+        ((converted_value < 0.0F) && (converted_value > -FLT_MIN)))
     {
         return TEXT_PROTOCOL_STATUS_BAD_NUMBER;
     }

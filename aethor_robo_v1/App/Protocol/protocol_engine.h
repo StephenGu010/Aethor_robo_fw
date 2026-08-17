@@ -69,6 +69,7 @@ typedef struct
     uint32_t body_hash;
     uint16_t response_length;
     ProtocolOutputPriority priority;
+    uint8_t watchdog_valid;
     uint8_t valid;
 } ProtocolRecentResult;
 
@@ -80,6 +81,10 @@ typedef struct
     MotorFeedbackSnapshot motors;
     DiagnosticCounters diagnostics;
     uint64_t timestamp_us;
+    float motor_position_max_rad[ARM_JOINT_COUNT];
+    float motor_velocity_max_rad_s[ARM_JOINT_COUNT];
+    float motor_maximum_speed_rad_s[ARM_JOINT_COUNT];
+    uint8_t motor_motion_limits_valid_mask;
     uint8_t motor_identity_verified_mask;
     uint8_t motor_mode_verified_mask;
     uint8_t motor_ranges_verified_mask;
@@ -98,6 +103,7 @@ typedef enum
     PROTOCOL_COMMAND_MOVE_JOINTS,
     PROTOCOL_COMMAND_INIT_MOTORS,
     PROTOCOL_COMMAND_MOVE_RELATIVE,
+    PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED,
     PROTOCOL_COMMAND_LINK_TIMEOUT
 } ProtocolCommandType;
 
@@ -126,6 +132,34 @@ typedef enum
     PROTOCOL_COMMAND_RESULT_CANCELLED
 } ProtocolCommandResultCode;
 
+/** @brief Identifies the fixed execution stage that produced a terminal result. */
+typedef enum
+{
+    PROTOCOL_COMMAND_STAGE_NONE = 0,
+    PROTOCOL_COMMAND_STAGE_VALIDATE = 1,
+    PROTOCOL_COMMAND_STAGE_DISCOVERY = 2,
+    PROTOCOL_COMMAND_STAGE_MODE = 3,
+    PROTOCOL_COMMAND_STAGE_CLEAR = 4,
+    PROTOCOL_COMMAND_STAGE_ENABLE = 5,
+    PROTOCOL_COMMAND_STAGE_MOTION = 6,
+    PROTOCOL_COMMAND_STAGE_HOLD = 7,
+    PROTOCOL_COMMAND_STAGE_DISABLE = 8
+} ProtocolCommandStage;
+
+/** @brief Identifies the fixed public failure reason for a terminal result. */
+typedef enum
+{
+    PROTOCOL_COMMAND_ERROR_NONE = 0,
+    PROTOCOL_COMMAND_ERROR_NOT_READY = 1,
+    PROTOCOL_COMMAND_ERROR_POSITION_OUT_OF_RANGE = 2,
+    PROTOCOL_COMMAND_ERROR_SPEED_OUT_OF_RANGE = 3,
+    PROTOCOL_COMMAND_ERROR_FAULT_PRESENT = 4,
+    PROTOCOL_COMMAND_ERROR_STALE_FEEDBACK = 5,
+    PROTOCOL_COMMAND_ERROR_TIMEOUT = 6,
+    PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT = 7,
+    PROTOCOL_COMMAND_ERROR_ACTION_FAILED = 8
+} ProtocolCommandError;
+
 /** @brief Owns one bounded terminal command result transferred to ProtocolTask. */
 typedef struct
 {
@@ -137,9 +171,15 @@ typedef struct
     uint32_t session_id;
     ProtocolCommandType type;
     ProtocolCommandResultCode code;
+    /** @brief Fixed execution stage associated with a failure. */
+    ProtocolCommandStage stage;
+    /** @brief Fixed public error associated with a failure. */
+    ProtocolCommandError error;
     uint16_t detail;
     uint8_t motor_mask;
     uint8_t bench_relative_scope;
+    /** @brief Public one-based failed motor number, or zero when not specific. */
+    uint8_t failed_motor_number;
 } ProtocolCommandResult;
 
 /** @brief Owns the fixed current session and bounded recent-result cache. */
@@ -163,6 +203,8 @@ typedef struct
     uint32_t telemetry_sequence;
     uint32_t event_sequence;
     uint32_t active_motion_request_id;
+    uint32_t active_stop_request_id;
+    uint32_t cancelled_queued_motion_request_id;
     uint32_t last_motion_actual_duration_ms;
     uint32_t last_motion_max_following_error_mdeg;
     uint32_t bad_frame_count;
@@ -228,10 +270,41 @@ uint8_t protocol_engine_pop_stop_command(ProtocolEngine *engine,
                                          ProtocolCommand *command);
 
 /**
+ * @brief Widens but does not consume the published priority STOP command.
+ * @param engine Initialized engine with an optional pending STOP slot.
+ * @param inherited_motor_mask Safety scope already owned by the active STOP.
+ * @param command Destination snapshot containing the monotonic union mask.
+ * @return One when a pending STOP was widened and copied, otherwise zero.
+ */
+uint8_t protocol_engine_widen_pending_stop_mask(
+    ProtocolEngine *engine,
+    uint8_t inherited_motor_mask,
+    ProtocolCommand *command);
+
+/**
+ * @brief Takes the accepted one-shot motion still waiting in the normal ring.
+ * @param engine Initialized engine owning the active motion request ID.
+ * @param command Destination copy of the exact queued one-shot command.
+ * @return One when the active queued motion was found and tombstoned.
+ * @note The fixed tombstone preserves unrelated FIFO entries and is consumed
+ *       by protocol_engine_pop_command before the cancelled motion can run.
+ */
+uint8_t protocol_engine_take_queued_active_motion(ProtocolEngine *engine,
+                                                  ProtocolCommand *command);
+
+/**
  * @brief Cancels all accepted commands not yet taken by ArmControlTask.
  * @param engine Initialized engine.
  */
 void protocol_engine_cancel_pending_commands(ProtocolEngine *engine);
+
+/**
+ * @brief Cancels only ordinary queued work while preserving priority STOP.
+ * @param engine Initialized engine whose latest STOP slot and admission gate
+ *        remain published; active motion ownership remains until its terminal
+ *        result is retained.
+ */
+void protocol_engine_cancel_pending_normal_commands(ProtocolEngine *engine);
 
 /**
  * @brief Submits one terminal result from ArmControlTask without formatting.

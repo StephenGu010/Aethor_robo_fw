@@ -150,20 +150,111 @@ static void test_text_protocol_validates_request_id(void)
 }
 
 /**
- * @brief Verifies decimal parsing rejects scientific notation and non-finite tokens.
+ * @brief Verifies strict decimal parsing and the exact strtof rounding result.
  */
 static void test_text_protocol_float_conversion_is_strict(void)
 {
     static const char scientific_text[] = "1e2";
     static const char nan_text[] = "nan";
     static const char signed_decimal_text[] = "-3.25";
+    static const char positive_fraction_text[] = "+.5";
+    static const char trailing_decimal_text[] = "5.";
+    static const char decimal_point_only_text[] = ".";
+    static const char positive_position_rounds_to_limit_text[] = "180.000001";
+    static const char negative_position_rounds_to_limit_text[] = "-180.000001";
+    static const char position_rounds_over_limit_text[] = "180.00001";
+    static const char speed_rounds_to_limit_text[] = "360.000001";
+    static const char speed_rounds_over_limit_text[] = "360.00002";
+    static const char maximum_rounds_to_float32_text[] =
+        "340282347000000000000000000000000000000";
+    static const char overflow_rounding_threshold_text[] =
+        "340282356779733661637539395458142568448";
+    static const char minimum_rounds_to_normal_text[] =
+        "0.000000000000000000000000000000000000011754943";
+    static const char subnormal_rounding_threshold_text[] =
+        "0.0000000000000000000000000000000000000117549428";
+    static const char rounds_to_zero_text[] =
+        "0.0000000000000000000000000000000000000000000001";
+    static const char signed_zero_text[] = "-0.0";
     TextProtocolSpan scientific = {scientific_text, sizeof(scientific_text) - 1U};
     TextProtocolSpan nan_value = {nan_text, sizeof(nan_text) - 1U};
     TextProtocolSpan signed_decimal = {
         signed_decimal_text,
         sizeof(signed_decimal_text) - 1U
     };
+    TextProtocolSpan positive_fraction = {
+        positive_fraction_text,
+        sizeof(positive_fraction_text) - 1U
+    };
+    TextProtocolSpan trailing_decimal = {
+        trailing_decimal_text,
+        sizeof(trailing_decimal_text) - 1U
+    };
+    TextProtocolSpan decimal_point_only = {
+        decimal_point_only_text,
+        sizeof(decimal_point_only_text) - 1U
+    };
+    TextProtocolSpan positive_position_rounds_to_limit = {
+        positive_position_rounds_to_limit_text,
+        sizeof(positive_position_rounds_to_limit_text) - 1U
+    };
+    TextProtocolSpan negative_position_rounds_to_limit = {
+        negative_position_rounds_to_limit_text,
+        sizeof(negative_position_rounds_to_limit_text) - 1U
+    };
+    TextProtocolSpan position_rounds_over_limit = {
+        position_rounds_over_limit_text,
+        sizeof(position_rounds_over_limit_text) - 1U
+    };
+    TextProtocolSpan speed_rounds_to_limit = {
+        speed_rounds_to_limit_text,
+        sizeof(speed_rounds_to_limit_text) - 1U
+    };
+    TextProtocolSpan speed_rounds_over_limit = {
+        speed_rounds_over_limit_text,
+        sizeof(speed_rounds_over_limit_text) - 1U
+    };
+    TextProtocolSpan maximum_rounds_to_float32 = {
+        maximum_rounds_to_float32_text,
+        sizeof(maximum_rounds_to_float32_text) - 1U
+    };
+    TextProtocolSpan overflow_rounding_threshold = {
+        overflow_rounding_threshold_text,
+        sizeof(overflow_rounding_threshold_text) - 1U
+    };
+    TextProtocolSpan minimum_rounds_to_normal = {
+        minimum_rounds_to_normal_text,
+        sizeof(minimum_rounds_to_normal_text) - 1U
+    };
+    TextProtocolSpan subnormal_rounding_threshold = {
+        subnormal_rounding_threshold_text,
+        sizeof(subnormal_rounding_threshold_text) - 1U
+    };
+    TextProtocolSpan rounds_to_zero = {
+        rounds_to_zero_text,
+        sizeof(rounds_to_zero_text) - 1U
+    };
+    TextProtocolSpan signed_zero = {
+        signed_zero_text,
+        sizeof(signed_zero_text) - 1U
+    };
+    char maximum_token[64];
+    char overlength_token[65];
+    TextProtocolSpan maximum_length_decimal;
+    TextProtocolSpan overlength_decimal;
+    uint32_t value_bits = 0U;
     float value = 0.0F;
+
+    memset(maximum_token, '0', sizeof(maximum_token));
+    maximum_token[62] = '1';
+    maximum_token[63] = '\0';
+    maximum_length_decimal.data = maximum_token;
+    maximum_length_decimal.length = 63U;
+    memset(overlength_token, '0', sizeof(overlength_token));
+    overlength_token[63] = '1';
+    overlength_token[64] = '\0';
+    overlength_decimal.data = overlength_token;
+    overlength_decimal.length = 64U;
 
     assert(text_protocol_span_to_float(&scientific, &value) ==
            TEXT_PROTOCOL_STATUS_BAD_NUMBER);
@@ -172,6 +263,53 @@ static void test_text_protocol_float_conversion_is_strict(void)
     assert(text_protocol_span_to_float(&signed_decimal, &value) ==
            TEXT_PROTOCOL_STATUS_OK);
     assert(value == -3.25F);
+    assert(text_protocol_span_to_float(&positive_fraction, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 0.5F);
+    assert(text_protocol_span_to_float(&trailing_decimal, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 5.0F);
+    assert(text_protocol_span_to_float(&decimal_point_only, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
+    assert(text_protocol_span_to_float(&positive_position_rounds_to_limit,
+                                       &value) == TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 180.0F);
+    assert(text_protocol_span_to_float(&negative_position_rounds_to_limit,
+                                       &value) == TEXT_PROTOCOL_STATUS_OK);
+    assert(value == -180.0F);
+    assert(text_protocol_span_to_float(&position_rounds_over_limit, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value > 180.0F);
+    assert(text_protocol_span_to_float(&speed_rounds_to_limit, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 360.0F);
+    assert(text_protocol_span_to_float(&speed_rounds_over_limit, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value > 360.0F);
+    assert(text_protocol_span_to_float(&maximum_rounds_to_float32, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    memcpy(&value_bits, &value, sizeof(value_bits));
+    assert(value_bits == 0x7F7FFFFFU);
+    assert(text_protocol_span_to_float(&minimum_rounds_to_normal, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    memcpy(&value_bits, &value, sizeof(value_bits));
+    assert(value_bits == 0x00800000U);
+
+    assert(text_protocol_span_to_float(&overflow_rounding_threshold, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
+    assert(text_protocol_span_to_float(&subnormal_rounding_threshold, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
+    assert(text_protocol_span_to_float(&rounds_to_zero, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
+    assert(text_protocol_span_to_float(&signed_zero, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    memcpy(&value_bits, &value, sizeof(value_bits));
+    assert(value_bits == 0x80000000U);
+    assert(text_protocol_span_to_float(&maximum_length_decimal, &value) ==
+           TEXT_PROTOCOL_STATUS_OK);
+    assert(value == 1.0F);
+    assert(text_protocol_span_to_float(&overlength_decimal, &value) ==
+           TEXT_PROTOCOL_STATUS_BAD_NUMBER);
 }
 
 /**

@@ -4,6 +4,7 @@
  */
 
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -33,6 +34,300 @@ static CanFrame make_test_frame(uint16_t identifier, uint8_t marker)
                           payload,
                           CAN_CLASSIC_MAX_DATA_LENGTH) == CAN_FRAME_STATUS_OK);
     return frame;
+}
+
+/**
+ * @brief Initializes two discovered motors with deliberately different limits.
+ * @param runtime Destination initialized runtime.
+ */
+static void prepare_runtime_with_two_discovered_motors(MotorRuntime *runtime)
+{
+    assert(motor_runtime_init(runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime->discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+    runtime->discovery.target_joint_mask = 0x05U;
+    runtime->discovery.verified_joint_mask = 0x05U;
+
+    runtime->discovery.results[0].ranges.position_max_rad = 2.0F;
+    runtime->discovery.results[0].ranges.velocity_max_rad_s = 4.0F;
+    runtime->discovery.results[0].ranges.torque_max_nm = 18.0F;
+    runtime->discovery.results[0].maximum_speed_rad_s = 3.0F;
+    runtime->discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+
+    runtime->discovery.results[2].ranges.position_max_rad = 1.75F;
+    runtime->discovery.results[2].ranges.velocity_max_rad_s = 2.5F;
+    runtime->discovery.results[2].ranges.torque_max_nm = 16.0F;
+    runtime->discovery.results[2].maximum_speed_rad_s = 5.0F;
+    runtime->discovery.results[2].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+}
+
+/**
+ * @brief Creates a fault-free feedback snapshot for the two discovered motors.
+ * @return Snapshot whose valid mask covers J1 and J3.
+ */
+static MotorFeedbackSnapshot make_two_motor_feedback_snapshot(void)
+{
+    MotorFeedbackSnapshot feedback_snapshot = {0};
+
+    feedback_snapshot.valid_joint_mask = 0x05U;
+    return feedback_snapshot;
+}
+
+/**
+ * @brief Verifies every byte in an output batch has been cleared.
+ * @param batch Batch expected to contain no partial frame.
+ */
+static void assert_motor_frame_batch_is_zeroed(
+    const MotorEmergencyFrameBatch *batch)
+{
+    const uint8_t *batch_bytes = (const uint8_t *)batch;
+    size_t byte_index;
+
+    assert(batch != NULL);
+    for (byte_index = 0U; byte_index < sizeof(*batch); ++byte_index)
+    {
+        assert(batch_bytes[byte_index] == 0U);
+    }
+}
+
+/**
+ * @brief Verifies dynamic POS_VEL limits come only from complete discovery data.
+ */
+static void test_motor_runtime_reports_discovered_position_velocity_limits(void)
+{
+    MotorRuntime runtime;
+    MotorPositionVelocityLimits limits = {0};
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 0U, &limits) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(limits.position_max_rad == 2.0F);
+    assert(limits.velocity_mapping_max_rad_s == 4.0F);
+    assert(limits.maximum_speed_rad_s == 3.0F);
+    assert(limits.move_speed_limit_rad_s == 3.0F);
+
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 2U, &limits) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(limits.position_max_rad == 1.75F);
+    assert(limits.velocity_mapping_max_rad_s == 2.5F);
+    assert(limits.maximum_speed_rad_s == 5.0F);
+    assert(limits.move_speed_limit_rad_s == 2.5F);
+
+    memset(&limits, 0xA5, sizeof(limits));
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 1U, &limits) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+
+    runtime.discovery.results[0].ranges.position_max_rad = NAN;
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 0U, &limits) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+    runtime.discovery.results[0].ranges.position_max_rad = 2.0F;
+    runtime.discovery.results[0].ranges.velocity_max_rad_s = 0.0F;
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 0U, &limits) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+    runtime.discovery.results[0].ranges.velocity_max_rad_s = 4.0F;
+    runtime.discovery.results[0].maximum_speed_rad_s = -1.0F;
+    assert(motor_runtime_get_position_velocity_limits(&runtime, 0U, &limits) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+}
+
+/**
+ * @brief Verifies move validation accepts ninety degrees and exact boundaries.
+ */
+static void test_motor_runtime_accepts_valid_position_velocity_move_limits(void)
+{
+    MotorRuntime runtime;
+    MotorFeedbackSnapshot feedback_snapshot = make_two_motor_feedback_snapshot();
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+    uint8_t failed_joint_index = 0xFFU;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_position_rad[0] = 1.57079632679F;
+    motor_position_rad[2] = -1.57079632679F;
+    motor_speed_rad_s[0] = 2.0F;
+    motor_speed_rad_s[2] = 2.0F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime,
+               &feedback_snapshot,
+               0x05U,
+               motor_position_rad,
+               motor_speed_rad_s,
+               &failed_joint_index) == MOTOR_RUNTIME_STATUS_OK);
+    assert(failed_joint_index == 0xFFU);
+
+    motor_position_rad[0] = 2.0F;
+    motor_position_rad[2] = -1.75F;
+    motor_speed_rad_s[0] = 3.0F;
+    motor_speed_rad_s[2] = 2.5F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime,
+               &feedback_snapshot,
+               0x05U,
+               motor_position_rad,
+               motor_speed_rad_s,
+               &failed_joint_index) == MOTOR_RUNTIME_STATUS_OK);
+}
+
+/**
+ * @brief Verifies move validation reports the first selected motor failure.
+ */
+static void test_motor_runtime_rejects_invalid_position_velocity_moves(void)
+{
+    MotorRuntime runtime;
+    MotorFeedbackSnapshot feedback_snapshot = make_two_motor_feedback_snapshot();
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+    uint8_t failed_joint_index = 0xFFU;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_position_rad[0] = 1.0F;
+    motor_position_rad[2] = 1.0F;
+    motor_speed_rad_s[0] = 1.0F;
+    motor_speed_rad_s[2] = 1.0F;
+
+    motor_position_rad[0] = 2.01F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_position_rad[0] = 1.0F;
+
+    motor_position_rad[2] = -1.76F;
+    failed_joint_index = 0xFFU;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE);
+    assert(failed_joint_index == 2U);
+    motor_position_rad[2] = 1.0F;
+
+    motor_speed_rad_s[0] = 3.01F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_speed_rad_s[0] = 1.0F;
+
+    motor_speed_rad_s[2] = 2.51F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 2U);
+    motor_speed_rad_s[2] = 1.0F;
+
+    motor_position_rad[0] = NAN;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_position_rad[0] = 1.0F;
+
+    motor_speed_rad_s[0] = INFINITY;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_speed_rad_s[0] = 0.0F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+    motor_speed_rad_s[0] = -0.1F;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(failed_joint_index == 0U);
+}
+
+/**
+ * @brief Verifies move validation requires fresh, fault-free selected feedback.
+ */
+static void test_motor_runtime_rejects_missing_or_faulted_move_feedback(void)
+{
+    MotorRuntime runtime;
+    MotorFeedbackSnapshot feedback_snapshot = make_two_motor_feedback_snapshot();
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+    uint8_t failed_joint_index = 0xFFU;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_speed_rad_s[0] = 1.0F;
+    motor_speed_rad_s[2] = 1.0F;
+
+    feedback_snapshot.valid_joint_mask = 0x01U;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_STALE_FEEDBACK);
+    assert(failed_joint_index == 2U);
+
+    feedback_snapshot.valid_joint_mask = 0x05U;
+    feedback_snapshot.joints[2].fault_flags = 0x08U;
+    assert(motor_runtime_validate_position_velocity_move_subset(
+               &runtime, &feedback_snapshot, 0x05U, motor_position_rad,
+               motor_speed_rad_s, &failed_joint_index) ==
+           MOTOR_RUNTIME_STATUS_FAULT_PRESENT);
+    assert(failed_joint_index == 2U);
+}
+
+/**
+ * @brief Verifies subset encoding allows HOLD and never exposes partial frames.
+ */
+static void test_motor_runtime_builds_position_velocity_subset_atomically(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_position_rad[0] = 1.0F;
+    motor_position_rad[2] = -1.0F;
+    assert(motor_runtime_build_position_velocity_subset(
+               &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
+               &batch) == MOTOR_RUNTIME_STATUS_OK);
+    assert(batch.count == 2U);
+    assert(batch.frames[0].identifier == 0x101U);
+    assert(batch.frames[1].identifier == 0x103U);
+    assert(memcmp(&batch.frames[0].data[4],
+                  &(float){0.0F},
+                  sizeof(float)) == 0);
+    assert(memcmp(&batch.frames[1].data[4],
+                  &(float){0.0F},
+                  sizeof(float)) == 0);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    motor_position_rad[2] = 1.76F;
+    assert(motor_runtime_build_position_velocity_subset(
+               &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
+               &batch) == MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    motor_position_rad[2] = -1.0F;
+    motor_speed_rad_s[2] = NAN;
+    assert(motor_runtime_build_position_velocity_subset(
+               &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
+               &batch) == MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    motor_speed_rad_s[2] = -0.1F;
+    assert(motor_runtime_build_position_velocity_subset(
+               &runtime, 0x05U, motor_position_rad, motor_speed_rad_s,
+               &batch) == MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE);
+    assert(batch.count == 0U);
+    assert_motor_frame_batch_is_zeroed(&batch);
 }
 
 /**
@@ -197,6 +492,82 @@ static void test_motor_runtime_builds_fail_safe_disable_batch(void)
 }
 
 /**
+ * @brief Verifies selected unknown modes emit both identifiers in joint order.
+ */
+static void test_motor_runtime_builds_selected_unknown_mode_disable_batch(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0x05U, &batch) == MOTOR_RUNTIME_STATUS_OK);
+    assert(batch.count == 4U);
+    assert(batch.frames[0].identifier == 0x001U);
+    assert(batch.frames[1].identifier == 0x101U);
+    assert(batch.frames[2].identifier == 0x003U);
+    assert(batch.frames[3].identifier == 0x103U);
+    assert(batch.frames[0].data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(batch.frames[1].data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(batch.frames[2].data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(batch.frames[3].data[7] == S3519_MODE_COMMAND_DISABLE);
+}
+
+/**
+ * @brief Verifies selected verified mixed modes use only their known identifiers.
+ */
+static void test_motor_runtime_builds_selected_known_mode_disable_batch(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_MODE_FIELDS_MASK;
+    runtime.discovery.results[0].observed_control_mode = 1U;
+    runtime.discovery.results[2].verified_fields_mask =
+        MOTOR_DISCOVERY_MODE_FIELDS_MASK;
+    runtime.discovery.results[2].observed_control_mode = 2U;
+
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0x05U, &batch) == MOTOR_RUNTIME_STATUS_OK);
+    assert(batch.count == 2U);
+    assert(batch.frames[0].identifier == 0x001U);
+    assert(batch.frames[1].identifier == 0x103U);
+    assert(batch.frames[0].data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(batch.frames[1].data[7] == S3519_MODE_COMMAND_DISABLE);
+}
+
+/**
+ * @brief Verifies invalid subset requests never expose partial emergency frames.
+ */
+static void test_motor_runtime_rejects_invalid_emergency_disable_subset(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    memset(&batch, 0xA5, sizeof(batch));
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0U, &batch) == MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0x80U, &batch) == MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    runtime.initialized = 0U;
+    memset(&batch, 0xA5, sizeof(batch));
+    assert(motor_runtime_build_emergency_disable_subset(
+               &runtime, 0x01U, &batch) == MOTOR_RUNTIME_STATUS_NOT_INITIALIZED);
+    assert_motor_frame_batch_is_zeroed(&batch);
+}
+
+/**
  * @brief Verifies seven mode writes are followed by exact register readbacks.
  */
 static void test_motor_runtime_switches_mode_with_readback(void)
@@ -210,6 +581,11 @@ static void test_motor_runtime_switches_mode_with_readback(void)
            MOTOR_RUNTIME_STATUS_OK);
     runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
     runtime.discovery.verified_joint_mask = 0x7FU;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        runtime.discovery.results[joint_index].verified_fields_mask =
+            MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    }
     assert(motor_runtime_begin_control_mode_switch(
                &runtime,
                S3519_CONTROL_MODE_POSITION_VELOCITY) == MOTOR_RUNTIME_STATUS_OK);
@@ -256,6 +632,972 @@ static void test_motor_runtime_switches_mode_with_readback(void)
                                                  timestamp_us,
                                                  &frame) ==
            MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+}
+
+/**
+ * @brief Verifies a complete selected motor can switch mode while another discovery waits.
+ */
+static void test_motor_runtime_masked_mode_switch_serializes_unselected_discovery(void)
+{
+    MotorRuntime runtime;
+    CanFrame request;
+    CanFrame response;
+    CanFrame unselected_discovery_response;
+    uint8_t selected_response_payload[8] = {
+        1U, 0U, 0x33U, S3519_REGISTER_CONTROL_MODE, 2U, 0U, 0U, 0U
+    };
+    uint8_t unselected_response_payload[8] = {
+        2U, 0U, 0x33U, S3519_REGISTER_CONTROL_MODE, 2U, 0U, 0U, 0U
+    };
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.verified_joint_mask = 0x01U;
+    runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_READY;
+    runtime.discovery.target_joint_mask = 0x02U;
+    runtime.discovery.current_joint_index = 1U;
+    runtime.discovery.current_register_index = 2U;
+    runtime.discovery_active = 1U;
+    assert(motor_runtime_next_discovery_frame(&runtime, 500U, &request) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[0] == 2U);
+    assert(request.data[3] == S3519_REGISTER_CONTROL_MODE);
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert((runtime.discovery.verified_joint_mask & 0x01U) == 0U);
+    assert((runtime.discovery.results[0].verified_fields_mask &
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK) == 0U);
+    assert(motor_runtime_next_control_mode_frame(&runtime, 1000U, &request) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[0] == 1U);
+    assert(request.data[2] == 0x55U);
+    assert(motor_runtime_next_control_mode_frame(&runtime, 2000U, &request) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[0] == 1U);
+    assert(request.data[2] == 0x33U);
+    assert(can_frame_init(&unselected_discovery_response,
+                          0x12U,
+                          unselected_response_payload,
+                          sizeof(unselected_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime,
+                                      &unselected_discovery_response,
+                                      2050U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING);
+    assert(can_frame_init(&response,
+                          0x11U,
+                          selected_response_payload,
+                          sizeof(selected_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response, 2100U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+    assert((runtime.discovery.verified_joint_mask & 0x01U) != 0U);
+    assert((runtime.discovery.results[0].verified_fields_mask &
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK) != 0U);
+    assert(runtime.discovery.state == MOTOR_DISCOVERY_STATE_READY);
+    assert(runtime.discovery.current_joint_index == 1U);
+}
+
+/**
+ * @brief Verifies masked mode admission ignores unselected failure but rejects selected gaps.
+ */
+static void test_motor_runtime_masked_mode_switch_requires_selected_readiness(void)
+{
+    MotorRuntime runtime;
+    CanFrame request;
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.verified_joint_mask = 0x01U;
+    runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_FAILED;
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime, 1000U, &request) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[0] == 1U);
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.verified_joint_mask = 0x01U;
+    runtime.discovery.results[0].verified_fields_mask =
+        (uint16_t)(MOTOR_DISCOVERY_ALL_FIELDS_MASK &
+                   (uint16_t)~MOTOR_DISCOVERY_RANGE_FIELDS_MASK);
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_FAILED;
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR);
+}
+
+/**
+ * @brief Verifies aborting active discovery and mode sequences is idempotent,
+ *        emits no old parameter frame, and preserves verified runtime data.
+ */
+static void test_motor_runtime_aborts_active_parameter_sequences(void)
+{
+    MotorRuntime runtime;
+    CanFrame frame;
+    CanFrame response;
+    MotorDiscoveryResult preserved_result;
+    uint32_t preserved_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.verified_joint_mask = 0x02U;
+    runtime.discovery.results[1].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.results[1].observed_control_mode = 2U;
+    runtime.discovery.results[1].maximum_speed_rad_s = 20.0F;
+    runtime.accepted_feedback_count = 7U;
+    preserved_result = runtime.discovery.results[1];
+    preserved_feedback_count = runtime.accepted_feedback_count;
+    assert(motor_runtime_begin_discovery(&runtime, 0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_discovery_frame(&runtime, 1000U, &frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 1100U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.discovery.state == MOTOR_DISCOVERY_STATE_COMPLETE);
+    assert(motor_runtime_next_discovery_frame(&runtime, 2000U, &frame) ==
+           MOTOR_RUNTIME_STATUS_DISCOVERY_COMPLETE);
+    assert(runtime.discovery.verified_joint_mask == 0x02U);
+    assert(memcmp(&runtime.discovery.results[1],
+                  &preserved_result,
+                  sizeof(preserved_result)) == 0);
+    assert(runtime.accepted_feedback_count == preserved_feedback_count);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 2100U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+
+    runtime.discovery.verified_joint_mask = 0x03U;
+    runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.results[0].observed_control_mode = 1U;
+    runtime.discovery.results[1].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    runtime.discovery.results[1].observed_control_mode = 2U;
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1100U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US + 1U,
+               &frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_abort_active_parameter_sequences(
+               &runtime,
+               1200U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_IDLE);
+    assert(runtime.mode_switch_joint_mask == 0U);
+    assert(runtime.mode_switch_joint_index == 0U);
+    assert(runtime.mode_switch_attempt_count == 0U);
+    assert(runtime.mode_request_sent_at_us == 0U);
+    assert((runtime.discovery.results[0].verified_fields_mask &
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK) == 0U);
+    assert((runtime.discovery.verified_joint_mask & 0x01U) == 0U);
+    assert((runtime.discovery.results[1].verified_fields_mask &
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK) != 0U);
+    assert((runtime.discovery.verified_joint_mask & 0x02U) != 0U);
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1300U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US,
+               &frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1400U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US,
+               &frame) == MOTOR_RUNTIME_STATUS_WAITING);
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1201U + (2U * MOTOR_DISCOVERY_REQUEST_TIMEOUT_US),
+               &frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.data[2] == 0x55U);
+    assert(motor_runtime_next_control_mode_frame(
+               &runtime,
+               1202U + (2U * MOTOR_DISCOVERY_REQUEST_TIMEOUT_US),
+               &frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.data[2] == 0x33U);
+    assert(can_frame_init(&response,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(
+               &runtime,
+               &response,
+               1203U + (2U * MOTOR_DISCOVERY_REQUEST_TIMEOUT_US)) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+    assert((runtime.discovery.results[0].verified_fields_mask &
+            MOTOR_DISCOVERY_MODE_FIELDS_MASK) != 0U);
+    assert((runtime.discovery.verified_joint_mask & 0x01U) != 0U);
+}
+
+/**
+ * @brief Verifies late discovery and mode responses are discarded after abort.
+ */
+static void test_motor_runtime_discards_late_parameter_responses_after_abort(void)
+{
+    static const uint8_t feedback_payload[8] = {
+        0x01U,
+        0x80U,
+        0x00U,
+        0x80U,
+        0x08U,
+        0x00U,
+        42U,
+        40U
+    };
+    MotorRuntime runtime;
+    CanFrame feedback_frame;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    MotorDiscoveryResult preserved_discovery_result;
+    MotorJointFeedback preserved_feedback;
+    uint32_t preserved_accepted_feedback_count;
+    uint32_t preserved_rejected_feedback_count;
+    uint8_t discovery_response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_MASTER_ID,
+        0x11U,
+        0U,
+        0U,
+        0U
+    };
+    uint8_t mode_response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    runtime.discovery.results[0].observed_control_mode = 1U;
+    assert(can_frame_init(&feedback_frame,
+                          0x11U,
+                          feedback_payload,
+                          sizeof(feedback_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &feedback_frame, 1000U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_begin_discovery(&runtime, 0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_discovery_frame(&runtime,
+                                              2000U,
+                                              &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[3] == S3519_REGISTER_MASTER_ID);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 2050U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    preserved_discovery_result = runtime.discovery.results[0];
+    preserved_feedback = runtime.bank.motors[0].feedback;
+    preserved_accepted_feedback_count = runtime.accepted_feedback_count;
+    preserved_rejected_feedback_count = runtime.rejected_feedback_count;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          discovery_response_payload,
+                          sizeof(discovery_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 2100U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(memcmp(&runtime.discovery.results[0],
+                  &preserved_discovery_result,
+                  sizeof(preserved_discovery_result)) == 0);
+    assert(memcmp(&runtime.bank.motors[0].feedback,
+                  &preserved_feedback,
+                  sizeof(preserved_feedback)) == 0);
+    assert(runtime.accepted_feedback_count ==
+           preserved_accepted_feedback_count);
+    assert(runtime.rejected_feedback_count ==
+           preserved_rejected_feedback_count);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 2101U) ==
+           MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE);
+    assert(runtime.rejected_feedback_count ==
+           preserved_rejected_feedback_count + 1U);
+    assert(motor_runtime_next_discovery_frame(&runtime,
+                                              2200U,
+                                              &request_frame) ==
+           MOTOR_RUNTIME_STATUS_DISCOVERY_COMPLETE);
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    runtime.discovery.results[0].observed_control_mode = 1U;
+    assert(can_frame_init(&feedback_frame,
+                          0x11U,
+                          feedback_payload,
+                          sizeof(feedback_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &feedback_frame, 3000U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 3100U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 3101U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[3] == S3519_REGISTER_CONTROL_MODE);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 3150U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    preserved_discovery_result = runtime.discovery.results[0];
+    preserved_feedback = runtime.bank.motors[0].feedback;
+    preserved_accepted_feedback_count = runtime.accepted_feedback_count;
+    preserved_rejected_feedback_count = runtime.rejected_feedback_count;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          mode_response_payload,
+                          sizeof(mode_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 3200U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(memcmp(&runtime.discovery.results[0],
+                  &preserved_discovery_result,
+                  sizeof(preserved_discovery_result)) == 0);
+    assert(memcmp(&runtime.bank.motors[0].feedback,
+                  &preserved_feedback,
+                  sizeof(preserved_feedback)) == 0);
+    assert(runtime.accepted_feedback_count ==
+           preserved_accepted_feedback_count);
+    assert(runtime.rejected_feedback_count ==
+           preserved_rejected_feedback_count);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 3201U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(memcmp(&runtime.discovery.results[0],
+                  &preserved_discovery_result,
+                  sizeof(preserved_discovery_result)) == 0);
+    assert(runtime.accepted_feedback_count ==
+           preserved_accepted_feedback_count + 1U);
+    assert(runtime.bank.motors[0].feedback.timestamp_us == 3201U);
+    assert(runtime.rejected_feedback_count ==
+           preserved_rejected_feedback_count);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 3300U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+}
+
+/**
+ * @brief Verifies quarantine gates a new request and expires after one timeout.
+ */
+static void test_motor_runtime_parameter_quarantine_is_bounded(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame late_frame;
+    uint32_t accepted_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4000U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4001U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 4050U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4060U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+    assert(can_frame_init(&late_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &late_frame, 4070U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_WRITING);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4080U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+    response_payload[2] = 0x55U;
+    assert(can_frame_init(&late_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &late_frame, 4081U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4082U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 4083U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 4090U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    response_payload[2] = 0x33U;
+    assert(can_frame_init(&late_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    assert(motor_runtime_accept_frame(
+               &runtime,
+               &late_frame,
+               4090U + MOTOR_DISCOVERY_REQUEST_TIMEOUT_US + 1U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count + 1U);
+}
+
+/**
+ * @brief Verifies early mode-write acknowledgements remain parameter traffic.
+ */
+static void test_motor_runtime_tracks_multiple_mode_parameter_expectations(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    uint32_t accepted_feedback_count;
+    uint32_t rejected_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x55U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x05U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5000U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 1U);
+    assert(request_frame.data[2] == 0x55U);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5001U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 3U);
+    assert(request_frame.data[2] == 0x55U);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5002U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 1U);
+    assert(request_frame.data[2] == 0x33U);
+
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    rejected_feedback_count = runtime.rejected_feedback_count;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5003U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+    assert(runtime.mode_switch_state == MOTOR_MODE_SWITCH_READ_WAITING);
+    assert(runtime.parameter_expectations.count == 2U);
+}
+
+/**
+ * @brief Verifies a bounded write acknowledgement stays parameter traffic
+ *        after the corresponding readback has completed the mode sequence.
+ */
+static void test_motor_runtime_accepts_late_mode_write_ack_after_readback(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    uint32_t accepted_feedback_count;
+    uint32_t rejected_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5500U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5501U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5502U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    rejected_feedback_count = runtime.rejected_feedback_count;
+    response_payload[2] = 0x55U;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5503U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+    assert(runtime.parameter_expectations.count == 0U);
+}
+
+/**
+ * @brief Verifies a new mode generation quarantines the prior write ACK tuple.
+ */
+static void test_motor_runtime_mode_rollover_preserves_prior_generation(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    uint32_t accepted_feedback_count;
+    uint32_t rejected_feedback_count;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5600U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5601U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5602U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+    assert(runtime.parameter_expectations.count == 1U);
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_MIT,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.parameter_expectations.count == 1U);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5603U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    rejected_feedback_count = runtime.rejected_feedback_count;
+    response_payload[2] = 0x55U;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5604U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5605U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[2] == 0x55U);
+    response_payload[4] = 1U;
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5606U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5607U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    response_payload[2] = 0x33U;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5608U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+}
+
+/**
+ * @brief Verifies an unrelated motor tuple is not blocked by old quarantine.
+ */
+static void test_motor_runtime_mode_rollover_allows_different_tuple(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5700U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5701U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 5702U) ==
+           MOTOR_RUNTIME_STATUS_ACTION_COMPLETE);
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY,
+               0x04U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5703U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 3U);
+    assert(request_frame.data[2] == 0x55U);
+}
+
+/**
+ * @brief Verifies rollover keeps every old tuple when quarantine is full.
+ */
+static void test_motor_runtime_mode_rollover_fails_closed_at_capacity(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    uint8_t entry_index;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    runtime.mode_switch_state = MOTOR_MODE_SWITCH_COMPLETE;
+    runtime.parameter_expectations.count = 1U;
+    runtime.parameter_expectations.entries[0].timestamp_us = 5800U;
+    runtime.parameter_expectations.entries[0].identifier = 0x11U;
+    runtime.parameter_expectations.entries[0].joint_index = 0U;
+    runtime.parameter_expectations.entries[0].esc_id = 1U;
+    runtime.parameter_expectations.entries[0].opcode = 0x55U;
+    runtime.parameter_expectations.entries[0].register_address =
+        S3519_REGISTER_CONTROL_MODE;
+    runtime.parameter_expectations.entries[0].valid = 1U;
+    runtime.parameter_expectations.sources[0] =
+        MOTOR_PARAMETER_SOURCE_MODE_WRITE;
+    runtime.parameter_quarantine.count =
+        MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY;
+    for (entry_index = 0U;
+         entry_index < MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY;
+         ++entry_index)
+    {
+        runtime.parameter_quarantine.entries[entry_index].timestamp_us = 5800U;
+        runtime.parameter_quarantine.entries[entry_index].valid = 1U;
+        runtime.parameter_quarantine.entries[entry_index].quarantined = 1U;
+        runtime.parameter_quarantine.sources[entry_index] =
+            MOTOR_PARAMETER_SOURCE_DISCOVERY;
+    }
+
+    assert(motor_runtime_begin_control_mode_switch_mask(
+               &runtime,
+               S3519_CONTROL_MODE_MIT,
+               0x01U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.parameter_expectations.count == 1U);
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 5801U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+    assert(runtime.parameter_expectations.count == 1U);
+    assert(runtime.parameter_quarantine.count ==
+           MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY);
+}
+
+/**
+ * @brief Verifies missing, expired, and unrelated expectations cannot advance mode.
+ */
+static void test_motor_runtime_parameter_routes_are_defensive(void)
+{
+    MotorRuntime runtime;
+    CanFrame response_frame;
+    MotorModeSwitchState mode_state_before_response;
+    uint8_t verified_mask_before_response;
+    uint8_t response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    runtime.mode_switch_state = MOTOR_MODE_SWITCH_READ_WAITING;
+    mode_state_before_response = runtime.mode_switch_state;
+    verified_mask_before_response = runtime.discovery.verified_joint_mask;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          response_payload,
+                          sizeof(response_payload)) == CAN_FRAME_STATUS_OK);
+
+    runtime.parameter_expectations.count = 0U;
+    (void)motor_runtime_accept_frame(&runtime, &response_frame, 5900U);
+    assert(runtime.parameter_expectations.count == 0U);
+    assert(runtime.mode_switch_state == mode_state_before_response);
+    assert(runtime.discovery.verified_joint_mask ==
+           verified_mask_before_response);
+
+    runtime.parameter_expectations.count = 1U;
+    runtime.parameter_expectations.entries[0].timestamp_us = 0U;
+    runtime.parameter_expectations.entries[0].identifier = 0x11U;
+    runtime.parameter_expectations.entries[0].joint_index = 0U;
+    runtime.parameter_expectations.entries[0].esc_id = 1U;
+    runtime.parameter_expectations.entries[0].opcode = 0x33U;
+    runtime.parameter_expectations.entries[0].register_address =
+        S3519_REGISTER_CONTROL_MODE;
+    runtime.parameter_expectations.entries[0].valid = 1U;
+    runtime.parameter_expectations.sources[0] = MOTOR_PARAMETER_SOURCE_MODE_READ;
+    (void)motor_runtime_accept_frame(&runtime, &response_frame, 26000U);
+    assert(runtime.parameter_expectations.count == 0U);
+    assert(runtime.mode_switch_state == mode_state_before_response);
+    assert(runtime.discovery.verified_joint_mask ==
+           verified_mask_before_response);
+
+    runtime.parameter_expectations.count = 1U;
+    runtime.parameter_expectations.entries[0].timestamp_us = 27000U;
+    runtime.parameter_expectations.entries[0].identifier = 0x13U;
+    runtime.parameter_expectations.entries[0].joint_index = 2U;
+    runtime.parameter_expectations.entries[0].esc_id = 3U;
+    runtime.parameter_expectations.entries[0].opcode = 0x33U;
+    runtime.parameter_expectations.entries[0].register_address =
+        S3519_REGISTER_CONTROL_MODE;
+    runtime.parameter_expectations.entries[0].valid = 1U;
+    runtime.parameter_expectations.sources[0] = MOTOR_PARAMETER_SOURCE_MODE_READ;
+    (void)motor_runtime_accept_frame(&runtime, &response_frame, 27001U);
+    assert(runtime.parameter_expectations.count == 1U);
+    assert(runtime.mode_switch_state == mode_state_before_response);
+    assert(runtime.discovery.verified_joint_mask ==
+           verified_mask_before_response);
+}
+
+/**
+ * @brief Verifies abort quarantines the maximum discovery-plus-mode burst.
+ */
+static void test_motor_runtime_quarantines_every_outstanding_parameter_response(void)
+{
+    MotorRuntime runtime;
+    CanFrame request_frame;
+    CanFrame response_frame;
+    MotorDiscoveryResult preserved_discovery_result;
+    MotorJointFeedback preserved_feedback[ARM_JOINT_COUNT];
+    uint32_t accepted_feedback_count;
+    uint32_t rejected_feedback_count;
+    uint8_t joint_index;
+    uint8_t discovery_response_payload[8] = {
+        1U,
+        0U,
+        0x33U,
+        S3519_REGISTER_MASTER_ID,
+        0x11U,
+        0U,
+        0U,
+        0U
+    };
+    uint8_t mode_response_payload[8] = {
+        0U,
+        0U,
+        0x55U,
+        S3519_REGISTER_CONTROL_MODE,
+        2U,
+        0U,
+        0U,
+        0U
+    };
+
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+    runtime.discovery.verified_joint_mask = 0x7FU;
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        runtime.discovery.results[joint_index].verified_fields_mask =
+            MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    }
+    assert(motor_runtime_begin_control_mode_switch(
+               &runtime,
+               S3519_CONTROL_MODE_POSITION_VELOCITY) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_begin_discovery(&runtime, 0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_discovery_frame(&runtime,
+                                              6000U,
+                                              &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[3] == S3519_REGISTER_MASTER_ID);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        assert(motor_runtime_next_control_mode_frame(
+                   &runtime,
+                   (uint64_t)(6001U + joint_index),
+                   &request_frame) == MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(request_frame.data[0] == (uint8_t)(joint_index + 1U));
+        assert(request_frame.data[2] == 0x55U);
+    }
+    assert(motor_runtime_next_control_mode_frame(&runtime,
+                                                 6010U,
+                                                 &request_frame) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request_frame.data[0] == 1U);
+    assert(request_frame.data[2] == 0x33U);
+    assert(runtime.parameter_expectations.count ==
+           MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY);
+    assert(motor_runtime_abort_active_parameter_sequences(&runtime, 6050U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.parameter_expectations.count == 0U);
+    assert(runtime.parameter_quarantine.count ==
+           MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY);
+
+    preserved_discovery_result = runtime.discovery.results[0];
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        preserved_feedback[joint_index] =
+            runtime.bank.motors[joint_index].feedback;
+    }
+    accepted_feedback_count = runtime.accepted_feedback_count;
+    rejected_feedback_count = runtime.rejected_feedback_count;
+
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          discovery_response_payload,
+                          sizeof(discovery_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 6060U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        mode_response_payload[0] = (uint8_t)(joint_index + 1U);
+        assert(can_frame_init(&response_frame,
+                              (uint16_t)(0x11U + joint_index),
+                              mode_response_payload,
+                              sizeof(mode_response_payload)) ==
+               CAN_FRAME_STATUS_OK);
+        assert(motor_runtime_accept_frame(
+                   &runtime,
+                   &response_frame,
+                   (uint64_t)(6061U + joint_index)) == MOTOR_RUNTIME_STATUS_OK);
+    }
+    mode_response_payload[0] = 1U;
+    mode_response_payload[2] = 0x33U;
+    assert(can_frame_init(&response_frame,
+                          0x11U,
+                          mode_response_payload,
+                          sizeof(mode_response_payload)) ==
+           CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response_frame, 6070U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+
+    assert(runtime.accepted_feedback_count == accepted_feedback_count);
+    assert(runtime.rejected_feedback_count == rejected_feedback_count);
+    assert(runtime.parameter_quarantine.count == 0U);
+    assert(memcmp(&runtime.discovery.results[0],
+                  &preserved_discovery_result,
+                  sizeof(preserved_discovery_result)) == 0);
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        assert(memcmp(&runtime.bank.motors[joint_index].feedback,
+                      &preserved_feedback[joint_index],
+                      sizeof(preserved_feedback[joint_index])) == 0);
+    }
 }
 
 /**
@@ -768,13 +2110,33 @@ static void test_motor_runtime_routes_discovery_and_feedback(void)
  */
 int main(void)
 {
+    test_motor_runtime_reports_discovered_position_velocity_limits();
+    test_motor_runtime_accepts_valid_position_velocity_move_limits();
+    test_motor_runtime_rejects_invalid_position_velocity_moves();
+    test_motor_runtime_rejects_missing_or_faulted_move_feedback();
+    test_motor_runtime_builds_position_velocity_subset_atomically();
     test_motor_bank_uses_frozen_seven_axis_mapping();
     test_motor_bank_publishes_coherent_feedback_snapshots();
     test_motor_bank_rejects_snapshot_during_publish();
     test_can_scheduler_prioritizes_emergency_frames();
     test_can_scheduler_reserves_progress_for_emergency_frames();
     test_motor_runtime_builds_fail_safe_disable_batch();
+    test_motor_runtime_builds_selected_unknown_mode_disable_batch();
+    test_motor_runtime_builds_selected_known_mode_disable_batch();
+    test_motor_runtime_rejects_invalid_emergency_disable_subset();
     test_motor_runtime_switches_mode_with_readback();
+    test_motor_runtime_masked_mode_switch_serializes_unselected_discovery();
+    test_motor_runtime_masked_mode_switch_requires_selected_readiness();
+    test_motor_runtime_aborts_active_parameter_sequences();
+    test_motor_runtime_discards_late_parameter_responses_after_abort();
+    test_motor_runtime_parameter_quarantine_is_bounded();
+    test_motor_runtime_tracks_multiple_mode_parameter_expectations();
+    test_motor_runtime_accepts_late_mode_write_ack_after_readback();
+    test_motor_runtime_mode_rollover_preserves_prior_generation();
+    test_motor_runtime_mode_rollover_allows_different_tuple();
+    test_motor_runtime_mode_rollover_fails_closed_at_capacity();
+    test_motor_runtime_parameter_routes_are_defensive();
+    test_motor_runtime_quarantines_every_outstanding_parameter_response();
     test_can_scheduler_accepts_atomic_seven_frame_groups();
     test_s3519_command_encoding();
     test_motor_discovery_verifies_every_joint();

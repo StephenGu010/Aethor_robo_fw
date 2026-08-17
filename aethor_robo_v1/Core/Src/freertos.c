@@ -26,6 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "aethor_app.h"
+#include "monotonic_time.h"
 #include "stm32_platform.h"
 #include <string.h>
 /* USER CODE END Includes */
@@ -47,6 +48,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+static AethorMonotonicTimeState aethorMonotonicTimeState;
 /* USER CODE END Variables */
 osThreadId ArmControlTaskHandle;
 uint32_t armControlTaskBuffer[ 768 ];
@@ -73,6 +75,9 @@ static void NotifyCanRxTaskFromIsr(void);
 static void NotifyProtocolTaskFromIsr(void);
 static void NotifyUsbTxTaskFromIsr(void);
 static void QueueProtocolOutputBatch(const ProtocolOutputBatch *outputBatch);
+static uint64_t AethorMonotonicTimestampUs(void);
+static void EnterAethorAppTaskCritical(void);
+static void ExitAethorAppTaskCritical(void);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -109,6 +114,8 @@ void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackTy
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
+  aethor_app_set_task_critical_hooks(EnterAethorAppTaskCritical,
+                                     ExitAethorAppTaskCritical);
 
   /* USER CODE END Init */
 
@@ -182,7 +189,7 @@ void StartArmControlTask(void const * argument)
   (void)argument;
   for(;;)
   {
-    uint64_t timestampUs = (uint64_t)HAL_GetTick() * 1000ULL;
+    uint64_t timestampUs = AethorMonotonicTimestampUs();
     CanFrame pendingFrame;
     CanFrame controlGroup[ARM_JOINT_COUNT];
     CanTxPriority pendingPriority;
@@ -243,9 +250,11 @@ void StartCanRxTask(void const * argument)
            (stm32_platform_can_pop_received(&receivedFrame) ==
             CAN_RX_INBOX_STATUS_OK))
     {
-      (void)aethor_app_receive_can_frame(
-          &receivedFrame,
-          (uint64_t)HAL_GetTick() * 1000ULL);
+      uint64_t timestampUs = AethorMonotonicTimestampUs();
+
+      taskENTER_CRITICAL();
+      (void)aethor_app_receive_can_frame(&receivedFrame, timestampUs);
+      taskEXIT_CRITICAL();
       ++processedFrameCount;
     }
     if (processedFrameCount < CAN_RX_INBOX_CAPACITY)
@@ -294,7 +303,7 @@ void StartProtocolTask(void const * argument)
         (void)aethor_app_process_protocol_line(
             protocolLine,
             lineLength,
-            (uint64_t)HAL_GetTick() * 1000ULL,
+            AethorMonotonicTimestampUs(),
             &outputBatch);
         QueueProtocolOutputBatch(&outputBatch);
       }
@@ -308,6 +317,14 @@ void StartProtocolTask(void const * argument)
       }
     } while ((lineStatus == USB_CDC_STREAM_STATUS_OK) ||
              (lineStatus == USB_CDC_STREAM_STATUS_LINE_TOO_LONG));
+    {
+      uint64_t timestampUs = AethorMonotonicTimestampUs();
+
+      if (aethor_app_generate_stream_output(timestampUs, &outputBatch) != 0U)
+      {
+        QueueProtocolOutputBatch(&outputBatch);
+      }
+    }
   }
 }
 
@@ -342,13 +359,9 @@ void StartTelemetryTask(void const * argument)
   (void)argument;
   for(;;)
   {
-    ProtocolOutputBatch outputBatch;
-
-    if (aethor_app_generate_stream_output(
-            (uint64_t)HAL_GetTick() * 1000ULL,
-            &outputBatch) != 0U)
+    if (ProtocolTaskHandle != NULL)
     {
-      QueueProtocolOutputBatch(&outputBatch);
+      (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
     }
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(10U));
   }
@@ -455,12 +468,12 @@ void StartDiagnosticsTask(void const * argument)
       previousUsbHighQueueFullCount =
           platformDiagnostics->usb_high_queue_full_count;
       if ((transportFaultDetail != 0U) &&
-          (aethor_app_report_transport_fault(
-               transportFaultDetail,
-               (uint64_t)HAL_GetTick() * 1000ULL) != 0U) &&
-          (ProtocolTaskHandle != NULL))
+           (aethor_app_report_transport_fault(
+                transportFaultDetail,
+                AethorMonotonicTimestampUs()) != 0U) &&
+          (ArmControlTaskHandle != NULL))
       {
-        (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
+        (void)xTaskNotifyGive((TaskHandle_t)ArmControlTaskHandle);
       }
     }
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(100U));
@@ -469,6 +482,33 @@ void StartDiagnosticsTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+/** @brief Enters the scheduler boundary shared by app query readers. */
+static void EnterAethorAppTaskCritical(void)
+{
+  taskENTER_CRITICAL();
+}
+
+/** @brief Exits the scheduler boundary shared by app query readers. */
+static void ExitAethorAppTaskCritical(void)
+{
+  taskEXIT_CRITICAL();
+}
+
+/**
+ * @brief Returns one shared 64-bit timestamp extended from the wrapping HAL tick.
+ * @return Monotonic timestamp in microseconds.
+ */
+static uint64_t AethorMonotonicTimestampUs(void)
+{
+  uint64_t timestampUs;
+
+  taskENTER_CRITICAL();
+  timestampUs = aethor_monotonic_time_update(&aethorMonotonicTimeState,
+                                              HAL_GetTick());
+  taskEXIT_CRITICAL();
+  return timestampUs;
+}
 
 /** @brief Wakes CanRxTask from the FDCAN receive callback. */
 static void NotifyCanRxTaskFromIsr(void)

@@ -145,11 +145,86 @@ function Invoke-Phase0ArchitectureCheck {
         -Pattern 'aethor_app_receive_can_frame\s*\(' `
         -Message 'CanRxTask does not route received frames to the motor runtime.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'osThreadStaticDef\s*\(\s*ArmControlTask\s*,[^\r\n]*osPriorityRealtime' `
+        -Message 'ArmControlTask must remain higher priority than CanRxTask.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'osThreadStaticDef\s*\(\s*CanRxTask\s*,[^\r\n]*osPriorityHigh' `
+        -Message 'CanRxTask priority evidence changed; re-evaluate MotorRuntime ownership.'
+    # CanRxTask and the higher-priority ArmControlTask share MotorRuntime. Keep
+    # only the in-memory receive decode inside a task critical section; obtain
+    # time and perform platform/blocking work outside it.
+    $canRxTaskMatch = [regex]::Match(
+        $freertosText,
+        'void\s+StartCanRxTask\s*\([^)]*\)\s*\{[\s\S]*?(?=/\* USER CODE BEGIN Header_StartProtocolTask \*/)')
+    if (-not $canRxTaskMatch.Success)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'CanRxTask body could not be isolated for concurrency checks.'
+    }
+    else
+    {
+        Assert-TextContains -FailureList $failureList -Text $canRxTaskMatch.Value `
+            -Pattern 'timestampUs\s*=\s*AethorMonotonicTimestampUs\s*\(\s*\)\s*;\s*taskENTER_CRITICAL\s*\(\s*\)\s*;\s*\(void\)aethor_app_receive_can_frame\s*\(\s*&receivedFrame\s*,\s*timestampUs\s*\)\s*;\s*taskEXIT_CRITICAL\s*\(\s*\)' `
+            -Message 'CanRxTask does not serialize the in-memory MotorRuntime receive update.'
+        $canRxCriticalMatch = [regex]::Match(
+            $canRxTaskMatch.Value,
+            'taskENTER_CRITICAL\s*\(\s*\)\s*;(?<Body>[\s\S]*?)taskEXIT_CRITICAL\s*\(\s*\)')
+        if ($canRxCriticalMatch.Success -and
+            ($canRxCriticalMatch.Groups['Body'].Value -match 'AethorMonotonicTimestampUs|stm32_platform_|\bHAL_|\b(?:ul|x|v)Task|taskYIELD|portMAX_DELAY'))
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'CanRxTask critical section contains timestamp, platform I/O, or blocking work.'
+        }
+    }
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'stm32_platform_usb_next_line\s*\(' `
         -Message 'ProtocolTask does not drain complete USB lines in task context.'
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'aethor_app_process_protocol_line\s*\(' `
         -Message 'ProtocolTask does not dispatch parsed requests to the protocol engine.'
+    # ProtocolTask is the sole ProtocolEngine formatter. TelemetryTask only
+    # supplies a 10 ms wakeup so USB commands are applied before stream output.
+    $protocolTaskMatch = [regex]::Match(
+        $freertosText,
+        'void\s+StartProtocolTask\s*\([^)]*\)\s*\{[\s\S]*?(?=/\* USER CODE BEGIN Header_StartUsbTxTask \*/)')
+    $telemetryTaskMatch = [regex]::Match(
+        $freertosText,
+        'void\s+StartTelemetryTask\s*\([^)]*\)\s*\{[\s\S]*?(?=/\* USER CODE BEGIN Header_StartDiagnosticsTask \*/)')
+    if (-not $protocolTaskMatch.Success)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'ProtocolTask body could not be isolated for owner checks.'
+    }
+    else
+    {
+        Assert-TextContains -FailureList $failureList -Text $protocolTaskMatch.Value `
+            -Pattern 'aethor_app_pop_protocol_result_output[\s\S]*stm32_platform_usb_next_line[\s\S]*while\s*\(\s*\(lineStatus[\s\S]*AethorMonotonicTimestampUs\s*\(\s*\)[\s\S]{0,240}aethor_app_generate_stream_output[\s\S]{0,240}QueueProtocolOutputBatch' `
+            -Message 'ProtocolTask does not drain results and USB lines before telemetry formatting.'
+    }
+    if (-not $telemetryTaskMatch.Success)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'TelemetryTask body could not be isolated for owner checks.'
+    }
+    else
+    {
+        Assert-TextContains -FailureList $failureList -Text $telemetryTaskMatch.Value `
+            -Pattern 'xTaskNotifyGive\s*\(\s*\(TaskHandle_t\)ProtocolTaskHandle\s*\)' `
+            -Message 'TelemetryTask does not wake the sole ProtocolTask owner.'
+        if ($telemetryTaskMatch.Value -match 'aethor_app_generate_stream_output|QueueProtocolOutputBatch|AethorMonotonicTimestampUs')
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'TelemetryTask still reads or formats ProtocolEngine state directly.'
+        }
+    }
+    if ($protocolTaskMatch.Success)
+    {
+        $allQueueOwnerReferences = [regex]::Matches(
+            $freertosText,
+            'QueueProtocolOutputBatch\s*\(').Count
+        $protocolQueueReferences = [regex]::Matches(
+            $protocolTaskMatch.Value,
+            'QueueProtocolOutputBatch\s*\(').Count
+        if ($allQueueOwnerReferences -ne ($protocolQueueReferences + 2))
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'A task other than ProtocolTask queues formatted protocol output.'
+        }
+    }
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'pdMS_TO_TICKS\s*\(\s*4U\s*\)' `
         -Message 'ArmControlTask period is not 4 ms.'
@@ -162,10 +237,87 @@ function Invoke-Phase0ArchitectureCheck {
     Assert-TextContains -FailureList $failureList -Text $freertosText `
         -Pattern 'ulTaskNotifyTake\s*\(' `
         -Message 'RX-driven tasks do not wait on bounded task notifications.'
+    # DiagnosticsTask may only publish transport faults; ArmControlTask owns
+    # lifecycle mutation and ProtocolTask notification after service.
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_report_transport_fault[\s\S]{0,500}ArmControlTaskHandle[\s\S]{0,200}xTaskNotifyGive\s*\(\s*\(TaskHandle_t\)ArmControlTaskHandle' `
+        -Message 'DiagnosticsTask does not wake ArmControlTask after publishing a transport fault.'
+    if ($freertosText -match 'aethor_app_report_transport_fault[\s\S]{0,500}xTaskNotifyGive\s*\(\s*\(TaskHandle_t\)ProtocolTaskHandle')
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'DiagnosticsTask must not notify ProtocolTask directly for a transport fault.'
+    }
     if (($mainText -match 'aethor_application') -or ($freertosText -match 'aethor_application'))
     {
         Add-ArchitectureFailure -FailureList $failureList -Message 'Legacy aethor_application entry point is still referenced.'
     }
+    # Lower-priority Protocol/Telemetry readers use application-injected hooks
+    # so the platform and host share the same short scheduling boundary.
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'EnterAethorAppTaskCritical[\s\S]{0,160}taskENTER_CRITICAL\s*\(\s*\)' `
+        -Message 'freertos.c does not provide the application task-critical enter hook.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'ExitAethorAppTaskCritical[\s\S]{0,160}taskEXIT_CRITICAL\s*\(\s*\)' `
+        -Message 'freertos.c does not provide the application task-critical exit hook.'
+    Assert-TextContains -FailureList $failureList -Text $freertosText `
+        -Pattern 'aethor_app_set_task_critical_hooks\s*\(\s*EnterAethorAppTaskCritical\s*,\s*ExitAethorAppTaskCritical\s*\)' `
+        -Message 'FreeRTOS initialization does not register application query critical hooks.'
+
+    # Cleanup HOLD is allowed only after this one-shot confirmed every selected
+    # motor enabled; keep this lifecycle gate explicit in the application layer.
+    $aethorAppText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\aethor_app.c') -Raw
+    $protocolEngineText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\Protocol\protocol_engine.c') -Raw
+    $motorRuntimeHeaderText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\Motor\motor_runtime.h') -Raw
+    $motorRuntimeText = Get-Content -LiteralPath (Join-Path $projectRoot 'App\Motor\motor_runtime.c') -Raw
+    if ($motorRuntimeHeaderText -match 'motor_runtime_remove_parameter_response')
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'Internal parameter-set mutation escaped through the public MotorRuntime header.'
+    }
+    Assert-TextContains -FailureList $failureList -Text $motorRuntimeText `
+        -Pattern 'static\s+uint8_t\s+motor_runtime_remove_parameter_response[\s\S]{0,320}entry_index\s*>=\s*set->count[\s\S]{0,120}return\s+0U' `
+        -Message 'Internal parameter removal is not static and defensively bounded.'
+    $protocolContextMatch = [regex]::Match(
+        $aethorAppText,
+        'static\s+void\s+aethor_app_update_protocol_context\s*\([^)]*\)[\s\S]*?(?=/\*\*[\r\n]+ \* @brief Initializes all static Phase 0 application state\.)')
+    if (-not $protocolContextMatch.Success)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'Protocol query-context update body could not be isolated.'
+    }
+    else
+    {
+        Assert-TextContains -FailureList $failureList -Text $protocolContextMatch.Value `
+            -Pattern 'aethor_app_enter_task_critical\s*\(\s*\)[\s\S]{0,240}arm_controller_get_snapshot[\s\S]*protocol_engine_update_query_context[\s\S]{0,160}aethor_app_exit_task_critical\s*\(\s*\)' `
+            -Message 'Protocol query snapshots are not published inside paired task-critical hooks.'
+        $queryCriticalMatch = [regex]::Match(
+            $protocolContextMatch.Value,
+            'aethor_app_enter_task_critical\s*\(\s*\)\s*;(?<Body>[\s\S]*?)aethor_app_exit_task_critical\s*\(\s*\)')
+        if ($queryCriticalMatch.Success -and
+            ($queryCriticalMatch.Groups['Body'].Value -match 'process_text|generate_stream|append_|format_|stm32_platform_|\bHAL_|\b(?:ul|x|v)Task|taskYIELD|portMAX_DELAY'))
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'Protocol query critical section contains parsing, formatting, I/O, or blocking work.'
+        }
+    }
+    Assert-TextContains -FailureList $failureList -Text $aethorAppText `
+        -Pattern 'aethor_app_process_protocol_line[\s\S]{0,700}aethor_app_update_protocol_context\s*\([^;]+;[\s\S]{0,200}protocol_engine_process_text_line' `
+        -Message 'Protocol parsing is not kept after the bounded query snapshot update.'
+    Assert-TextContains -FailureList $failureList -Text $aethorAppText `
+        -Pattern 'aethor_app_generate_stream_output[\s\S]{0,500}aethor_app_update_protocol_context\s*\([^;]+;[\s\S]{0,200}protocol_engine_generate_stream_output' `
+        -Message 'Stream formatting is not kept after the bounded query snapshot update.'
+    Assert-TextContains -FailureList $failureList -Text $aethorAppText `
+        -Pattern 'aethor_app_get_motor_snapshot[\s\S]{0,500}aethor_app_enter_task_critical[\s\S]{0,240}motor_runtime_get_snapshot[\s\S]{0,240}aethor_app_exit_task_critical' `
+        -Message 'Public MotorRuntime snapshot reads do not use the shared task-critical hooks.'
+    Assert-TextContains -FailureList $failureList -Text $aethorAppText `
+        -Pattern 'application_action\.enabled_by_action_mask\s*&\s*application_action\.cleanup_disable_mask\)\s*==\s*application_action\.cleanup_disable_mask' `
+        -Message 'One-shot cleanup HOLD does not require enabled_by_action_mask to cover the cleanup mask.'
+    # STOP ownership is part of priority-slot publication, so the consumer may
+    # never observe a STOP before its admission gate has become visible.
+    Assert-TextContains -FailureList $failureList -Text $protocolEngineText `
+        -Pattern 'active_stop_request_id\s*=\s*command->request_id;[\s\S]{0,160}\+\+engine->stop_write_sequence' `
+        -Message 'STOP lifecycle ownership is published after its priority command slot.'
+    # A normal motion slot is visible only after its admission metadata. This
+    # prevents ArmControlTask from consuming a MOVE before its gate is owned.
+    Assert-TextContains -FailureList $failureList -Text $protocolEngineText `
+        -Pattern 'protocol_engine_publish_normal_command[\s\S]{0,900}commands\[slot_index\]\s*=\s*\*command;[\s\S]{0,500}active_motion_request_id\s*=\s*command->request_id;[\s\S]{0,240}active_motion_accepted_at_us\s*=\s*command->accepted_at_us;[\s\S]{0,240}active_motion_planned_duration_us\s*=\s*command->planned_duration_us;[\s\S]{0,240}protocol_engine_compiler_barrier\s*\(\s*\)\s*;[\s\S]{0,120}\+\+engine->command_write_sequence' `
+        -Message 'Normal MOVE ownership metadata is not published before command_write_sequence.'
 
     $keilProjectPath = Join-Path $projectRoot 'MDK-ARM\CtrBoard-H7_FDCAN.uvprojx'
     $keilProjectXml = [xml](Get-Content -LiteralPath $keilProjectPath -Raw)
@@ -233,6 +385,7 @@ function Invoke-Phase0ArchitectureCheck {
     Write-Host '[PASS] Executable motor frame generation is confined to App/Motor.'
     Write-Host '[PASS] CubeMX retains six static application tasks and the USER_KEY label.'
     Write-Host '[PASS] main.c and freertos.c use the Phase 0 application entry.'
+    Write-Host '[PASS] One-shot cleanup HOLD requires completed ENABLE ownership.'
     Write-Host '[PASS] Keil compiles one copy of each required source and no legacy controller.'
     Write-Host '[PASS] Phase 0 architecture contracts are satisfied.'
 }

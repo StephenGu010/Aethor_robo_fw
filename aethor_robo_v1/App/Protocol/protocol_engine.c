@@ -358,6 +358,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_arm_move(
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
     if ((engine->active_motion_request_id != 0U) ||
+        (engine->active_stop_request_id != 0U) ||
         (engine->query_context.arm.state == ARM_STATE_MOVING))
     {
         (void)protocol_engine_append_text_command_error(output_batch,
@@ -413,9 +414,6 @@ static ProtocolEngineStatus protocol_engine_handle_text_arm_move(
                                                         "busy");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    engine->active_motion_request_id = request->request_id;
-    engine->active_motion_accepted_at_us = timestamp_us;
-    engine->active_motion_planned_duration_us = motion_plan.duration_us;
     return protocol_engine_append_text_format(output_batch,
                                               PROTOCOL_OUTPUT_HIGH_PRIORITY,
                                               "ok %lu arm move accepted=1",
@@ -798,13 +796,52 @@ static uint8_t protocol_engine_parse_selected_motor_values(
 }
 #endif
 
-/** @brief Enqueues one normal business command into the bounded SPSC ring. */
-static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
-                                               const ProtocolCommand *command)
+/**
+ * @brief Publishes one normal slot after any motion ownership metadata.
+ * @return One after the consumer-visible sequence advances, otherwise zero.
+ */
+static uint8_t protocol_engine_publish_normal_command(
+    ProtocolEngine *engine,
+    const ProtocolCommand *command)
 {
     uint8_t used_count = (uint8_t)(engine->command_write_sequence -
                                    engine->command_read_sequence);
     uint8_t slot_index;
+    uint8_t owns_motion_lifecycle =
+        (uint8_t)((command->type == PROTOCOL_COMMAND_MOVE_JOINTS) ||
+                  (command->type ==
+                   PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED));
+
+    if ((used_count >= PROTOCOL_ENGINE_COMMAND_CAPACITY) ||
+        ((owns_motion_lifecycle != 0U) &&
+         (engine->active_motion_request_id != 0U)))
+    {
+        return 0U;
+    }
+    slot_index = (uint8_t)(engine->command_write_sequence %
+                           PROTOCOL_ENGINE_COMMAND_CAPACITY);
+    engine->commands[slot_index] = *command;
+    if (owns_motion_lifecycle != 0U)
+    {
+        engine->active_motion_request_id = command->request_id;
+        engine->active_motion_accepted_at_us = command->accepted_at_us;
+        engine->active_motion_planned_duration_us =
+            command->planned_duration_us;
+    }
+    protocol_engine_compiler_barrier();
+    ++engine->command_write_sequence;
+    return 1U;
+}
+
+/** @brief Enqueues one business command into its bounded SPSC channel. */
+static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
+                                               const ProtocolCommand *command)
+{
+    if ((command->type != PROTOCOL_COMMAND_STOP) &&
+        (engine->active_stop_request_id != 0U))
+    {
+        return 0U;
+    }
 
     if (command->type == PROTOCOL_COMMAND_STOP)
     {
@@ -813,20 +850,12 @@ static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
             return 0U;
         }
         engine->stop_command = *command;
+        engine->active_stop_request_id = command->request_id;
         protocol_engine_compiler_barrier();
         ++engine->stop_write_sequence;
         return 1U;
     }
-    if (used_count >= PROTOCOL_ENGINE_COMMAND_CAPACITY)
-    {
-        return 0U;
-    }
-    slot_index = (uint8_t)(engine->command_write_sequence %
-                           PROTOCOL_ENGINE_COMMAND_CAPACITY);
-    engine->commands[slot_index] = *command;
-    protocol_engine_compiler_barrier();
-    ++engine->command_write_sequence;
-    return 1U;
+    return protocol_engine_publish_normal_command(engine, command);
 }
 
 /**
@@ -1022,6 +1051,27 @@ static uint8_t protocol_engine_append_compact_float(char *body,
                                        token);
 }
 
+/** @brief Appends one compact value or an explicit unknown marker. */
+static uint8_t protocol_engine_append_optional_compact_float(
+    char *body,
+    size_t body_capacity,
+    size_t *body_length,
+    float value,
+    uint8_t valid)
+{
+    if (valid == 0U)
+    {
+        return protocol_engine_append_text(body,
+                                           body_capacity,
+                                           body_length,
+                                           "?");
+    }
+    return protocol_engine_append_compact_float(body,
+                                                body_capacity,
+                                                body_length,
+                                                value);
+}
+
 /** @brief Appends seven compact public joint values separated by commas. */
 static uint8_t protocol_engine_append_text_joint_vector(
     char *body,
@@ -1081,6 +1131,14 @@ static uint8_t protocol_engine_parse_text_u32(const TextProtocolSpan *span,
 }
 
 #if (AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE)
+/** @brief Identifies why a strict text motor/value list was rejected. */
+typedef enum
+{
+    PROTOCOL_TEXT_LIST_PARSE_OK = 0,
+    PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT,
+    PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH
+} ProtocolTextListParseStatus;
+
 /** @brief Parses a unique ascending comma list of public motor numbers. */
 static uint8_t protocol_engine_parse_text_motor_mask(
     const TextProtocolSpan *span,
@@ -1118,6 +1176,139 @@ static uint8_t protocol_engine_parse_text_motor_mask(
     }
     *motor_mask = parsed_mask;
     return (uint8_t)(parsed_mask != 0U);
+}
+
+/**
+ * @brief Parses unique public motor numbers while preserving caller order.
+ * @param span Comma-separated public motor numbers in the range 1..7.
+ * @param motor_mask Destination selected-motor bit mask.
+ * @param joint_order Destination zero-based joint indices in caller order.
+ * @param motor_count Destination number of parsed motors.
+ * @return OK for a non-empty unique list, otherwise BAD_ARGUMENT.
+ */
+static ProtocolTextListParseStatus protocol_engine_parse_text_motor_list(
+    const TextProtocolSpan *span,
+    uint8_t *motor_mask,
+    uint8_t joint_order[ARM_JOINT_COUNT],
+    uint8_t *motor_count)
+{
+    size_t token_start = 0U;
+    size_t character_index;
+    uint8_t parsed_mask = 0U;
+    uint8_t parsed_count = 0U;
+
+    if ((span == NULL) || (motor_mask == NULL) || (joint_order == NULL) ||
+        (motor_count == NULL) || (span->length == 0U))
+    {
+        return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+    }
+    memset(joint_order, 0, sizeof(uint8_t) * ARM_JOINT_COUNT);
+    for (character_index = 0U; character_index <= span->length; ++character_index)
+    {
+        if ((character_index == span->length) ||
+            (span->data[character_index] == ','))
+        {
+            TextProtocolSpan token;
+            uint32_t motor_number;
+            uint8_t motor_bit;
+
+            token.data = &span->data[token_start];
+            token.length = character_index - token_start;
+            if ((protocol_engine_parse_text_u32(&token, &motor_number) == 0U) ||
+                (motor_number < 1U) || (motor_number > ARM_JOINT_COUNT))
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            motor_bit = (uint8_t)(1U << (motor_number - 1U));
+            if ((parsed_mask & motor_bit) != 0U)
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            joint_order[parsed_count] = (uint8_t)(motor_number - 1U);
+            parsed_mask |= motor_bit;
+            ++parsed_count;
+            token_start = character_index + 1U;
+        }
+    }
+    *motor_mask = parsed_mask;
+    *motor_count = parsed_count;
+    return PROTOCOL_TEXT_LIST_PARSE_OK;
+}
+
+/**
+ * @brief Parses exactly one finite float per caller-ordered selected motor.
+ * @param span Comma-separated strict decimal values.
+ * @param joint_order Zero-based joint indices in caller motor order.
+ * @param motor_count Required value count.
+ * @param values Destination joint-indexed values.
+ * @return COUNT_MISMATCH for empty or wrong-count tokens, BAD_ARGUMENT for
+ * invalid numeric tokens, otherwise OK.
+ */
+static ProtocolTextListParseStatus
+protocol_engine_parse_text_selected_motor_values(
+    const TextProtocolSpan *span,
+    const uint8_t joint_order[ARM_JOINT_COUNT],
+    uint8_t motor_count,
+    float values[ARM_JOINT_COUNT])
+{
+    size_t token_start = 0U;
+    size_t character_index;
+    size_t token_count = 1U;
+    uint8_t value_index = 0U;
+
+    if ((span == NULL) || (joint_order == NULL) || (values == NULL) ||
+        (span->length == 0U) || (motor_count == 0U) ||
+        (motor_count > ARM_JOINT_COUNT))
+    {
+        return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+    }
+    for (character_index = 0U; character_index < span->length; ++character_index)
+    {
+        if (span->data[character_index] == ',')
+        {
+            if (character_index == token_start)
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH;
+            }
+            ++token_count;
+            token_start = character_index + 1U;
+        }
+    }
+    if (token_start == span->length)
+    {
+        return PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH;
+    }
+    if (token_count != motor_count)
+    {
+        return PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH;
+    }
+
+    memset(values, 0, sizeof(float) * ARM_JOINT_COUNT);
+    token_start = 0U;
+    for (character_index = 0U; character_index <= span->length; ++character_index)
+    {
+        if ((character_index == span->length) ||
+            (span->data[character_index] == ','))
+        {
+            TextProtocolSpan token;
+            uint8_t joint_index = joint_order[value_index];
+
+            if (joint_index >= ARM_JOINT_COUNT)
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            token.data = &span->data[token_start];
+            token.length = character_index - token_start;
+            if (text_protocol_span_to_float(&token, &values[joint_index]) !=
+                TEXT_PROTOCOL_STATUS_OK)
+            {
+                return PROTOCOL_TEXT_LIST_PARSE_BAD_ARGUMENT;
+            }
+            ++value_index;
+            token_start = character_index + 1U;
+        }
+    }
+    return PROTOCOL_TEXT_LIST_PARSE_OK;
 }
 #endif
 
@@ -1485,6 +1676,7 @@ static void protocol_engine_store_recent(ProtocolEngine *engine,
                                          const AsciiProtocolRequest *request,
                                          uint32_t body_hash,
                                          uint64_t timestamp_us,
+                                         uint8_t watchdog_valid,
                                          const ProtocolOutputBatch *output_batch)
 {
     ProtocolRecentResult *result;
@@ -1500,6 +1692,7 @@ static void protocol_engine_store_recent(ProtocolEngine *engine,
     result->completed_at_us = timestamp_us;
     result->response_length = output_batch->messages[0].length;
     result->priority = output_batch->messages[0].priority;
+    result->watchdog_valid = watchdog_valid;
     memcpy(result->response,
            output_batch->messages[0].data,
            (size_t)result->response_length + 1U);
@@ -1516,6 +1709,7 @@ static void protocol_engine_store_text_recent(
     uint32_t request_id,
     uint32_t body_hash,
     uint64_t timestamp_us,
+    uint8_t watchdog_valid,
     const ProtocolOutputBatch *output_batch)
 {
     ProtocolRecentResult *result;
@@ -1531,6 +1725,7 @@ static void protocol_engine_store_text_recent(
     result->completed_at_us = timestamp_us;
     result->response_length = output_batch->messages[0].length;
     result->priority = output_batch->messages[0].priority;
+    result->watchdog_valid = watchdog_valid;
     memcpy(result->response,
            output_batch->messages[0].data,
            (size_t)result->response_length + 1U);
@@ -1679,6 +1874,14 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
     static const char profile[] = "arm";
 #endif
 
+    if ((engine->active_motion_request_id != 0U) ||
+        (engine->active_stop_request_id != 0U))
+    {
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        request,
+                                                        "busy");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
     if ((request->positional_count != 0U) || (request->field_count != 0U))
     {
         (void)protocol_engine_append_text_command_error(output_batch,
@@ -1691,6 +1894,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
     engine->command_read_sequence = engine->command_write_sequence;
     engine->stop_read_sequence = engine->stop_write_sequence;
     engine->result_read_sequence = engine->result_write_sequence;
+    engine->cancelled_queued_motion_request_id = 0U;
     engine->session_id = protocol_engine_create_session(engine,
                                                         request->request_id,
                                                         timestamp_us);
@@ -1819,7 +2023,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_help(
         return protocol_engine_append_text_format(
             output_batch,
             PROTOCOL_OUTPUT_QUERY,
-            "ok %lu help bench commands=init,enable,jog,stop,disable,clear",
+            "ok %lu help bench commands=init,enable,jog,move,stop,disable,clear",
             (unsigned long)request->request_id);
     }
     (void)protocol_engine_append_text_command_error(output_batch,
@@ -2084,9 +2288,11 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_motor(
     const MotorJointFeedback *feedback;
     char body[TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH];
     size_t body_length = 0U;
+    float move_speed_limit_rad_s;
     uint32_t joint_number;
     uint32_t age_ms = UINT32_MAX;
     uint8_t joint_bit;
+    uint8_t motion_limits_valid;
     uint8_t valid;
 
     if ((request->positional_count != 1U) || (request->field_count != 0U) ||
@@ -2118,6 +2324,13 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_motor(
     feedback = &engine->query_context.motors.joints[joint_number - 1U];
     joint_bit = (uint8_t)(1U << (joint_number - 1U));
     valid = (uint8_t)((engine->query_context.motors.valid_joint_mask & joint_bit) != 0U);
+    motion_limits_valid = (uint8_t)(
+        (engine->query_context.motor_motion_limits_valid_mask & joint_bit) != 0U);
+    move_speed_limit_rad_s =
+        (engine->query_context.motor_velocity_max_rad_s[joint_number - 1U] <
+         engine->query_context.motor_maximum_speed_rad_s[joint_number - 1U])
+            ? engine->query_context.motor_velocity_max_rad_s[joint_number - 1U]
+            : engine->query_context.motor_maximum_speed_rad_s[joint_number - 1U];
     if ((feedback->timestamp_us != 0U) && (timestamp_us >= feedback->timestamp_us))
     {
         const uint64_t age_value = (timestamp_us - feedback->timestamp_us) / 1000ULL;
@@ -2178,9 +2391,48 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_motor(
         (protocol_engine_append_text(body,
                                      sizeof(body),
                                      &body_length,
-                                     " fault=%lu age_ms=%lu",
+                                     " fault=%lu age_ms=%lu pmax_deg=",
                                      (unsigned long)feedback->fault_flags,
-                                     (unsigned long)age_ms) == 0U))
+                                     (unsigned long)age_ms) == 0U) ||
+        (protocol_engine_append_optional_compact_float(
+             body,
+             sizeof(body),
+             &body_length,
+             engine->query_context.motor_position_max_rad[joint_number - 1U] *
+                 PROTOCOL_ENGINE_RAD_TO_DEG,
+             motion_limits_valid) == 0U) ||
+        (protocol_engine_append_text(body,
+                                     sizeof(body),
+                                     &body_length,
+                                     " vmax_deg_s=") == 0U) ||
+        (protocol_engine_append_optional_compact_float(
+             body,
+             sizeof(body),
+             &body_length,
+             engine->query_context.motor_velocity_max_rad_s[joint_number - 1U] *
+                 PROTOCOL_ENGINE_RAD_TO_DEG,
+             motion_limits_valid) == 0U) ||
+        (protocol_engine_append_text(body,
+                                     sizeof(body),
+                                     &body_length,
+                                     " max_speed_deg_s=") == 0U) ||
+        (protocol_engine_append_optional_compact_float(
+             body,
+             sizeof(body),
+             &body_length,
+             engine->query_context.motor_maximum_speed_rad_s[joint_number - 1U] *
+                 PROTOCOL_ENGINE_RAD_TO_DEG,
+             motion_limits_valid) == 0U) ||
+        (protocol_engine_append_text(body,
+                                     sizeof(body),
+                                     &body_length,
+                                     " move_speed_limit_deg_s=") == 0U) ||
+        (protocol_engine_append_optional_compact_float(
+             body,
+             sizeof(body),
+             &body_length,
+             move_speed_limit_rad_s * PROTOCOL_ENGINE_RAD_TO_DEG,
+             motion_limits_valid) == 0U))
     {
         return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
     }
@@ -2480,6 +2732,10 @@ static uint8_t protocol_engine_text_bench_command_type(
     {
         *command_type = PROTOCOL_COMMAND_MOVE_RELATIVE;
     }
+    else if (text_protocol_request_path_equals(request, "bench", "move") != 0U)
+    {
+        *command_type = PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED;
+    }
     else if (text_protocol_request_path_equals(request, "bench", "stop") != 0U)
     {
         *command_type = PROTOCOL_COMMAND_STOP;
@@ -2509,6 +2765,8 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
     TextProtocolSpan motors_span;
     ProtocolCommand command;
     ProtocolCommandType command_type;
+    uint8_t joint_order[ARM_JOINT_COUNT];
+    uint8_t motor_count = 0U;
     uint8_t joint_index;
 
     memset(&command, 0, sizeof(command));
@@ -2519,10 +2777,17 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                                                         "unknown_command");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
+    if ((command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+        (request->request_id == 0U))
+    {
+        (void)protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+            "error 0 bench move code=bad_argument field=request_id");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
     if ((request->positional_count != 1U) ||
-        (text_protocol_get_positional(request, 0U, &motors_span) == 0U) ||
-        (protocol_engine_parse_text_motor_mask(&motors_span,
-                                               &command.motor_mask) == 0U))
+        (text_protocol_get_positional(request, 0U, &motors_span) == 0U))
     {
         (void)protocol_engine_append_text_format(
             output_batch,
@@ -2533,7 +2798,119 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
             request->command_words[1].data);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE)
+    if (((engine->active_motion_request_id != 0U) ||
+         (engine->active_stop_request_id != 0U)) &&
+        (command_type != PROTOCOL_COMMAND_STOP))
+    {
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        request,
+                                                        "busy");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if (command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+    {
+        TextProtocolSpan position_span;
+        TextProtocolSpan speed_span;
+        ProtocolTextListParseStatus list_status;
+
+        if (protocol_engine_parse_text_motor_list(&motors_span,
+                                                  &command.motor_mask,
+                                                  joint_order,
+                                                  &motor_count) !=
+            PROTOCOL_TEXT_LIST_PARSE_OK)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=bad_argument field=motors",
+                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (text_protocol_find_field(request, "position", &position_span) == 0U)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=bad_argument field=position",
+                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (text_protocol_find_field(request, "speed", &speed_span) == 0U)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=bad_argument field=speed",
+                (unsigned long)request->request_id);
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        if (request->field_count != 2U)
+        {
+            (void)protocol_engine_append_text_command_error(output_batch,
+                                                            request,
+                                                            "bad_argument");
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        list_status = protocol_engine_parse_text_selected_motor_values(
+            &position_span,
+            joint_order,
+            motor_count,
+            command.values);
+        if (list_status != PROTOCOL_TEXT_LIST_PARSE_OK)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=%s field=position",
+                (unsigned long)request->request_id,
+                (list_status == PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH)
+                    ? "count_mismatch"
+                    : "bad_argument");
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        list_status = protocol_engine_parse_text_selected_motor_values(
+            &speed_span,
+            joint_order,
+            motor_count,
+            command.speeds);
+        if (list_status != PROTOCOL_TEXT_LIST_PARSE_OK)
+        {
+            (void)protocol_engine_append_text_format(
+                output_batch,
+                PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                "error %lu bench move code=%s field=speed",
+                (unsigned long)request->request_id,
+                (list_status == PROTOCOL_TEXT_LIST_PARSE_COUNT_MISMATCH)
+                    ? "count_mismatch"
+                    : "bad_argument");
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        for (joint_index = 0U; joint_index < motor_count; ++joint_index)
+        {
+            if (command.speeds[joint_order[joint_index]] <= 0.0F)
+            {
+                (void)protocol_engine_append_text_format(
+                    output_batch,
+                    PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                    "error %lu bench move code=out_of_range field=speed",
+                    (unsigned long)request->request_id);
+                return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+            }
+        }
+    }
+    else if (protocol_engine_parse_text_motor_mask(&motors_span,
+                                                   &command.motor_mask) == 0U)
+    {
+        (void)protocol_engine_append_text_format(
+            output_batch,
+            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+            "error %lu bench %.*s code=bad_argument field=motors",
+            (unsigned long)request->request_id,
+            (int)request->command_words[1].length,
+            request->command_words[1].data);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    else if (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE)
     {
         TextProtocolSpan delta_span;
         TextProtocolSpan speed_span;
@@ -2552,16 +2929,6 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                 (unsigned long)request->request_id);
             return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
         }
-        if ((delta_degrees < -AETHOR_BENCH_MAX_RELATIVE_DEGREES) ||
-            (delta_degrees > AETHOR_BENCH_MAX_RELATIVE_DEGREES))
-        {
-            (void)protocol_engine_append_text_format(
-                output_batch,
-                PROTOCOL_OUTPUT_HIGH_PRIORITY,
-                "error %lu bench jog code=out_of_range field=delta",
-                (unsigned long)request->request_id);
-            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
-        }
         if ((text_protocol_find_field(request, "speed", &speed_span) == 0U) ||
             (text_protocol_span_to_float(&speed_span, &speed_degrees_s) !=
              TEXT_PROTOCOL_STATUS_OK))
@@ -2573,8 +2940,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                 (unsigned long)request->request_id);
             return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
         }
-        if ((speed_degrees_s <= 0.0F) ||
-            (speed_degrees_s > AETHOR_BENCH_MAX_SPEED_DEGREES_S))
+        if (speed_degrees_s <= 0.0F)
         {
             (void)protocol_engine_append_text_format(
                 output_batch,
@@ -2749,6 +3115,16 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     AsciiProtocolSpan protocol;
     const BuildInfo *build_info = build_info_get();
 
+    if ((engine->active_motion_request_id != 0U) ||
+        (engine->active_stop_request_id != 0U))
+    {
+        (void)protocol_engine_append_format(output_batch,
+                                            PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                            "ERR %lu BUSY lifecycle=active",
+                                            (unsigned long)request->request_id);
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+
     if ((ascii_protocol_find_field(request, "client", &client) == 0U) ||
         (client.length == 0U) ||
         (ascii_protocol_find_field(request, "protocol", &protocol) == 0U) ||
@@ -2766,6 +3142,7 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     engine->command_read_sequence = engine->command_write_sequence;
     engine->stop_read_sequence = engine->stop_write_sequence;
     engine->result_read_sequence = engine->result_write_sequence;
+    engine->cancelled_queued_motion_request_id = 0U;
     engine->session_id = protocol_engine_create_session(engine,
                                                         request->request_id,
                                                         timestamp_us);
@@ -3621,7 +3998,8 @@ static ProtocolEngineStatus protocol_engine_handle_move_joints(
                                             (unsigned long)request->request_id);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if (engine->active_motion_request_id != 0U)
+    if ((engine->active_motion_request_id != 0U) ||
+        (engine->active_stop_request_id != 0U))
     {
         (void)protocol_engine_append_format(
             output_batch,
@@ -3762,9 +4140,6 @@ static ProtocolEngineStatus protocol_engine_handle_move_joints(
                                             (unsigned long)request->request_id);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    engine->active_motion_request_id = request->request_id;
-    engine->active_motion_accepted_at_us = timestamp_us;
-    engine->active_motion_planned_duration_us = motion_plan.duration_us;
     return protocol_engine_append_format(
         output_batch,
         PROTOCOL_OUTPUT_HIGH_PRIORITY,
@@ -3939,17 +4314,26 @@ uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
     {
         return 1U;
     }
-    if (engine->command_read_sequence == engine->command_write_sequence)
+    while (engine->command_read_sequence != engine->command_write_sequence)
     {
-        return 0U;
+        protocol_engine_compiler_barrier();
+        slot_index = (uint8_t)(engine->command_read_sequence %
+                               PROTOCOL_ENGINE_COMMAND_CAPACITY);
+        *command = engine->commands[slot_index];
+        protocol_engine_compiler_barrier();
+        ++engine->command_read_sequence;
+        if ((engine->cancelled_queued_motion_request_id != 0U) &&
+            (command->type ==
+             PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+            (command->request_id ==
+             engine->cancelled_queued_motion_request_id))
+        {
+            engine->cancelled_queued_motion_request_id = 0U;
+            continue;
+        }
+        return 1U;
     }
-    protocol_engine_compiler_barrier();
-    slot_index = (uint8_t)(engine->command_read_sequence %
-                           PROTOCOL_ENGINE_COMMAND_CAPACITY);
-    *command = engine->commands[slot_index];
-    protocol_engine_compiler_barrier();
-    ++engine->command_read_sequence;
-    return 1U;
+    return 0U;
 }
 
 /**
@@ -3971,15 +4355,86 @@ uint8_t protocol_engine_pop_stop_command(ProtocolEngine *engine,
 }
 
 /**
- * @brief Cancels all accepted commands not yet taken by ArmControlTask.
+ * @brief Merges active STOP scope into the still-published priority slot.
+ */
+uint8_t protocol_engine_widen_pending_stop_mask(
+    ProtocolEngine *engine,
+    uint8_t inherited_motor_mask,
+    ProtocolCommand *command)
+{
+    if ((engine == NULL) || (command == NULL) ||
+        (engine->stop_read_sequence == engine->stop_write_sequence))
+    {
+        return 0U;
+    }
+    protocol_engine_compiler_barrier();
+    engine->stop_command.motor_mask |= inherited_motor_mask;
+    *command = engine->stop_command;
+    protocol_engine_compiler_barrier();
+    return 1U;
+}
+
+/**
+ * @brief Tombstones the exact active one-shot still waiting in the normal ring.
+ */
+uint8_t protocol_engine_take_queued_active_motion(ProtocolEngine *engine,
+                                                  ProtocolCommand *command)
+{
+    uint8_t scan_sequence;
+    uint8_t write_sequence_snapshot;
+
+    if ((engine == NULL) || (command == NULL) ||
+        (engine->active_motion_request_id == 0U) ||
+        (engine->cancelled_queued_motion_request_id != 0U))
+    {
+        return 0U;
+    }
+    protocol_engine_compiler_barrier();
+    write_sequence_snapshot = engine->command_write_sequence;
+    for (scan_sequence = engine->command_read_sequence;
+         scan_sequence != write_sequence_snapshot;
+         ++scan_sequence)
+    {
+        uint8_t slot_index = (uint8_t)(scan_sequence %
+                                       PROTOCOL_ENGINE_COMMAND_CAPACITY);
+        ProtocolCommand candidate = engine->commands[slot_index];
+
+        if ((candidate.type ==
+             PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+            (candidate.request_id == engine->active_motion_request_id))
+        {
+            *command = candidate;
+            protocol_engine_compiler_barrier();
+            engine->cancelled_queued_motion_request_id = candidate.request_id;
+            return 1U;
+        }
+    }
+    return 0U;
+}
+
+/**
+ * @brief Cancels ordinary queued work without discarding priority STOP ownership.
+ */
+void protocol_engine_cancel_pending_normal_commands(ProtocolEngine *engine)
+{
+    if (engine != NULL)
+    {
+        engine->command_read_sequence = engine->command_write_sequence;
+        engine->cancelled_queued_motion_request_id = 0U;
+    }
+}
+
+/**
+ * @brief Cancels all accepted commands during explicit session teardown.
  */
 void protocol_engine_cancel_pending_commands(ProtocolEngine *engine)
 {
     if (engine != NULL)
     {
-        engine->command_read_sequence = engine->command_write_sequence;
+        protocol_engine_cancel_pending_normal_commands(engine);
         engine->stop_read_sequence = engine->stop_write_sequence;
         engine->active_motion_request_id = 0U;
+        engine->active_stop_request_id = 0U;
     }
 }
 
@@ -4008,6 +4463,18 @@ uint8_t protocol_engine_submit_command_result(
     engine->results[slot_index] = *result;
     protocol_engine_compiler_barrier();
     ++engine->result_write_sequence;
+    if ((result->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+        (result->request_id == engine->active_motion_request_id))
+    {
+        engine->active_motion_request_id = 0U;
+        engine->active_motion_accepted_at_us = 0U;
+        engine->active_motion_planned_duration_us = 0U;
+    }
+    if ((result->type == PROTOCOL_COMMAND_STOP) &&
+        (result->request_id == engine->active_stop_request_id))
+    {
+        engine->active_stop_request_id = 0U;
+    }
     return 1U;
 }
 
@@ -4045,6 +4512,111 @@ static const char *protocol_engine_text_result(ProtocolCommandResultCode code)
     }
 }
 
+/**
+ * @brief Returns the stable lowercase public token for an execution stage.
+ * @param stage Fixed execution stage.
+ * @return Static stage token, normalizing none and unknown values to unknown.
+ */
+static const char *protocol_engine_command_stage_text(ProtocolCommandStage stage)
+{
+    switch (stage)
+    {
+        case PROTOCOL_COMMAND_STAGE_NONE:
+            return "unknown";
+        case PROTOCOL_COMMAND_STAGE_VALIDATE:
+            return "validate";
+        case PROTOCOL_COMMAND_STAGE_DISCOVERY:
+            return "discovery";
+        case PROTOCOL_COMMAND_STAGE_MODE:
+            return "mode";
+        case PROTOCOL_COMMAND_STAGE_CLEAR:
+            return "clear";
+        case PROTOCOL_COMMAND_STAGE_ENABLE:
+            return "enable";
+        case PROTOCOL_COMMAND_STAGE_MOTION:
+            return "motion";
+        case PROTOCOL_COMMAND_STAGE_HOLD:
+            return "hold";
+        case PROTOCOL_COMMAND_STAGE_DISABLE:
+            return "disable";
+        default:
+            return "unknown";
+    }
+}
+
+/**
+ * @brief Returns the stable lowercase public token for a command error.
+ * @param error Fixed public command error.
+ * @return Static error token, normalizing none and unknown values to action_failed.
+ */
+static const char *protocol_engine_command_error_text(ProtocolCommandError error)
+{
+    switch (error)
+    {
+        case PROTOCOL_COMMAND_ERROR_NONE:
+            return "action_failed";
+        case PROTOCOL_COMMAND_ERROR_NOT_READY:
+            return "not_ready";
+        case PROTOCOL_COMMAND_ERROR_POSITION_OUT_OF_RANGE:
+            return "position_out_of_range";
+        case PROTOCOL_COMMAND_ERROR_SPEED_OUT_OF_RANGE:
+            return "speed_out_of_range";
+        case PROTOCOL_COMMAND_ERROR_FAULT_PRESENT:
+            return "fault_present";
+        case PROTOCOL_COMMAND_ERROR_STALE_FEEDBACK:
+            return "stale_feedback";
+        case PROTOCOL_COMMAND_ERROR_TIMEOUT:
+            return "timeout";
+        case PROTOCOL_COMMAND_ERROR_FEEDBACK_TIMEOUT:
+            return "feedback_timeout";
+        case PROTOCOL_COMMAND_ERROR_ACTION_FAILED:
+            return "action_failed";
+        default:
+            return "action_failed";
+    }
+}
+
+/** @brief Owns normalized public metadata for one failed command result. */
+typedef struct
+{
+    /** @brief Stable public stage token. */
+    const char *stage_token;
+    /** @brief Stable public error token. */
+    const char *error_token;
+    /** @brief Original one-based failed motor number. */
+    uint8_t failed_motor_number;
+    /** @brief One when the motor number is valid and belongs to the result mask. */
+    uint8_t failed_motor_number_is_valid;
+} ProtocolCommandFailureMetadata;
+
+/**
+ * @brief Normalizes failed-result tokens and validates the public motor number.
+ * @param result Immutable failed command result.
+ * @return Normalized bounded metadata suitable for public formatting.
+ */
+static ProtocolCommandFailureMetadata
+protocol_engine_normalize_failure_metadata(const ProtocolCommandResult *result)
+{
+    ProtocolCommandFailureMetadata metadata;
+    uint8_t failed_motor_bit = 0U;
+
+    metadata.stage_token = protocol_engine_command_stage_text(result->stage);
+    metadata.error_token = protocol_engine_command_error_text(result->error);
+    metadata.failed_motor_number = result->failed_motor_number;
+    metadata.failed_motor_number_is_valid = 0U;
+    if ((result->failed_motor_number >= 1U) &&
+        (result->failed_motor_number <= ARM_JOINT_COUNT))
+    {
+        failed_motor_bit =
+            (uint8_t)(1U << (result->failed_motor_number - 1U));
+        if ((result->motor_mask & failed_motor_bit) != 0U)
+        {
+            metadata.failed_motor_number_is_valid = 1U;
+        }
+    }
+    return metadata;
+}
+
 /** @brief Formats one aethor-text-v1 terminal command result. */
 static uint8_t protocol_engine_format_text_result(
     ProtocolEngine *engine,
@@ -4052,11 +4624,17 @@ static uint8_t protocol_engine_format_text_result(
     ProtocolOutputBatch *output_batch)
 {
     const char *result_text = protocol_engine_text_result(result->code);
-    uint64_t elapsed_ms = 0U;
+    ProtocolCommandFailureMetadata failure_metadata;
+    uint64_t elapsed_ms_u64 = 0U;
+    uint32_t elapsed_ms = 0U;
 
     if (result->completed_at_us >= result->accepted_at_us)
     {
-        elapsed_ms = (result->completed_at_us - result->accepted_at_us) / 1000ULL;
+        elapsed_ms_u64 =
+            (result->completed_at_us - result->accepted_at_us) / 1000ULL;
+        elapsed_ms = (elapsed_ms_u64 > (uint64_t)UINT32_MAX)
+                         ? UINT32_MAX
+                         : (uint32_t)elapsed_ms_u64;
     }
     if (result->type == PROTOCOL_COMMAND_LINK_TIMEOUT)
     {
@@ -4067,6 +4645,54 @@ static uint8_t protocol_engine_format_text_result(
                              "event %lu link_timeout elapsed_ms=1000 action=stop_disable",
                              (unsigned long)engine->event_sequence) ==
                          PROTOCOL_ENGINE_STATUS_OK);
+    }
+    if (result->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+    {
+        if (result->code == PROTOCOL_COMMAND_RESULT_COMPLETED)
+        {
+            return (uint8_t)(protocol_engine_append_text_format(
+                                 output_batch,
+                                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                 "done %lu bench move result=completed elapsed_ms=%lu motors=%02x",
+                                 (unsigned long)result->request_id,
+                                 (unsigned long)elapsed_ms,
+                                 (unsigned int)result->motor_mask) ==
+                             PROTOCOL_ENGINE_STATUS_OK);
+        }
+        if (result->code == PROTOCOL_COMMAND_RESULT_FAILED)
+        {
+            failure_metadata =
+                protocol_engine_normalize_failure_metadata(result);
+            if (failure_metadata.failed_motor_number_is_valid != 0U)
+            {
+                return (uint8_t)(protocol_engine_append_text_format(
+                                     output_batch,
+                                     PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                     "done %lu bench move result=%s stage=%s code=%s motor=%u",
+                                     (unsigned long)result->request_id,
+                                     result_text,
+                                     failure_metadata.stage_token,
+                                     failure_metadata.error_token,
+                                     (unsigned int)failure_metadata
+                                         .failed_motor_number) ==
+                                 PROTOCOL_ENGINE_STATUS_OK);
+            }
+            return (uint8_t)(protocol_engine_append_text_format(
+                                 output_batch,
+                                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                 "done %lu bench move result=%s stage=%s code=%s motor=?",
+                                 (unsigned long)result->request_id,
+                                 result_text,
+                                 failure_metadata.stage_token,
+                                 failure_metadata.error_token) ==
+                             PROTOCOL_ENGINE_STATUS_OK);
+        }
+        return (uint8_t)(protocol_engine_append_text_format(
+                             output_batch,
+                             PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                             "done %lu bench move result=%s",
+                             (unsigned long)result->request_id,
+                             result_text) == PROTOCOL_ENGINE_STATUS_OK);
     }
     if (result->bench_relative_scope != 0U)
     {
@@ -4141,8 +4767,13 @@ static uint8_t protocol_engine_format_text_result(
                              result_text,
                              (result->type == PROTOCOL_COMMAND_CLEAR_FAULT)
                                  ? "fault"
-                                 : "enabled",
-                             (unsigned int)((result->type == PROTOCOL_COMMAND_ENABLE)
+                                 : ((result->type == PROTOCOL_COMMAND_STOP)
+                                        ? "stopped"
+                                        : "enabled"),
+                             (unsigned int)(((result->type ==
+                                              PROTOCOL_COMMAND_ENABLE) ||
+                                             (result->type ==
+                                              PROTOCOL_COMMAND_STOP))
                                                 ? result->motor_mask
                                                 : 0U)) ==
                          PROTOCOL_ENGINE_STATUS_OK);
@@ -4797,10 +5428,6 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
     {
         if (recent_result->body_hash != body_hash)
         {
-            if (engine->session_active != 0U)
-            {
-                engine->last_valid_request_at_us = timestamp_us;
-            }
             (void)protocol_engine_append_format(
                 output_batch,
                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
@@ -4809,7 +5436,8 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
             return PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT;
         }
         protocol_engine_replay(recent_result, output_batch);
-        if (engine->session_active != 0U)
+        if ((engine->session_active != 0U) &&
+            (recent_result->watchdog_valid != 0U))
         {
             engine->last_valid_request_at_us = timestamp_us;
         }
@@ -4991,6 +5619,8 @@ ProtocolEngineStatus protocol_engine_process_line(ProtocolEngine *engine,
                                      &request,
                                      body_hash,
                                      timestamp_us,
+                                     (uint8_t)(engine_status ==
+                                               PROTOCOL_ENGINE_STATUS_OK),
                                      output_batch);
     }
     return engine_status;
@@ -5065,7 +5695,8 @@ ProtocolEngineStatus protocol_engine_process_text_line(
             return PROTOCOL_ENGINE_STATUS_REQUEST_ID_CONFLICT;
         }
         protocol_engine_replay(recent_result, output_batch);
-        if (engine->session_active != 0U)
+        if ((engine->session_active != 0U) &&
+            (recent_result->watchdog_valid != 0U))
         {
             engine->last_valid_request_at_us = timestamp_us;
             engine->watchdog_timeout_reported = 0U;
@@ -5197,6 +5828,8 @@ ProtocolEngineStatus protocol_engine_process_text_line(
                                           request.request_id,
                                           body_hash,
                                           timestamp_us,
+                                          (uint8_t)(engine_status ==
+                                                    PROTOCOL_ENGINE_STATUS_OK),
                                           output_batch);
     }
     if ((engine_status == PROTOCOL_ENGINE_STATUS_OK) &&

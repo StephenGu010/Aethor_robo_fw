@@ -106,6 +106,7 @@ static void test_arm_command_mapping(void)
     ProtocolEngine engine;
     ProtocolOutputBatch output_batch;
     ProtocolCommand command;
+    ProtocolCommandResult result;
     const char *response;
 
     protocol_engine_init(&engine, 1002U);
@@ -164,6 +165,15 @@ static void test_arm_command_mapping(void)
     assert(strcmp(response, "ok 13 arm stop accepted=1\n") == 0);
     assert(protocol_engine_pop_stop_command(&engine, &command) != 0U);
     assert(command.type == PROTOCOL_COMMAND_STOP);
+    memset(&result, 0, sizeof(result));
+    result.request_id = command.request_id;
+    result.session_id = command.session_id;
+    result.type = command.type;
+    result.code = PROTOCOL_COMMAND_RESULT_COMPLETED;
+    result.accepted_at_us = command.accepted_at_us;
+    result.completed_at_us = 4500U;
+    assert(protocol_engine_submit_command_result(&engine, &result) != 0U);
+    assert(protocol_engine_pop_result_output(&engine, &output_batch) != 0U);
 
     response = process_arm_request(&engine,
                                    "14 arm disable\n",

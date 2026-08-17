@@ -15,6 +15,19 @@
 #include "motor_runtime.h"
 #include "protocol_engine.h"
 
+/** @brief Enters or exits one platform task-scheduling critical boundary. */
+typedef void (*AethorAppTaskCriticalHook)(void);
+
+/**
+ * @brief Installs paired task-critical hooks for cross-task query snapshots.
+ * @param enter_hook Platform hook called before bounded shared-state reads.
+ * @param exit_hook Platform hook called after the matching context publish.
+ * @note Passing either hook as NULL disables both hooks for host execution.
+ */
+void aethor_app_set_task_critical_hooks(
+    AethorAppTaskCriticalHook enter_hook,
+    AethorAppTaskCriticalHook exit_hook);
+
 /**
  * @brief Initializes all static Phase 0 application state.
  * @param timestamp_us Initialization timestamp in microseconds.
@@ -153,10 +166,10 @@ void aethor_app_update_runtime_diagnostics(
     const RuntimeDiagnosticSample *sample);
 
 /**
- * @brief Latches a severe platform transport fault and schedules all-axis disable.
+ * @brief Publishes a severe transport fault to the ArmControlTask SPSC mailbox.
  * @param detail Stable platform-specific fault detail bits.
  * @param timestamp_us Fault timestamp.
- * @return One when an active command result was queued, otherwise zero.
+ * @return One when published or an earlier global fault remains pending.
  */
 uint8_t aethor_app_report_transport_fault(uint32_t detail,
                                           uint64_t timestamp_us);

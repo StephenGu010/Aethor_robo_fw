@@ -2,6 +2,7 @@ Aethor Text V1 firmware and bench verification
 Recorded: 2026-08-13 Asia/Shanghai
 Branch: refactor/prd-phase-00
 Source commit before evidence artifact: 39415f41cbd2894c655131230e405c62f1a3b6bc
+Status: historical evidence snapshot; its fixed 3 deg bench bound is superseded by the current discovered PMAX/VMAX/MAX_SPD contract.
 
 Protocol contract:
 - Production entry: aethor-text-v1 over USB CDC, printable ASCII, LF/CRLF.
@@ -82,3 +83,225 @@ Evidence boundary:
 - Production verified_fields remains 00. Seven-axis calibrated motion, load,
   direction, zero, limits, gear ratio, thermal behavior, long soak, and DH/URDF
   are not verified by this bench run.
+
+One-shot bench move software verification
+Recorded: 2026-08-15 02:17:25 +08:00 Asia/Shanghai
+Branch: feature/one-shot-bench-move-impl
+Source commit: a19f8194df9f8604fd998da00ee784fcf55d64bb
+
+Fresh host verification:
+- Tests/host/run_tests.ps1: HOST_TESTS_PASSED
+- Tests/host/run_motor_core_tests.ps1: MOTOR_CORE_TESTS_PASSED
+- Tests/host/run_motion_tests.ps1: MOTION_TESTS_PASSED
+- Tests/host/run_platform_io_tests.ps1: PLATFORM_IO_TESTS_PASSED
+- Tests/host/run_protocol_tests.ps1: PROTOCOL_TESTS_PASSED
+- Tests/host/run_text_protocol_tests.ps1: TEXT_PROTOCOL_TESTS_PASSED
+- Tests/host/run_text_protocol_engine_tests.ps1: TEXT_PROTOCOL_ENGINE_TESTS_PASSED
+- Tests/host/run_text_protocol_arm_profile_tests.ps1: TEXT_PROTOCOL_ARM_PROFILE_TESTS_PASSED
+- Tests/host/run_phase0_tests.ps1: PHASE0_TESTS_PASSED and PRODUCTION_PROFILE_TEST_PASSED
+- Tests/host/run_simulator_tests.ps1: 36 tests OK and SIMULATOR_TESTS_PASSED
+- Tests/host/check_phase0_architecture.ps1: all eight architecture checks passed
+- Tests/host/test_com7_dual_motor_debug_script.ps1: COM7_DEBUG_SCRIPT_TESTS_PASSED;
+  this was SelfTest mode and did not open COM7 or access motor hardware.
+
+Fresh static verification:
+- Python py_compile passed for all nine Python files under Tests and Tools.
+- JSON parsing passed for docs/compatibility/aethor-text-v1-manifest.json and
+  Tests/protocol/aethor-text-v1-vectors.json.
+- No TODO, TBD, placeholder, or legacy fixed 3-degree macro remained in App,
+  Tests, Tools, public compatibility assets, README.md, or CHANGELOG.md.
+- git diff --check passed before recording this evidence.
+
+Keil full rebuild:
+- Command: E:/keil/UV4/UV4.exe -r
+  E:/Desktop_E/TCG/Aethor_robo_fw/.worktrees/one-shot-bench-move-impl/aethor_robo_v1/MDK-ARM/CtrBoard-H7_FDCAN.uvprojx
+  -t CtrBoard-H7_FDCAN -j0 -o
+  E:/Desktop_E/TCG/Aethor_robo_fw/.worktrees/one-shot-bench-move-impl/aethor_robo_v1/MDK-ARM/one-shot-bench-move-build.log
+- Process exit code: 0
+- Tool: Keil uVision 5.43.1.0
+- Compiler: ARMCC V5.05 update 1 build 106
+- Target: CtrBoard-H7_FDCAN
+- Program Size: Code=81480 RO-data=3752 RW-data=452 ZI-data=93756
+- Result: 0 Error(s), 0 Warning(s)
+- Build time: 00:00:57
+- Build log: MDK-ARM/one-shot-bench-move-build.log
+- The uvprojx working-tree blob remained identical to HEAD after the rebuild.
+
+One-shot rebuild artifact:
+- HEX: MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.hex
+  Length: 240360 bytes
+  Last write: 2026-08-15 02:15:50 +08:00
+  SHA-256: A4FD60C255D6C14DDE327029987F267C9FEF8B2143727F0AAC0C5B97F0E807AE
+- The rebuilt tracked HEX remained unstaged and was not included in the evidence commit.
+
+One-shot hardware boundary:
+- No serial port, motor, flash probe, or physical hardware was accessed in this
+  verification run. The historical COM7 evidence above must not be interpreted as
+  current one-shot bench move hardware verification.
+
+Final one-shot post-review verification
+Recorded: 2026-08-15 04:42 +08:00 Asia/Shanghai
+Branch: feature/one-shot-bench-move-impl
+Source commit: fe6f45276391b4ddc401f9d3a4febbd01c134b4d
+
+Fresh software verification:
+- All ten Tests/host/run_*.ps1 suites passed.
+- Tests/host/run_phase0_tests.ps1 reported PHASE0_TESTS_PASSED and
+  PRODUCTION_PROFILE_TEST_PASSED.
+- Tests/host/run_simulator_tests.ps1 ran 44 tests and reported
+  SIMULATOR_TESTS_PASSED.
+- Tests/host/check_phase0_architecture.ps1 passed all eight checks.
+- Python py_compile passed for all nine Python files under Tests and tools.
+- All five tracked JSON protocol, manifest, vector, and schema files parsed.
+- git diff --check passed; the implementation worktree had no tracked changes
+  before the rebuild.
+
+Final Keil full rebuild:
+- Command: E:/keil/UV4/UV4.exe -r
+  E:/Desktop_E/TCG/Aethor_robo_fw/.worktrees/one-shot-bench-move-impl/aethor_robo_v1/MDK-ARM/CtrBoard-H7_FDCAN.uvprojx
+  -t CtrBoard-H7_FDCAN -j0 -o
+  E:/Desktop_E/TCG/Aethor_robo_fw/.worktrees/one-shot-bench-move-impl/aethor_robo_v1/MDK-ARM/one-shot-bench-move-final-build.log
+- Process exit code: 0
+- Compiler: ARMCC V5.05 update 1 build 106
+- Target: CtrBoard-H7_FDCAN
+- Program Size: Code=81452 RO-data=3820 RW-data=452 ZI-data=93756
+- Result: 0 Error(s), 0 Warning(s)
+- The uvprojx working-tree blob remained identical to HEAD after the rebuild.
+
+Final rebuilt artifact evidence:
+- HEX: MDK-ARM/CtrBoard-H7_FDCAN/CtrBoard-H7_FDCAN.hex
+  Length: 240479 bytes
+  Last write: 2026-08-15 04:41:06 +08:00
+  SHA-256: F4A27512C20FB81E58FC8DD028253C7D2A85C86A348AC6772A8E6977F9230CBF
+- The generated tracked HEX was restored to the branch version after recording
+  this evidence and was not included in the documentation commit.
+
+Final evidence boundary:
+- This final rebuild and software matrix prove compilation and deterministic
+  host behavior for the self-contained bench move implementation.
+- No serial port, flash probe, motor, or physical hardware was accessed. They do
+  not prove real one-shot motion, mechanical direction, load behavior, physical
+  angle, physical speed, or seven-axis commissioning.
+
+Real one-shot COM7 hardware verification
+Recorded: 2026-08-17 10:17:12 +08:00 Asia/Shanghai
+Branch: feature/one-shot-bench-move-impl
+Source commit: 646db6d83126f404d27cba7c6ad6c964e8b7619a
+
+Hardware and firmware:
+- USB CDC: COM7, VID_0483 PID_5740.
+- Probe: CMSIS-DAP serial
+  07000001000000000000000000000000a5a5a5a597969908.
+- Target: STM32H72x/73x, Cortex-M7.
+- Motor under motion test: unloaded S3519 CAN ID 1 only.
+- ARMCC V5.05 update 1 build 106 full rebuild:
+  Code=81748, RO-data=3820, RW-data=452, ZI-data=93804,
+  0 Error(s), 0 Warning(s).
+- HEX length: 241305 bytes.
+- HEX SHA-256:
+  94CE9FC6CCA5D20133F264BC1323E0E006B23C05241E44E3668A3C2113175B27.
+- OpenOCD CMSIS-DAP programming reported Programming Finished,
+  Verified OK, and Resetting Target.
+
+Cold-start safety and feedback-gate evidence:
+- Before the final fix, real control feedback could share the same millisecond
+  timestamp as the preceding command and was rejected by the absolute-time
+  boundary. This reproduced as validate feedback_timeout and later as clear
+  feedback_timeout without completing a move.
+- The final source records a per-joint feedback timestamp baseline before each
+  gated batch and requires every selected joint to publish a newer generation.
+- The safe invalid probe was written once as:
+  50 bench move 1,3 position=800,800 speed=30,30
+- Firmware replied:
+  ok 50 bench move accepted=1
+  done 50 bench move result=failed stage=validate
+  code=position_out_of_range motor=1
+- No ENABLE or target motion was issued by that invalid probe.
+
+Single-write outbound motion:
+- Request written exactly once; no ping or repeated move request was sent:
+  80 bench move 1 position=5 speed=5
+- Firmware replied:
+  ok 80 bench move accepted=1
+  done 80 bench move result=completed elapsed_ms=113 motors=01
+- Feedback position changed from approximately 0.579 deg to 4.557 deg.
+- Firmware completed its internal target resend, HOLD, and DISABLE lifecycle
+  without serial keepalive.
+
+Single-write return motion:
+- Request written exactly once; no ping or repeated move request was sent:
+  100 bench move 1 position=0 speed=5
+- Cached terminal evidence after the host runner misclassified captured output:
+  done 100 bench move result=completed elapsed_ms=76 motors=01
+- The host runner then conservatively sent STOP 101 and DISABLE 102; both
+  produced independent stopped/completed terminal results after move 100 had
+  already completed.
+- Final stored position was approximately 0.514 deg.
+
+Final safety state:
+- show motors: enabled=00, moving=00, holding=00, fault=00.
+- show state: enabled=00, moving=0, active=0, fault=none.
+- show diag can: drop=0, error=0, busoff=0, queue_hwm=1.
+- Explicit final DISABLE completed with enabled=00.
+
+Hardware evidence boundary:
+- This run proves one unloaded CAN ID 1 motor can execute and return using one
+  serial move request per action with no serial keepalive.
+- It does not prove actual speed calibration, loaded behavior, mechanical soft
+  limits, CAN ID 3 motion, simultaneous multi-motor motion, or seven-axis arm
+  commissioning.
+
+COM7 ID1 and ID3 staged absolute-motion verification
+Recorded: 2026-08-17 Asia/Shanghai
+Branch: feature/one-shot-bench-move-impl
+Firmware source under test: 646db6d83126f404d27cba7c6ad6c964e8b7619a
+
+Setup and admission:
+- USB CDC enumerated as COM7, VID_0483 PID_5740; CMSIS-DAP remained connected.
+- Both unloaded S3519 motors used ESC/CAN IDs 1 and 3 and Master IDs 0x11/0x13.
+- Discovery returned pmax_deg=716.197 for both motors, so absolute 360 deg was
+  inside the discovered runtime range. Requested speed was 5 deg/s.
+- Every bench move body was written once and no ping was sent. The firmware
+  owned discovery, mode, clear, enable, repeated fixed CAN targets, HOLD, and
+  selected disable until the matching terminal result.
+
+Single-motor results:
+- ID1 position=35: completed in 417 ms, feedback=34.654 deg.
+- ID1 position=100: completed in 814 ms, feedback=99.853 deg.
+- ID1 position=360: completed in 2736 ms, feedback=359.558 deg.
+- ID1 position=0: completed in 3788 ms, feedback=0.361 deg. The local PowerShell
+  listener exited after the original write because its function name collided
+  with an alias; an exact request replay returned the cached terminal and did
+  not execute a second motion.
+- ID3 position=35: completed in 410 ms, feedback=35.288 deg.
+- ID3 position=100: completed in 716 ms, feedback=99.635 deg.
+- ID3 position=360: completed in 2768 ms, feedback=360.104 deg.
+- ID3 position=0: completed in 3753 ms, feedback=0.404 deg.
+
+Two-motor results:
+- position=35,35: completed in 447 ms; ID1=34.698 deg, ID3=35.310 deg.
+- position=100,100: completed in 847 ms; ID1=100.116 deg, ID3=99.941 deg.
+- position=360,360: completed in 2795 ms; ID1=359.820 deg, ID3=360.148 deg.
+- position=0,0: completed in 3824 ms; ID1=0.229 deg, ID3=0.055 deg.
+- independent position=35,100: completed in 1115 ms; ID1=34.982 deg,
+  ID3=99.635 deg, proving ordered per-motor list mapping.
+- final position=0,0: completed in 1106 ms; ID1=-0.011 deg, ID3=0.317 deg.
+
+Final safety state:
+- show motors: present=05 enabled=00 moving=00 holding=00 stale=00 fault=00.
+- show state: enabled=00 moving=0 active=0 fault=none.
+- show diag: deadline_miss=0 can_error=0 usb_drop=0 fault=none.
+- show diag can: rx=6460 tx=6464 drop=0 error=0 busoff=0 queue_hwm=1.
+
+Manual serial note:
+- Use ASCII, 115200/8N1, serial parity NONE, no application checksum or CRC,
+  and append CRLF (HEX 0D 0A) to every request. Without a line ending the
+  firmware waits for more bytes and returns no response.
+
+Evidence boundary:
+- This proves unloaded ID1/ID3 absolute position arrival, ordered independent
+  targets, simultaneous selected motion, internal resend, HOLD, and automatic
+  disable for the tested positions.
+- Completion times are much shorter than nominal 5 deg/s motion would predict,
+  so real speed scaling remains uncalibrated. This evidence does not cover load,
+  mechanical soft limits, thermal/soak behavior, or seven-axis commissioning.

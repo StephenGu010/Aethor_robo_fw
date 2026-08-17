@@ -5,7 +5,7 @@
 ## 传输与连接
 
 - 在明确选择的 Windows COM 口上打开 STM32 Type-C USB CDC；串口波特率参数不代表 USB 总线速率。
-- 请求只包含可打印 ASCII，以 LF 或 CRLF 结束；最大请求长度为 160 字节，不附加应用层 CRC。
+- 请求只包含可打印 ASCII，以 LF 或 CRLF 结束；最大请求正文为 160 字节（不计 CR/LF），不附加应用层 CRC。
 - 每次连接先发送 `hello`，确认回复中的 `protocol=aethor-text-v1`、`profile`、`dof=7`、`boot` 和 `watchdog_ms=1000`。
 - 随后发送 `stream off` 和只读 `show` 查询，确认目标设备、配置、状态和电机掩码后再开放动作按钮。
 - `boot` 改变或 USB 重新连接后，清空上位机正在等待的请求和旧目标，并重新执行只读探测；正式机械臂 Profile 还需重新确认参考位状态。
@@ -23,6 +23,30 @@ show motors
 show diag
 ```
 
+### Windows 手工串口设置
+
+常见串口调试助手按以下值配置：
+
+- 串口：STM32 USB CDC 实际枚举的 COM 口；当前台架为 COM7。
+- 显示和发送：ASCII；115200、8 数据位、1 停止位、流控 `NONE`、串口校验位 `NONE`。
+- 应用层校验算法：`无`，不附加 CRC、校验和或帧头。
+- 自动附加指令结束符：CRLF，HEX 为 `0D 0A`；也可只附加 LF `0A`。
+- 关闭循环发送。自包含 `bench move` 正文只发送一次。
+
+固件只有收到行结束符才会解析并响应。若调试工具已多次发送不带结束符的正文，应先复位板卡或发送一个单独换行清空残留半行，然后重新打开串口并从 `1 hello` 开始。确认只读响应后，可用新的非零编号执行和回零：
+
+```text
+1 hello
+2 stream off
+3 show motor 1
+70 bench move 1 position=30 speed=5
+71 bench move 1 position=0 speed=5
+72 bench move 1,3 position=35,100 speed=5,5
+73 bench move 1,3 position=0,0 speed=5,5
+```
+
+`position=0` 表示运动到本次上电电机坐标系的绝对零位，不执行机械零点标定，也不写入零偏。每条新正文使用新的非零请求编号；旧编号与相同正文只重放结果，旧编号与不同正文返回 `request_conflict`。
+
 ## 请求与输出格式
 
 请求格式：
@@ -32,6 +56,7 @@ show diag
 ```
 
 - `request_id` 是可选十进制 `uint32`。省略编号时按 `0` 处理，适合手工调试且不保存重放结果。
+- 自包含 `bench move` 必须显式使用 `1..4294967295` 的编号；`0` 是内部活动动作哨兵，不接受为该命令的编号。
 - 正式上位机应为业务请求分配非零编号，并在至少 60 秒内避免给不同正文复用同一编号。
 - 同一非零编号和相同正文会返回近期结果，不会再次执行动作；相同编号配不同正文会返回冲突错误。
 - 字段名使用小写；重复字段、制表符、不可打印字符和超出容量的请求会被拒绝。
@@ -82,12 +107,16 @@ stream off
 11 bench clear 1,3
 12 bench enable 1,3
 13 bench jog 1,3 delta=0.2 speed=1
+50 bench move 1 position=90 speed=30
+51 bench move 1,3 position=90,-45 speed=30,20
 14 bench stop 1,3
 15 bench disable 1,3
 ```
 
-- 电机列表是升序、无重复的 ESC/CAN ID；每条动作必须显式给出，未选电机保持原状态和目标。
-- `bench jog` 的位移绝对值不得超过 `3°`，请求速度不得超过 `3°/s`。
+- 旧 `bench init/enable/jog/stop/disable/clear` 的电机列表必须是严格升序、无重复的 `1..7` ESC/CAN ID。新 `bench move` 单独允许任意唯一顺序，其电机、位置和速度列表必须非空且严格等长，并严格按调用者列表顺序一一映射，不支持广播。
+- `bench jog` 的 `delta/speed` 使用与固件相同的普通十进制正常 `float32` 语法，不接受指数；`delta` 可正、可负或为 `0`，`speed` 必须大于 `0`。确定性模拟器不为 legacy jog 伪造发现能力上限；真实固件仍在动作执行阶段依据本次发现的 `PMAX/VMAX/MAX_SPD` 做运行时校验。
+- `bench move` 使用相对本次上电零点的 S3519 输出端绝对角度，不是机械臂关节软限位。位置和速度只接受不含指数的十进制正常 `float32`；位置还允许 `0`，速度必须大于 `0`。
+- 位置边界来自本次发现的 `PMAX`，速度边界来自 `min(VMAX,MAX_SPD)`；边界值允许，越界拒绝且不截断，任一发现值缺失时不回退默认值。`show motor <id>` 通过 `pmax_deg/vmax_deg_s/max_speed_deg_s/move_speed_limit_deg_s` 显示这些值，不可用时显示 `?`。
 - 对动作编号 `13` 只发送一次。收到 `ok 13 bench jog accepted=1` 后等待 `done 13 ...`；不要通过新编号重复发送同一动作。
 - 固件在电机未到位时内部周期重发同一批固定绝对 CAN 目标，上位机不负责重发动作目标。
 
@@ -110,20 +139,30 @@ stream off
 
 ```text
 上位机                       固件                         S3519
-13 bench jog ...  ---------> 校验并入队
-              <------------- ok 13 ... accepted=1
-                             发送固定 CAN 目标批次 ----->
-ping              ---------> 刷新通信看门狗
-              <------------- ok <id> ping ...
+50 bench move ... ---------> 校验并入队
+              <------------- ok 50 bench move accepted=1
+                             发现、使能并发送固定目标 ----->
                              未到位则内部重发目标 ------>
-              <------------- done 13 ... result=completed
+                             HOLD、所选电机失能 ---------->
+              <------------- done 50 bench move result=completed ...
 ```
 
-- 动作请求与保活是两类独立请求：动作只提交一次，`ping` 在等待期间周期发送。
-- 任一电机已使能或存在活动运动时，上位机每 250 ms 或更快发送一次有效 `ping`；调试脚本采用 200 ms。
+- 新 `bench move` 只提交一次并等待同一编号的 `ok` 后接唯一 `done`，其等待期间不发送 `ping`。固件负责发现到失能清理全过程，完成仍要求新鲜 CAN 反馈、无驱动故障、控制周期安全且无 Bus-Off，并在所选电机收到新鲜 disabled 反馈后才报告 `completed`。
+- 旧 `bench enable/jog` 不是自包含动作：带电或运动期间上位机每约 250 ms 发送一次独立 `ping`；调试脚本采用 200 ms。不要周期重发任何动作正文来代替保活。
 - 连续 1000 ms 没有有效请求时，固件执行停止和失能并发布链路超时事件。
 - 全部电机失能且无运动时，看门狗不触发停止/失能，因此只读手工调试不需要周期发送指令。
 - 串口异常、脚本中断或动作失败时，上位机仍应尽力依次发送 `bench stop` 和 `bench disable`。
+
+`bench move` 的稳定终态如下；完成结果的 `motors` 是所选电机位掩码，电机 1 对应 bit 0。失败阶段只允许 `validate/discovery/mode/clear/enable/motion/hold/disable/unknown`，错误码只允许 `not_ready/position_out_of_range/speed_out_of_range/fault_present/stale_feedback/timeout/feedback_timeout/action_failed`；`motor` 必须是可归属的所选电机，否则为 `?`。
+
+```text
+done 50 bench move result=completed elapsed_ms=3200 motors=01
+done 50 bench move result=failed stage=motion code=stale_feedback motor=1
+done 50 bench move result=cancelled
+done 50 bench move result=stopped
+```
+
+`bench stop` 可抢占活动动作，原动作报告 `cancelled` 且 STOP 产生自己的终态；活动期间第二条普通命令返回 `busy`。相同非零编号和相同正文重放近期结果，相同编号配不同正文返回 `request_conflict`。
 
 ## 模型与安全门控
 
@@ -140,7 +179,7 @@ ping              ---------> 刷新通信看门狗
 2. 验证 `hello`、`boot`、Profile、`show config` 映射和七轴 ID 顺序。
 3. 验证查询 `ok` 与动作 `ok accepted=1`、终态 `done/error` 的不同生命周期。
 4. 验证相同非零请求重放不会重复动作，冲突正文会被拒绝。
-5. 验证动作仅发送一次、固件内部目标重发，以及周期 `ping` 不会重复执行业务动作。
+5. 验证 `bench move` 仅发送一次且不启动保活、固件内部目标重发，以及旧 `bench enable/jog` 的周期 `ping` 不会重复执行业务动作。
 6. 验证 `stream joints/motors` 的频率边界、序号间隙和丢旧保新。
 7. 验证 `stop`、`disable`、1000 ms 链路超时、USB 断开、重连和 `boot` 改变。
 8. 保存 Aethor Studio V2 的版本或 commit、固件 commit、精确命令、串口记录和结果。

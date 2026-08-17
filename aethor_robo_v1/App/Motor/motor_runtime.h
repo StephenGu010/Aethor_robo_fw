@@ -13,6 +13,8 @@
 
 #define MOTOR_RUNTIME_FEEDBACK_STALE_AFTER_US (100000ULL)
 #define MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES (14U)
+/* One discovery read, seven mode writes, and one mode read may be in flight. */
+#define MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY (ARM_JOINT_COUNT + 2U)
 
 /** @brief Owns the fail-safe disable frames for all seven configured motors. */
 typedef struct
@@ -20,6 +22,17 @@ typedef struct
     CanFrame frames[MOTOR_RUNTIME_EMERGENCY_DISABLE_MAX_FRAMES];
     uint8_t count;
 } MotorEmergencyFrameBatch;
+
+/**
+ * @brief Stores discovered dynamic limits for S3519 POS_VEL commands.
+ */
+typedef struct
+{
+    float position_max_rad;
+    float velocity_mapping_max_rad_s;
+    float maximum_speed_rad_s;
+    float move_speed_limit_rad_s;
+} MotorPositionVelocityLimits;
 
 /**
  * @brief Reports deterministic discovery and receive-routing outcomes.
@@ -38,7 +51,10 @@ typedef enum
     MOTOR_RUNTIME_STATUS_ID_MISMATCH,
     MOTOR_RUNTIME_STATUS_STALE_FEEDBACK,
     MOTOR_RUNTIME_STATUS_ACTION_COMPLETE,
-    MOTOR_RUNTIME_STATUS_ACTION_FAILED
+    MOTOR_RUNTIME_STATUS_ACTION_FAILED,
+    MOTOR_RUNTIME_STATUS_POSITION_OUT_OF_RANGE,
+    MOTOR_RUNTIME_STATUS_SPEED_OUT_OF_RANGE,
+    MOTOR_RUNTIME_STATUS_FAULT_PRESENT
 } MotorRuntimeStatus;
 
 /** @brief Describes the bounded seven-motor control-mode write/readback cycle. */
@@ -51,6 +67,37 @@ typedef enum
     MOTOR_MODE_SWITCH_COMPLETE,
     MOTOR_MODE_SWITCH_FAILED
 } MotorModeSwitchState;
+
+/** @brief Identifies one exact parameter response expected from one motor. */
+typedef struct
+{
+    uint64_t timestamp_us;
+    uint16_t identifier;
+    uint8_t joint_index;
+    uint8_t esc_id;
+    uint8_t opcode;
+    uint8_t register_address;
+    uint8_t valid;
+    uint8_t quarantined;
+} MotorParameterResponseSignature;
+
+/** @brief Identifies which bounded parameter sequence emitted an expectation. */
+typedef enum
+{
+    MOTOR_PARAMETER_SOURCE_DISCOVERY = 0,
+    MOTOR_PARAMETER_SOURCE_MODE_WRITE,
+    MOTOR_PARAMETER_SOURCE_MODE_READ
+} MotorParameterExpectationSource;
+
+/** @brief Stores every unique parameter response that can still arrive. */
+typedef struct
+{
+    MotorParameterResponseSignature
+        entries[MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY];
+    MotorParameterExpectationSource
+        sources[MOTOR_RUNTIME_PARAMETER_EXPECTATION_CAPACITY];
+    uint8_t count;
+} MotorParameterResponseSet;
 
 /**
  * @brief Owns all static receive-side state for the first seven-axis arm.
@@ -70,7 +117,11 @@ typedef struct
     uint8_t mode_switch_joint_mask;
     uint8_t mode_switch_joint_index;
     uint8_t mode_switch_attempt_count;
+    uint8_t mode_rollover_pending;
+    uint8_t discovery_active;
     uint8_t initialized;
+    MotorParameterResponseSet parameter_expectations;
+    MotorParameterResponseSet parameter_quarantine;
 } MotorRuntime;
 
 /**
@@ -101,6 +152,18 @@ MotorRuntimeStatus motor_runtime_begin_discovery(MotorRuntime *runtime,
 MotorRuntimeStatus motor_runtime_next_discovery_frame(MotorRuntime *runtime,
                                                       uint64_t timestamp_us,
                                                       CanFrame *frame);
+
+/**
+ * @brief Aborts only active discovery and mode-switch parameter sequences.
+ * @param runtime Initialized runtime whose feedback and completed discovery
+ *        data remain intact; selected mode fields invalidated by an active
+ *        switch stay unverified.
+ * @param timestamp_us Abort timestamp starting the bounded late-frame window.
+ * @return OK, INVALID_ARGUMENT, or NOT_INITIALIZED; repeated calls are idempotent.
+ */
+MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
+    MotorRuntime *runtime,
+    uint64_t timestamp_us);
 
 /**
  * @brief Routes one validated Classic CAN frame to discovery or feedback decode.
@@ -137,6 +200,18 @@ MotorRuntimeStatus motor_runtime_build_emergency_disable(
     MotorEmergencyFrameBatch *batch);
 
 /**
+ * @brief Builds fail-safe disable frames for only the selected motors.
+ * @param runtime Initialized seven-motor runtime owning discovered modes.
+ * @param motor_mask Nonzero J1-J7 selection mask.
+ * @param batch Destination bounded emergency batch, cleared on failure.
+ * @return OK or an argument, initialization, or codec error.
+ */
+MotorRuntimeStatus motor_runtime_build_emergency_disable_subset(
+    const MotorRuntime *runtime,
+    uint8_t motor_mask,
+    MotorEmergencyFrameBatch *batch);
+
+/**
  * @brief Encodes one ordered all-or-nothing J1-J7 motor control group.
  * @param runtime Initialized runtime owning identities, gains, and ranges.
  * @param control_mode Confirmed S3519 POS_VEL or MIT mode.
@@ -151,6 +226,36 @@ MotorRuntimeStatus motor_runtime_build_control_group(
     const float motor_position_rad[ARM_JOINT_COUNT],
     const float motor_velocity_rad_s[ARM_JOINT_COUNT],
     CanFrame frames[ARM_JOINT_COUNT]);
+
+/**
+ * @brief Gets complete discovered POS_VEL limits for one motor.
+ * @param runtime Initialized runtime owning the current discovery results.
+ * @param joint_index Zero-based target joint index.
+ * @param limits Destination dynamic limit contract.
+ * @return OK or an argument, initialization, or unavailable-range error.
+ */
+MotorRuntimeStatus motor_runtime_get_position_velocity_limits(
+    const MotorRuntime *runtime,
+    uint8_t joint_index,
+    MotorPositionVelocityLimits *limits);
+
+/**
+ * @brief Validates a selected fault-free positive-speed POS_VEL move.
+ * @param runtime Initialized runtime owning current discovered limits.
+ * @param feedback_snapshot Freshness-filtered feedback snapshot.
+ * @param motor_mask Nonzero J1-J7 selection mask.
+ * @param motor_position_rad Joint-indexed motor targets.
+ * @param motor_speed_rad_s Joint-indexed positive motor speed limits.
+ * @param failed_joint_index Destination first failing zero-based joint index.
+ * @return OK or a stable argument, discovery, feedback, fault, or range error.
+ */
+MotorRuntimeStatus motor_runtime_validate_position_velocity_move_subset(
+    const MotorRuntime *runtime,
+    const MotorFeedbackSnapshot *feedback_snapshot,
+    uint8_t motor_mask,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_speed_rad_s[ARM_JOINT_COUNT],
+    uint8_t *failed_joint_index);
 
 /**
  * @brief Encodes selected POS_VEL targets without altering unselected motors.

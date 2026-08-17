@@ -182,3 +182,71 @@ Final evidence boundary:
 - No serial port, flash probe, motor, or physical hardware was accessed. They do
   not prove real one-shot motion, mechanical direction, load behavior, physical
   angle, physical speed, or seven-axis commissioning.
+
+Real one-shot COM7 hardware verification
+Recorded: 2026-08-17 10:17:12 +08:00 Asia/Shanghai
+Branch: feature/one-shot-bench-move-impl
+Source commit: 646db6d83126f404d27cba7c6ad6c964e8b7619a
+
+Hardware and firmware:
+- USB CDC: COM7, VID_0483 PID_5740.
+- Probe: CMSIS-DAP serial
+  07000001000000000000000000000000a5a5a5a597969908.
+- Target: STM32H72x/73x, Cortex-M7.
+- Motor under motion test: unloaded S3519 CAN ID 1 only.
+- ARMCC V5.05 update 1 build 106 full rebuild:
+  Code=81748, RO-data=3820, RW-data=452, ZI-data=93804,
+  0 Error(s), 0 Warning(s).
+- HEX length: 241305 bytes.
+- HEX SHA-256:
+  94CE9FC6CCA5D20133F264BC1323E0E006B23C05241E44E3668A3C2113175B27.
+- OpenOCD CMSIS-DAP programming reported Programming Finished,
+  Verified OK, and Resetting Target.
+
+Cold-start safety and feedback-gate evidence:
+- Before the final fix, real control feedback could share the same millisecond
+  timestamp as the preceding command and was rejected by the absolute-time
+  boundary. This reproduced as validate feedback_timeout and later as clear
+  feedback_timeout without completing a move.
+- The final source records a per-joint feedback timestamp baseline before each
+  gated batch and requires every selected joint to publish a newer generation.
+- The safe invalid probe was written once as:
+  50 bench move 1,3 position=800,800 speed=30,30
+- Firmware replied:
+  ok 50 bench move accepted=1
+  done 50 bench move result=failed stage=validate
+  code=position_out_of_range motor=1
+- No ENABLE or target motion was issued by that invalid probe.
+
+Single-write outbound motion:
+- Request written exactly once; no ping or repeated move request was sent:
+  80 bench move 1 position=5 speed=5
+- Firmware replied:
+  ok 80 bench move accepted=1
+  done 80 bench move result=completed elapsed_ms=113 motors=01
+- Feedback position changed from approximately 0.579 deg to 4.557 deg.
+- Firmware completed its internal target resend, HOLD, and DISABLE lifecycle
+  without serial keepalive.
+
+Single-write return motion:
+- Request written exactly once; no ping or repeated move request was sent:
+  100 bench move 1 position=0 speed=5
+- Cached terminal evidence after the host runner misclassified captured output:
+  done 100 bench move result=completed elapsed_ms=76 motors=01
+- The host runner then conservatively sent STOP 101 and DISABLE 102; both
+  produced independent stopped/completed terminal results after move 100 had
+  already completed.
+- Final stored position was approximately 0.514 deg.
+
+Final safety state:
+- show motors: enabled=00, moving=00, holding=00, fault=00.
+- show state: enabled=00, moving=0, active=0, fault=none.
+- show diag can: drop=0, error=0, busoff=0, queue_hwm=1.
+- Explicit final DISABLE completed with enabled=00.
+
+Hardware evidence boundary:
+- This run proves one unloaded CAN ID 1 motor can execute and return using one
+  serial move request per action with no serial keepalive.
+- It does not prove actual speed calibration, loaded behavior, mechanical soft
+  limits, CAN ID 3 motion, simultaneous multi-motor motion, or seven-axis arm
+  commissioning.

@@ -1362,11 +1362,12 @@ static void test_aethor_app_repeats_unfinished_bench_target_batch(void)
 }
 
 /**
- * @brief Verifies a cold one-shot move performs setup in the required safe order.
+ * @brief Verifies cold setup acquires fresh disabled feedback before validation.
  */
-static void test_aethor_app_one_shot_move_cold_setup_is_strictly_ordered(void)
+static void test_aethor_app_one_shot_move_cold_setup_acquires_disabled_feedback(void)
 {
     ProtocolOutputBatch output_batch;
+    CanFrame preflight_disable_frame;
     CanFrame clear_frame;
     CanFrame enable_frame;
     CanFrame target_frame;
@@ -1378,9 +1379,17 @@ static void test_aethor_app_one_shot_move_cold_setup_is_strictly_ordered(void)
                           ++timestamp_us);
     (void)aethor_app_service(++timestamp_us);
 
-    phase0_complete_discovery_subset(0x01U, 0U, &timestamp_us);
-    phase0_assert_no_pending_can_frame(++timestamp_us);
-    phase0_feed_feedback(1U, S3519_DRIVER_STATE_DISABLED, ++timestamp_us);
+    phase0_complete_discovery_subset(0x01U, 1U, &timestamp_us);
+    assert(aethor_app_next_can_frame(++timestamp_us,
+                                     &preflight_disable_frame,
+                                     &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(priority == CAN_TX_PRIORITY_EMERGENCY);
+    assert(preflight_disable_frame.identifier == 0x101U);
+    assert(phase0_is_mode_command(&preflight_disable_frame,
+                                  S3519_MODE_COMMAND_DISABLE));
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_DISABLED, timestamp_us);
     (void)aethor_app_service(++timestamp_us);
     assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
 
@@ -1394,10 +1403,7 @@ static void test_aethor_app_one_shot_move_cold_setup_is_strictly_ordered(void)
     assert(clear_frame.identifier == 0x101U);
     assert(phase0_is_mode_command(&clear_frame,
                                   S3519_MODE_COMMAND_CLEAR_ERROR));
-    (void)aethor_app_service(++timestamp_us);
-    phase0_assert_no_pending_can_frame(++timestamp_us);
-
-    phase0_feed_feedback(1U, S3519_DRIVER_STATE_DISABLED, ++timestamp_us);
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_DISABLED, timestamp_us);
     (void)aethor_app_service(++timestamp_us);
     assert(aethor_app_next_can_frame(++timestamp_us,
                                      &enable_frame,
@@ -1406,10 +1412,7 @@ static void test_aethor_app_one_shot_move_cold_setup_is_strictly_ordered(void)
     assert(priority == CAN_TX_PRIORITY_JOINT_CONTROL);
     assert(enable_frame.identifier == 0x101U);
     assert(phase0_is_mode_command(&enable_frame, S3519_MODE_COMMAND_ENABLE));
-    (void)aethor_app_service(++timestamp_us);
-    phase0_assert_no_pending_can_frame(++timestamp_us);
-
-    phase0_feed_feedback(1U, S3519_DRIVER_STATE_ENABLED, ++timestamp_us);
+    phase0_feed_feedback(1U, S3519_DRIVER_STATE_ENABLED, timestamp_us);
     (void)aethor_app_service(++timestamp_us);
     assert(aethor_app_next_can_frame(++timestamp_us,
                                      &target_frame,
@@ -1528,9 +1531,7 @@ static void phase0_assert_one_shot_validation_failure(
                   expected_result_fragment) != NULL);
 }
 
-/**
- * @brief Verifies one-shot dynamic validation rejects range, speed, fault, and feedback errors.
- */
+/** @brief Verifies one-shot dynamic validation rejects range, speed, and faults. */
 static void test_aethor_app_one_shot_move_fails_before_enable_on_invalid_target(void)
 {
     phase0_assert_one_shot_validation_failure(
@@ -1547,16 +1548,44 @@ static void test_aethor_app_one_shot_move_fails_before_enable_on_invalid_target(
         11004U);
     phase0_assert_one_shot_validation_failure(
         "50 bench move 1 position=90 speed=30",
-        S3519_DRIVER_STATE_DISABLED,
-        0U,
-        "stage=validate code=stale_feedback motor=1",
-        11005U);
-    phase0_assert_one_shot_validation_failure(
-        "50 bench move 1 position=90 speed=30",
         S3519_DRIVER_STATE_FAULT_MINIMUM,
         1U,
         "stage=validate code=fault_present motor=1",
         11006U);
+}
+
+/**
+ * @brief Verifies stale setup feedback triggers bounded DISABLE acquisition.
+ */
+static void test_aethor_app_one_shot_preflight_feedback_timeout_is_bounded(void)
+{
+    ProtocolOutputBatch output_batch;
+    CanFrame disable_frame;
+    CanTxPriority priority;
+    uint64_t timestamp_us = 3500U;
+
+    phase0_start_text_session(&timestamp_us, 11005U);
+    phase0_initialize_motor_subset("2 bench init 1", 0x01U, &timestamp_us);
+    phase0_submit_request("50 bench move 1 position=90 speed=30",
+                          ++timestamp_us);
+    (void)aethor_app_service(++timestamp_us);
+
+    assert(aethor_app_next_can_frame(++timestamp_us,
+                                     &disable_frame,
+                                     &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(priority == CAN_TX_PRIORITY_EMERGENCY);
+    assert(disable_frame.identifier == 0x101U);
+    assert(phase0_is_mode_command(&disable_frame,
+                                  S3519_MODE_COMMAND_DISABLE));
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 0U);
+
+    timestamp_us += PHASE0_TEST_ACTION_TIMEOUT_US + 1U;
+    assert(aethor_app_service(timestamp_us) == 1U);
+    assert(aethor_app_pop_protocol_result_output(&output_batch) == 1U);
+    assert(strstr(output_batch.messages[0].data,
+                  "stage=validate code=feedback_timeout motor=?") != NULL);
+    phase0_assert_no_pending_can_frame(++timestamp_us);
 }
 
 /**
@@ -3985,9 +4014,10 @@ int main(void)
     test_aethor_app_one_shot_cleanup_requires_enable_confirmation();
     test_aethor_app_legacy_bench_actions_still_require_keepalive();
     test_aethor_app_repeats_unfinished_bench_target_batch();
-    test_aethor_app_one_shot_move_cold_setup_is_strictly_ordered();
+    test_aethor_app_one_shot_move_cold_setup_acquires_disabled_feedback();
     test_aethor_app_one_shot_move_discovers_only_missing_subset();
     test_aethor_app_one_shot_move_fails_before_enable_on_invalid_target();
+    test_aethor_app_one_shot_preflight_feedback_timeout_is_bounded();
     test_aethor_app_legacy_jog_accepts_dynamic_range_above_three_degrees();
     test_aethor_app_legacy_jog_rejects_dynamic_validation_failures();
     test_aethor_app_one_shot_discovery_failure_disables_selected_unknown_modes();

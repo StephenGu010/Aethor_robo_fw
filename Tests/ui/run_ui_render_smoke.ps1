@@ -12,7 +12,7 @@ function Invoke-LvglRenderSmoke {
     <# Build selected real LVGL sources, render PPM and validate/convert them. #>
     $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
     $buildDirectory = Join-Path $PSScriptRoot 'build\render'
-    $imageDirectory = Join-Path $PSScriptRoot 'artifacts'
+    $imageDirectory = Join-Path $PSScriptRoot 'artifacts-astra'
     New-Item -ItemType Directory -Force -Path $buildDirectory | Out-Null
     New-Item -ItemType Directory -Force -Path $imageDirectory | Out-Null
     $env:PATH = (Split-Path $Compiler) + ';' + $env:PATH

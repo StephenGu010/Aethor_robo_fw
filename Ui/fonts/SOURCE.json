@@ -8,8 +8,8 @@
   ],
   "license": "SIL Open Font License 1.1 (OFL.txt)",
   "generator": "Tests/ui/generate_font_subset.py (Pillow/FreeType)",
-  "glyphs": 344,
-  "bitmap_bytes": 36701,
+  "glyphs": 352,
+  "bitmap_bytes": 37733,
   "size_px": 16,
   "bpp": 4
 }

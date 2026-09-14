@@ -1,6 +1,6 @@
 # DM_TFT 调试界面
 
-当前 `feature/lvgl-icon-ui` 已实现图标菜单与共享视图，操作路径、全部模拟页面和内存验证见[图标界面实现说明](icon-ui-verification.md)。下面的发布基线及历史记录继续保留；图标版尚未烧录。
+当前 `feature/lvgl-astra-ui` 实施 Astra 风格界面 B，操作路径、真实 LVGL 模拟页面和验证见 [Astra 界面 B](astra-ui-verification.md)。图标界面 A 保留在 `feature/lvgl-icon-ui`，原说明见[图标界面实现说明](icon-ui-verification.md)。下面的发布基线及历史记录继续保留；两种新界面均未烧录。
 
 本目录记录 DM_TFT LCD 的软件接入、操作与验收。2026-09-14发布基线为LCD-MIT，电机7已有POS/MIT配置和有限空载验证。当前输出轴Kp=80、Kd=0.2，反馈转矩保护3.5 Nm；POS/MIT到位按输出轴0.5°。固定固件、当前操作、验证和历史记录界线以[发布说明](release-20260914.md)为准。模拟渲染不替代实屏、带载或整臂验收。
 

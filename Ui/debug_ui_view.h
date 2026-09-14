@@ -35,6 +35,17 @@ typedef struct {
     lv_obj_t *footer;
     lv_obj_t *icons[DEBUG_UI_VIEW_ROWS];
     lv_obj_t *confirm_bar;
+    lv_obj_t *overlay;
+    char background_text[5][80];
+    uint8_t decoration;
+    uint8_t tile_focus;
+    int16_t tile_offset;
+    int16_t animation_from;
+    uint32_t animation_start;
+    uint32_t animation_tick;
+    uint8_t animation_active;
+    uint8_t scrollbar_count;
+    uint8_t scrollbar_first;
     char title_text[80];
     char row_text[DEBUG_UI_VIEW_ROWS][DEBUG_UI_VIEW_TEXT_BYTES];
     char footer_text[112];
@@ -50,6 +61,9 @@ typedef struct {
 } DebugUiView;
 
 LV_FONT_DECLARE(ui_font_16);
+LV_FONT_DECLARE(ui_font_numeric_28);
+/** @brief Advance idle-only decorations without delaying input or control. */
+void debug_ui_view_animate(DebugUiView *view);
 /** @brief Create every object up front; fail closed on pool/object allocation loss. */
 uint8_t debug_ui_view_init(DebugUiView *view);
 /** @brief Update changed strings/styles only; must never run in flush wait or ISR. */

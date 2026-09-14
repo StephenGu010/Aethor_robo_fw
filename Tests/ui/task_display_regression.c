@@ -261,7 +261,7 @@ static void test_landscape_key_navigation(void)
     /* Physical right was decoded as DOWN; it must enter diagnostics. */
     event.key = DEBUG_UI_KEY_DOWN;
     lv_port_indev_event(&navigation, &event);
-    assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTICS);
+    assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTIC_MENU);
     event.key = DEBUG_UI_KEY_UP;
     lv_port_indev_event(&navigation, &event);
     assert(navigation.page == DEBUG_UI_PAGE_OVERVIEW);

@@ -37,7 +37,8 @@ def generate(font_path: Path, license_path: Path) -> None:
     output = root / "Ui/fonts"
     output.mkdir(parents=True, exist_ok=True)
     codepoints = set(range(32, 127)) | {0xB0}
-    for source in (root / "Ui/debug_ui_view.c", root / "App/DebugUi/debug_ui_model.c"):
+    for source in (root / "Ui/debug_ui_view.c", root / "Ui/debug_ui_astra_layout.inc",
+                   root / "App/DebugUi/debug_ui_model.c"):
         for literal in re.findall(r'"(?:\\.|[^"\\])*"', source.read_text(encoding="utf-8")):
             codepoints.update(ord(character) for character in literal if ord(character) > 127)
     font = ImageFont.truetype(str(font_path), 16)

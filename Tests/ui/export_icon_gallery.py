@@ -57,7 +57,7 @@ def draw_contact_sheet(images: list[tuple[str, Image.Image]], output: Path) -> N
     sheet.save(output)
 
 
-def export_gallery(source: Path, output: Path) -> None:
+def export_gallery(source: Path, output: Path, title: str = "LCD 图标 UI") -> None:
     """复制原始 PNG 并输出离线 HTML 和联系图，保持模拟证据说明可见。"""
     source = source.resolve()
     output = output.resolve()
@@ -90,6 +90,7 @@ img{width:560px;height:auto;max-width:100%;image-rendering:pixelated}figcaption{
 <p>这些图片由真实 LVGL 8.3.11 软件栅格器生成，使用模拟数据；不是烧录后的实机屏幕，也不代表硬件验证通过。
 原始 PNG 保存在 screens，页面显示和联系图采用 2 倍最近邻放大。</p>
 '''
+    document = document.replace("LCD 图标 UI", html.escape(title))
     document += f'<p>共 {len(images)} 张。联系图：{" · ".join(contact_links)}</p>'
     document += '<main class="gallery">' + "\n".join(cards) + '</main></html>\n'
     (output / "index.html").write_text(document, encoding="utf-8")
@@ -101,8 +102,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parent / "artifacts")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--title", default="LCD 图标 UI")
     arguments = parser.parse_args()
-    export_gallery(arguments.source, arguments.output)
+    export_gallery(arguments.source, arguments.output, arguments.title)
 
 
 if __name__ == "__main__":

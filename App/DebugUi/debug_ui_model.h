@@ -18,6 +18,8 @@ typedef enum { DEBUG_UI_PAGE_OVERVIEW = 0, DEBUG_UI_PAGE_MOTORS,
     DEBUG_UI_PAGE_REVIEW, DEBUG_UI_PAGE_RUNNING, DEBUG_UI_PAGE_RESULT,
     DEBUG_UI_PAGE_FAULT, DEBUG_UI_PAGE_PREPARE, DEBUG_UI_PAGE_REGISTERS,
     DEBUG_UI_PAGE_ACTIONS, /**< Appended to preserve all existing page identifiers. */
+    DEBUG_UI_PAGE_NUMBER, DEBUG_UI_PAGE_MODES, DEBUG_UI_PAGE_RECOVERY,
+    DEBUG_UI_PAGE_DIAGNOSTIC_MENU, DEBUG_UI_PAGE_NOTICE,
     DEBUG_UI_PAGE_COUNT } DebugUiPage;
 
 /** @brief Snapshot evidence for STOP_LATCHED; these are not application terminals. */
@@ -38,6 +40,13 @@ typedef struct
     DebugUiRequest outgoing_stop;
     DebugUiCompletion completion;
     DebugUiPage page;
+    DebugUiRequest number_backup; /**< Value before opening a numeric widget. */
+    DebugUiPage review_return_page;
+    DebugUiPage notice_return_page;
+    DebugUiPage prepare_return_page;
+    DebugUiPage diagnostic_return_page;
+    uint8_t page_focus[DEBUG_UI_PAGE_COUNT];
+    uint8_t page_first[DEBUG_UI_PAGE_COUNT];
     DebugUiReason reason;
     DebugUiStopLatchState stop_latch_state;
     uint64_t now_us;
@@ -78,6 +87,12 @@ void debug_ui_model_event(DebugUiModel *model, const DebugUiInputEvent *event);
 /** @brief Validate and start editing an operation on the selected motor. */
 uint8_t debug_ui_model_begin(DebugUiModel *model, DebugUiOperation operation,
                              DebugUiMode requested_mode);
+/** @brief Number of editable parameters, excluding the preview row. */
+uint8_t debug_ui_model_parameter_count(const DebugUiModel *model);
+/** @brief Map a parameter row to delta/speed/Kp/Kd/time (0..4), or 255. */
+uint8_t debug_ui_model_parameter_field(const DebugUiModel *model, uint8_t index);
+/** @brief Return whether the result acknowledgement must open control checks. */
+uint8_t debug_ui_model_result_requires_check(const DebugUiModel *model);
 /** @brief Return the current gate reason for the selected motor/operation. */
 DebugUiReason debug_ui_model_gate(const DebugUiModel *model, DebugUiOperation operation);
 /** @brief Resolve actual activity/cleanup before pending local work; zero means unknown. */

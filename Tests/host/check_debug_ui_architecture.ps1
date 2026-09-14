@@ -34,7 +34,8 @@ function Invoke-DebugUiArchitectureCheck {
         'Control task must not render or access LCD/ADC hardware.' $failures
     $uiRoot = Join-Path $projectRoot 'Ui'
     if (Test-Path -LiteralPath $uiRoot) {
-        foreach ($uiFile in (Get-ChildItem -LiteralPath $uiRoot -Recurse -File -Filter '*.c')) {
+        foreach ($uiFile in (Get-ChildItem -LiteralPath $uiRoot -Recurse -File |
+            Where-Object { $_.Extension -in @('.c', '.inc') })) {
             $source = Get-Content -LiteralPath $uiFile.FullName -Raw
             Assert-DebugUiContract ($source -notmatch '\b(?:s3519_|motor_runtime_|HAL_FDCAN_|protocol_engine_)\w*\s*\(') `
                 ('UI bypasses the application command owner: ' + $uiFile.Name) $failures

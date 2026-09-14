@@ -116,6 +116,7 @@ static void bridge_fragmented_confirm(void)
     debug_ui_model_init(&model);
     bridge_update(&input_fixture, &model, &snapshot, 1U);
     assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_POS_MOVE, DEBUG_UI_MODE_POS_VEL));
+    model.focus = debug_ui_model_parameter_count(&model);
     bridge_level(&input_fixture, &model, &snapshot, 0U, 30U, 1U);
     assert(model.page == DEBUG_UI_PAGE_REVIEW);
     bridge_level(&input_fixture, &model, &snapshot, 4095U, 30U, 1U);
@@ -168,6 +169,7 @@ static void bridge_continuous_confirmation(void)
     debug_ui_model_init(&model);
     bridge_update(&input_fixture, &model, &snapshot, 1U);
     assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_POS_MOVE, DEBUG_UI_MODE_POS_VEL));
+    model.focus = debug_ui_model_parameter_count(&model);
     bridge_level(&input_fixture, &model, &snapshot, 0U, 30U, 1U);
     bridge_level(&input_fixture, &model, &snapshot, 4095U, 30U, 1U);
     bridge_level(&input_fixture, &model, &snapshot, 0U, 600U, 1U);
@@ -194,9 +196,13 @@ static void bridge_sustained_pos_edit(void)
     debug_ui_model_init(&model);
     bridge_update(&input_fixture, &model, &snapshot, 1U);
     assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_POS_MOVE, DEBUG_UI_MODE_POS_VEL));
+    model.focus = debug_ui_model_parameter_count(&model);
+    model.focus = 0U;
+    bridge_level(&input_fixture, &model, &snapshot, 1636U, 30U, 1U);
+    bridge_level(&input_fixture, &model, &snapshot, 4095U, 30U, 1U);
     bridge_level(&input_fixture, &model, &snapshot, 2457U, 60000U, 1U);
     assert(input_fixture.input.valid && input_fixture.input.fault_count == 0U);
-    assert(model.page == DEBUG_UI_PAGE_EDIT);
+    assert(model.page == DEBUG_UI_PAGE_NUMBER);
     assert(debug_ui_radians_to_degrees(model.draft.delta_rad) > 350.0f);
     assert(!debug_ui_model_take_request(&model, &request));
     bridge_level(&input_fixture, &model, &snapshot, 4095U, 210U, 1U);

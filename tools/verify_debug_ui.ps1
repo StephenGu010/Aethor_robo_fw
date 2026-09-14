@@ -17,7 +17,7 @@ function Get-DebugUiSourceFingerprint {
     <# Hash shared first-party build inputs before/after the multi-process verification. #>
     $inputs = foreach ($directory in @('App', 'Ui', 'Core')) {
         Get-ChildItem -LiteralPath (Join-Path $projectRoot $directory) -Recurse -File |
-            Where-Object { $_.Extension -in @('.c', '.h') }
+            Where-Object { $_.Extension -in @('.c', '.h', '.inc') }
     }
     $inputs += Get-Item -LiteralPath (Join-Path $projectRoot 'MDK-ARM\CtrBoard-H7_FDCAN.uvprojx'),
         (Join-Path $projectRoot 'MDK-ARM\aethor_memory.sct'),
@@ -82,6 +82,8 @@ foreach ($name in $testNames) {
 Invoke-RecordedCheck 'test_debug_ui_build_contract' $Python @(
     ('"' + (Join-Path $projectRoot 'Tests\host\test_debug_ui_build_contract.py') + '"'),
     '--compiler', ('"' + $Compiler + '"'))
+Invoke-RecordedCheck 'check_numeric_font_subset' $Python @(
+    ('"' + (Join-Path $projectRoot 'Ui\fonts\generate_numeric_28.py') + '"'), '--check')
 Invoke-RecordedCheck 'run_input_model_integration' $powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass',
     '-File', ('"' + (Join-Path $projectRoot 'Tests\ui\run_input_model_integration.ps1') + '"'),
     '-Compiler', ('"' + $Compiler + '"'))

@@ -1,6 +1,6 @@
 /** @file lv_conf.h
  * @brief LVGL 8.3.11 configuration for a static 280x240 RGB565 debug screen.
- * Only labels and base objects are enabled; no examples, demos or animations.
+ * Only labels and base objects are enabled; idle decorations use bounded task state.
  */
 #ifndef LV_CONF_H
 #define LV_CONF_H
@@ -13,7 +13,7 @@
 extern uint8_t debug_ui_lvgl_pool[LV_MEM_SIZE];
 #define LV_MEM_ADR 0
 #define LV_MEM_POOL_ALLOC(size) ((void)(size), debug_ui_lvgl_pool)
-#define LV_DISP_DEF_REFR_PERIOD 50
+#define LV_DISP_DEF_REFR_PERIOD 20
 #define LV_INDEV_DEF_READ_PERIOD 5
 #define LV_TICK_CUSTOM 0
 #define LV_DPI_DEF 130
@@ -35,7 +35,7 @@ void debug_ui_lvgl_assert_failed(void);
 #define LV_USE_USER_DATA 1
 #define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_20 1
-#define LV_FONT_MONTSERRAT_28 1
+#define LV_FONT_MONTSERRAT_28 0
 #define LV_FONT_SIMSUN_16_CJK 0
 #define LV_FONT_DEFAULT &lv_font_montserrat_16
 #define LV_USE_FONT_COMPRESSED 0

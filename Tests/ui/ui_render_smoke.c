@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <float.h>
 
 static lv_color_t framebuffer[280U * 240U];
 static DebugUiView view;
@@ -167,8 +169,10 @@ static void render_graphics(void *context)
     DebugUiViewPage *page;
     (void)context;
     debug_ui_view_update(&view, &model, &diagnostics);
-    lv_tick_inc(100U);
-    fake_ms += 100U;
+    /* Static page exports show the settled 140 ms Tile; timing is tested separately. */
+    lv_tick_inc(160U);
+    fake_ms += 160U;
+    debug_ui_view_animate(&view);
     lv_refr_now(NULL);
     lcd_st7789_service(fake_ms);
     lv_mem_monitor(&memory_sample);
@@ -180,6 +184,15 @@ static void render_graphics(void *context)
     for (index = 0U; index < DEBUG_UI_VIEW_ROWS; ++index) {
         validate_text(page->rows[index], lv_label_get_text(page->rows[index]));
         validate_text(page->icons[index], lv_label_get_text(page->icons[index]));
+    }
+    if (page->decoration == 2U) {
+        for (index = 0U; index < 5U; ++index) {
+            lv_point_t size;
+            assert(debug_ui_view_missing_glyphs(page->background_text[index]) == 0U);
+            lv_txt_get_size(&size, page->background_text[index], &ui_font_16,
+                            0, 0, 32767, LV_TEXT_FLAG_NONE);
+            assert(size.x <= 237 && size.y <= 21);
+        }
     }
 }
 
@@ -303,7 +316,65 @@ static void render_multiple_targets(const char *directory)
 }
 
 /** @brief Render six required page families plus edit/review/result variants. */
-#include "icon_ui_scenarios.inc"
+#include "astra_ui_scenarios.inc"
+
+/** @brief Check visible unknown values and result destinations against actual state. */
+static void verify_view_edge_states(void)
+{
+    unsigned index;
+    static const float invalid_positions[] = { NAN, INFINITY, -INFINITY, FLT_MAX };
+    simulated_data();
+    model.page = DEBUG_UI_PAGE_DETAIL;
+    model.snapshot.motors[0].feedback_valid = 0U;
+    for (index = 0U; index < sizeof(invalid_positions)/sizeof(invalid_positions[0]); ++index) {
+        model.snapshot.motors[0].position_rad = invalid_positions[index];
+        assert(debug_ui_graphics_run(render_graphics, NULL));
+        assert(strstr(lv_label_get_text(view.page.rows[1]), "--") != NULL);
+    }
+    simulated_data();
+    model.page = DEBUG_UI_PAGE_FAULT; model.completion_seen = 0U;
+    model.reason = DEBUG_UI_REASON_NOT_READY;
+    assert(debug_ui_graphics_run(render_graphics, NULL));
+    assert(strcmp(lv_label_get_text(view.page.rows[4]), "已读返回") == 0);
+    model.completion_seen = 1U; model.completion.disabled_confirmed = 1U;
+    model.snapshot.unconfirmed_disable_mask = 1U;
+    assert(debug_ui_graphics_run(render_graphics, NULL));
+    assert(strcmp(lv_label_get_text(view.page.rows[4]), "进入控制检查") == 0);
+    model.page = DEBUG_UI_PAGE_PREPARE; model.snapshot.motion_enabled = 0U;
+    assert(debug_ui_graphics_run(render_graphics, NULL));
+    assert(strstr(view.page.footer_text, "STOP") == NULL);
+    assert(strstr(lv_label_get_text(view.page.rows[6]), "停止") == NULL);
+    puts("ASTRA_VIEW_EDGE_STATES_OK nonfinite_unknown=1 result_destination=1 readonly_no_stop_hint=1");
+}
+
+/** @brief Verify idle animation timing and immediate activity/fault cancellation. */
+static void verify_idle_animation(void)
+{
+    uint32_t started;
+    simulated_data();
+    model.page = DEBUG_UI_PAGE_OVERVIEW; model.focus = 0U;
+    debug_ui_view_update(&view, &model, &diagnostics);
+    lv_tick_inc(160U); debug_ui_view_animate(&view);
+    model.focus = 1U;
+    debug_ui_view_update(&view, &model, &diagnostics);
+    assert(view.page.animation_active);
+    started = view.page.animation_start;
+    lv_tick_inc(20U); debug_ui_view_animate(&view);
+    debug_ui_view_update(&view, &model, &diagnostics);
+    assert(view.page.animation_start == started);
+    lv_tick_inc(120U); debug_ui_view_animate(&view);
+    assert(!view.page.animation_active && view.page.tile_offset == 0);
+    model.focus = 2U;
+    debug_ui_view_update(&view, &model, &diagnostics);
+    assert(view.page.animation_active);
+    model.snapshot.active = 1U;
+    debug_ui_view_update(&view, &model, &diagnostics);
+    assert(!view.page.animation_active && view.page.tile_offset == 0);
+    model.snapshot.active = 0U; model.input_valid = 0U; model.focus = 0U;
+    debug_ui_view_update(&view, &model, &diagnostics);
+    assert(!view.page.animation_active);
+    puts("ASTRA_IDLE_ANIMATION_OK duration=140ms cadence=20ms activity_and_input_cancel=1");
+}
 
 /** @brief Exercise repeated actual LVGL layouts and assert no retained page allocations. */
 static void verify_shared_view_reuse(void)
@@ -314,12 +385,12 @@ static void verify_shared_view_reuse(void)
     for (iteration = 0U; iteration < 1212U; ++iteration) {
         model.page = (DebugUiPage)(iteration % DEBUG_UI_PAGE_COUNT);
         assert(debug_ui_graphics_run(render_graphics, NULL));
-        assert(lv_obj_get_child_cnt(view.page.root) == 17U);
-        if (iteration == 11U) lv_mem_monitor(&warmed);
+        assert(lv_obj_get_child_cnt(view.page.root) == 18U);
+        if (iteration == 2U * DEBUG_UI_PAGE_COUNT - 1U) lv_mem_monitor(&warmed);
     }
     lv_mem_monitor(&final_memory);
     assert(final_memory.free_size == warmed.free_size);
-    printf("LVGL_SHARED_VIEW_REUSE_OK updates=1212 children=17 view_bytes=%lu sampled_pool_used_max=%lu\n",
+    printf("LVGL_SHARED_VIEW_REUSE_OK updates=1212 children=18 view_bytes=%lu sampled_pool_used_max=%lu\n",
         (unsigned long)sizeof(DebugUiView), (unsigned long)sampled_pool_used_max);
 }
 
@@ -338,7 +409,7 @@ int main(int argc, char **argv)
     simulated_data();
     objects_before = lv_obj_get_child_cnt(view.page.root);
     save_page(argv[1], "01_overview");
-    model.page = DEBUG_UI_PAGE_MOTORS; model.selected_motor = 6U; model.list_first = 2U;
+    model.page = DEBUG_UI_PAGE_MOTORS; model.selected_motor = model.focus = 6U; model.list_first = 2U;
     save_page(argv[1], "02_motors_scrolled");
     model.page = DEBUG_UI_PAGE_DETAIL; model.selected_motor = 0U;
     save_page(argv[1], "03_motor_detail");
@@ -401,7 +472,9 @@ int main(int argc, char **argv)
     model.snapshot.motors[6].register_age_ms[1] = 650U;
     save_page(argv[1], "25_position_registers");
     assert(strstr(view.page.row_text[1], "0.000219124") != NULL);
-    render_icon_scenarios(argv[1]);
+    render_astra_scenarios(argv[1]);
+    verify_view_edge_states();
+    verify_idle_animation();
     verify_shared_view_reuse();
     assert(lv_obj_get_child_cnt(view.page.root) == objects_before);
     assert(wait_count > 0U && flush_count > 100U && owned_pixels == NULL);

@@ -129,7 +129,7 @@ static void graphics_initialize(void *context)
     graphics_initialized = 1U;
 }
 
-/** @brief Advance tick, refresh changed page values at 100ms, render at 50ms. */
+/** @brief Advance tick, refresh values at 100ms and service bounded idle decorations. */
 static void graphics_service(void *context)
 {
     uint32_t now_ms = DebugUiNowMs();
@@ -144,6 +144,7 @@ static void graphics_service(void *context)
         debug_ui_view_update(&task_view, &task_model, &task_diagnostics);
         last_view_ms = now_ms;
     }
+    debug_ui_view_animate(&task_view);
     (void)lv_timer_handler();
 }
 #endif

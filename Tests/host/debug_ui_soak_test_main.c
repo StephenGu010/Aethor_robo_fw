@@ -139,27 +139,25 @@ static void soak_usb(const char *verb, uint32_t request_id, uint64_t timestamp_u
 static uint16_t soak_adc(uint32_t elapsed_ms)
 {
     static const DebugUiKey keys[] = {
-        DEBUG_UI_KEY_RIGHT,
-        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_CENTER,
-        /* Attempt all seven control entries across both menu pages; readonly must deny each. */
-        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_DOWN,
-        /* Registers remain browseable; return via actions and detail to the motor list. */
-        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_CENTER,
-        DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT,
-        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP,
-        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP,
-        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT,
-        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT,
+        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP,
+        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT,
+        DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT,
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_RIGHT,
+        DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT,
+        DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_UP,
+        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT,
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT,
+        DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_UP,
+        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP,
+        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT,
+        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT,
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN
     };
     DebugUiKey key;
     uint32_t script_ms;
@@ -331,17 +329,22 @@ static DebugUiSoakStatistics soak_run(uint8_t with_ui)
             debug_ui_model_update(&model, &snapshot, timestamp_us, input.valid, 1U);
             while (debug_ui_input_event(&input, &event))
             {
-                uint8_t denied_action_focus = model.focus;
-                uint8_t attempts_control = (uint8_t)(model.page == DEBUG_UI_PAGE_ACTIONS &&
-                    model.focus < 7U && event.type == DEBUG_UI_INPUT_EVENT_PRESS &&
-                    (event.key == DEBUG_UI_KEY_CENTER || event.key == DEBUG_UI_KEY_RIGHT));
-                debug_ui_model_event(&model, &event);
-                ++statistics.input_events;
-                if (attempts_control)
+                uint8_t denied_action_focus = 255U;
+                if (model.page == DEBUG_UI_PAGE_ACTIONS && model.focus >= 1U && model.focus <= 3U)
+                    denied_action_focus = (uint8_t)(model.focus - 1U);
+                else if (model.page == DEBUG_UI_PAGE_MODES) denied_action_focus = (uint8_t)(3U + model.focus);
+                else if (model.page == DEBUG_UI_PAGE_RECOVERY && model.focus < 2U)
+                    denied_action_focus = (uint8_t)(5U + model.focus);
                 {
-                    assert(model.page == DEBUG_UI_PAGE_ACTIONS);
-                    assert(model.reason == DEBUG_UI_REASON_DISABLED);
-                    statistics.denied_actions_mask |= (uint32_t)(1U << denied_action_focus);
+                    uint8_t attempts_control = (uint8_t)(denied_action_focus < 7U && event.type == DEBUG_UI_INPUT_EVENT_PRESS &&
+                        (event.key == DEBUG_UI_KEY_CENTER || event.key == DEBUG_UI_KEY_RIGHT));
+                    debug_ui_model_event(&model, &event);
+                    ++statistics.input_events;
+                    if (attempts_control) {
+                        assert(model.page == DEBUG_UI_PAGE_NOTICE);
+                        assert(model.reason == DEBUG_UI_REASON_DISABLED);
+                        statistics.denied_actions_mask |= (uint32_t)(1U << denied_action_focus);
+                    }
                 }
             }
             assert(!debug_ui_input_emergency_event(&input, &event));
@@ -351,7 +354,7 @@ static DebugUiSoakStatistics soak_run(uint8_t with_ui)
             statistics.pages_mask |= (uint32_t)(1U << model.page);
             if (model.page == DEBUG_UI_PAGE_ACTIONS)
             {
-                assert(model.focus < 8U);
+                assert(model.focus < 6U);
                 statistics.action_focus_mask |= (uint32_t)(1U << model.focus);
             }
             statistics.motors_mask |= (uint32_t)(1U << model.selected_motor);
@@ -401,8 +404,10 @@ int main(void)
     assert(with_ui.pages_mask == ((1U << DEBUG_UI_PAGE_OVERVIEW) | (1U << DEBUG_UI_PAGE_MOTORS) |
         (1U << DEBUG_UI_PAGE_DETAIL) | (1U << DEBUG_UI_PAGE_DIAGNOSTICS) |
         (1U << DEBUG_UI_PAGE_PREPARE) | (1U << DEBUG_UI_PAGE_REGISTERS) |
-        (1U << DEBUG_UI_PAGE_ACTIONS)));
-    assert(with_ui.action_focus_mask == 0xFFU && with_ui.denied_actions_mask == 0x7FU);
+        (1U << DEBUG_UI_PAGE_ACTIONS) | (1U << DEBUG_UI_PAGE_MODES) |
+        (1U << DEBUG_UI_PAGE_RECOVERY) | (1U << DEBUG_UI_PAGE_NOTICE) |
+        (1U << DEBUG_UI_PAGE_DIAGNOSTIC_MENU)));
+    assert(with_ui.action_focus_mask == 0x3FU && with_ui.denied_actions_mask == 0x7FU);
     assert(with_ui.motors_mask == 0x7FU && with_ui.page_transitions > 1000U);
     assert(with_ui.stale_probe_sets == 30U && with_ui.identity_probe_sets == 30U);
     printf("DEBUG_UI_SOAK_PASS logical_duration_ms=%u logical_iterations=%u readonly=1 baseline_equal=1\n",

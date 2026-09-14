@@ -1,6 +1,10 @@
 # Aethor 七自由度机械臂固件
 
-## 图标界面实现分支
+## Astra 界面 B 实现分支
+
+`feature/lvgl-astra-ui` 基于已保留的方案 A 实施三图标首页、六项电机列表、字段弹窗和分类诊断。操作及软件验证见 [Astra 界面 B](docs/debug-ui/astra-ui-verification.md)。本版不烧录，方案 A 分支、HEX 和原预览继续保留。
+
+## 已保留的图标界面 A
 
 `feature/lvgl-icon-ui` 在下述已上传基线之后实现共享LVGL图标界面：两屏动作菜单、大数值编辑、800 ms确认与独立失能结果，LVGL池预留降至32 KiB。当前操作及软件验证见[图标界面说明](docs/debug-ui/icon-ui-verification.md)。本次没有烧录；固定基线HEX保留不变。
 

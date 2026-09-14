@@ -15,7 +15,8 @@ def verify(directory: Path) -> None:
     """Check image size/content/uniqueness and every source Unicode codepoint."""
     root = Path(__file__).resolve().parents[2]
     inventory = set((root / "Ui/fonts/charset.txt").read_text(encoding="utf-8"))
-    for source in (root / "Ui/debug_ui_view.c", root / "App/DebugUi/debug_ui_model.c"):
+    for source in (root / "Ui/debug_ui_view.c", root / "Ui/debug_ui_astra_layout.inc",
+                   root / "App/DebugUi/debug_ui_model.c"):
         for literal in re.findall(r'"(?:\\.|[^"\\])*"', source.read_text(encoding="utf-8")):
             missing = {character for character in literal if ord(character) > 127 and character not in inventory}
             assert not missing, f"{source}: missing font inventory {missing}"

@@ -25,6 +25,72 @@ static uint8_t is_mit(DebugUiOperation operation)
     return (uint8_t)(operation == DEBUG_UI_OPERATION_MIT_HOLD ||
                      operation == DEBUG_UI_OPERATION_MIT_MOVE);
 }
+/** @brief Return editable parameter count, excluding preview. */
+uint8_t debug_ui_model_parameter_count(const DebugUiModel *model)
+{
+    if (model == NULL) return 0U;
+    if (model->draft.operation == DEBUG_UI_OPERATION_POS_MOVE) return 2U;
+    if (model->draft.operation == DEBUG_UI_OPERATION_MIT_MOVE) return 5U;
+    return model->draft.operation == DEBUG_UI_OPERATION_MIT_HOLD ? 3U : 0U;
+}
+/** @brief Map visible parameter row to the stable request field. */
+uint8_t debug_ui_model_parameter_field(const DebugUiModel *model, uint8_t index)
+{
+    if (index >= debug_ui_model_parameter_count(model)) return 255U;
+    return (uint8_t)(index + (model->draft.operation == DEBUG_UI_OPERATION_MIT_HOLD ? 2U : 0U));
+}
+/** @brief Share the failed-disable acknowledgement contract with the view. */
+uint8_t debug_ui_model_result_requires_check(const DebugUiModel *model)
+{
+    if (model == NULL) return 0U;
+    return (uint8_t)(model->stop_latch_state == DEBUG_UI_STOP_LATCH_UNCONFIRMED ||
+        model->snapshot.unconfirmed_disable_mask != 0U ||
+        (model->completion_seen && !model->completion.disabled_confirmed &&
+         (model->completion.operation == DEBUG_UI_OPERATION_STOP ||
+          model->completion.operation == DEBUG_UI_OPERATION_POS_MOVE || is_mit(model->completion.operation))));
+}
+/** @brief Restore each page focus and viewport. */
+static void navigate(DebugUiModel *model, DebugUiPage page)
+{
+    model->page_focus[model->page] = model->focus;
+    model->page_first[model->page] = model->list_first;
+    model->page = page;
+    model->focus = model->page_focus[page];
+    model->list_first = model->page_first[page];
+    if (page == DEBUG_UI_PAGE_MOTORS) {
+        model->focus = model->selected_motor;
+        if (model->focus < model->list_first) model->list_first = model->focus;
+        if (model->focus >= model->list_first + DEBUG_UI_VISIBLE_MOTORS)
+            model->list_first = (uint8_t)(model->focus + 1U - DEBUG_UI_VISIBLE_MOTORS);
+    }
+}
+/** @brief Clamp selection at list edges and retain five visible rows. */
+static void move_focus(DebugUiModel *model, int direction, uint8_t count)
+{
+    if (direction < 0 && model->focus > 0U) --model->focus;
+    if (direction > 0 && model->focus + 1U < count) ++model->focus;
+    if (model->focus < model->list_first) model->list_first = model->focus;
+    if (model->focus >= model->list_first + DEBUG_UI_VISIBLE_MOTORS)
+        model->list_first = (uint8_t)(model->focus + 1U - DEBUG_UI_VISIBLE_MOTORS);
+}
+/** @brief Preserve the source of a refusal overlay. */
+static void notice(DebugUiModel *model)
+{
+    model->notice_return_page = model->page;
+    navigate(model, DEBUG_UI_PAGE_NOTICE);
+}
+/** @brief A revoked draft must be rebuilt from its stable parent menu. */
+static void revoke_draft(DebugUiModel *model)
+{
+    DebugUiPage parent = debug_ui_model_parameter_count(model) != 0U ?
+        DEBUG_UI_PAGE_ACTIONS : model->review_return_page;
+    notice(model);
+    model->notice_return_page = parent;
+    model->review_pressed = model->review_released = 0U;
+    model->confirm_elapsed_ms = 0U;
+}
+/** @brief Declare shared confirmation before draft creation. */
+static void enter_review(DebugUiModel *model);
 /** @brief Return a value-copy motor only if the selected row exists. */
 static const DebugUiMotorView *selected(const DebugUiModel *model)
 {
@@ -99,7 +165,8 @@ static void request_stop_with_recovery_target(DebugUiModel *model, uint8_t recov
     model->outgoing_stop.target_motor_id = target;
     model->stop_motor_mask = (uint8_t)((model->snapshot.active_motor_mask & 0x7FU) |
         model->snapshot.unconfirmed_disable_mask | (1U << (target - 1U)));
-    model->stop_latch_state = DEBUG_UI_STOP_LATCH_NONE;
+    if (model->stop_latch_state != DEBUG_UI_STOP_LATCH_UNCONFIRMED)
+        model->stop_latch_state = DEBUG_UI_STOP_LATCH_NONE;
     identify(model, &model->outgoing_stop);
     model->stop_ready = 1U;
     model->stop_requested = 1U;
@@ -176,6 +243,9 @@ DebugUiReason debug_ui_model_gate(const DebugUiModel *model, DebugUiOperation op
         model->outgoing_ready || model->stop_ready || model->stop_waiting ||
         model->stop_latch_state == DEBUG_UI_STOP_LATCH_WAITING) return DEBUG_UI_REASON_BUSY;
     if (snapshot->retained_result_count != 0U) return DEBUG_UI_REASON_RESULT_BACKPRESSURE;
+    if (model->stop_latch_state == DEBUG_UI_STOP_LATCH_UNCONFIRMED &&
+        operation != DEBUG_UI_OPERATION_DISABLE && operation != DEBUG_UI_OPERATION_CLEAR_FAULT)
+        return DEBUG_UI_REASON_NOT_DISABLED;
     if ((operation == DEBUG_UI_OPERATION_ACQUIRE || operation == DEBUG_UI_OPERATION_RELEASE) &&
         snapshot->unconfirmed_disable_mask != 0U) return DEBUG_UI_REASON_NOT_DISABLED;
     if (operation == DEBUG_UI_OPERATION_RELEASE && snapshot->target_motor_id != 0U &&
@@ -313,16 +383,16 @@ void debug_ui_model_update(DebugUiModel *model, const DebugUiSnapshot *snapshot,
         for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
             model->snapshot.motors[index].feedback_valid = 0U;
     }
-    editing = (uint8_t)(model->page == DEBUG_UI_PAGE_EDIT || model->page == DEBUG_UI_PAGE_REVIEW);
+    editing = (uint8_t)(model->page == DEBUG_UI_PAGE_EDIT || model->page == DEBUG_UI_PAGE_NUMBER || model->page == DEBUG_UI_PAGE_REVIEW);
     if (editing) {
         DebugUiReason reason = debug_ui_model_gate(model, model->draft.operation);
         if (model->edit_epoch != model->snapshot.epoch ||
-            model->edit_reference != selected(model)->reference_generation)
+            model->edit_reference != selected(model)->reference_generation || model->draft.target_motor_id != selected(model)->motor_id)
             reason = DEBUG_UI_REASON_OLD_EPOCH;
         if (reason != DEBUG_UI_REASON_NONE) {
-            model->page = DEBUG_UI_PAGE_ACTIONS;
             model->reason = reason;
-            model->review_pressed = model->review_released = 0U;
+            model->confirm_elapsed_ms = 0U;
+            revoke_draft(model);
         }
     }
     if (model->snapshot.active || model->snapshot.pending || model->snapshot.stop_pending ||
@@ -345,7 +415,7 @@ uint8_t debug_ui_model_begin(DebugUiModel *model, DebugUiOperation operation,
     const DebugUiMotorProfile *profile;
     if (model == NULL || (unsigned)operation > DEBUG_UI_OPERATION_DISABLE) return 0U;
     model->reason = debug_ui_model_gate(model, operation);
-    if (model->reason != DEBUG_UI_REASON_NONE) return 0U;
+    if (model->reason != DEBUG_UI_REASON_NONE) { notice(model); return 0U; }
     bounds = debug_ui_profile_bounds(&selected(model)->profile, is_mit(operation));
     profile = &bounds;
     memset(&model->draft, 0, sizeof(model->draft));
@@ -362,11 +432,17 @@ uint8_t debug_ui_model_begin(DebugUiModel *model, DebugUiOperation operation,
     model->draft.hold_duration_ms = profile->hold_min_ms;
     model->edit_reference = selected(model)->reference_generation;
     model->edit_epoch = model->snapshot.epoch;
-    model->edit_field = 0U;
-    model->completion_seen = 0U;
-    model->stop_requested = 0U;
-    model->stop_latch_state = DEBUG_UI_STOP_LATCH_NONE;
-    model->page = DEBUG_UI_PAGE_EDIT;
+    model->edit_field = operation == DEBUG_UI_OPERATION_MIT_HOLD ? 2U : 0U;
+    /* Opening a recovery review is not evidence that cleanup succeeded. */
+    if (model->stop_latch_state != DEBUG_UI_STOP_LATCH_UNCONFIRMED) {
+        model->completion_seen = 0U;
+        model->stop_requested = 0U;
+        model->stop_latch_state = DEBUG_UI_STOP_LATCH_NONE;
+    }
+    if (debug_ui_model_parameter_count(model)) {
+        navigate(model, DEBUG_UI_PAGE_EDIT);
+        model->focus = model->list_first = 0U;
+    } else enter_review(model);
     return 1U;
 }
 
@@ -404,9 +480,10 @@ static void edit_value(DebugUiModel *model, int direction)
 static void enter_review(DebugUiModel *model)
 {
     model->reason = validate_request(model, &model->draft);
-    if (model->reason != DEBUG_UI_REASON_NONE) return;
+    if (model->reason != DEBUG_UI_REASON_NONE) { notice(model); return; }
+    model->review_return_page = model->page;
     model->reviewed = model->draft;
-    model->page = DEBUG_UI_PAGE_REVIEW;
+    navigate(model, DEBUG_UI_PAGE_REVIEW);
     model->review_released = model->review_pressed = 0U;
     model->confirm_elapsed_ms = 0U;
     model->center_consumed = 1U;
@@ -414,6 +491,15 @@ static void enter_review(DebugUiModel *model)
 /** @brief Commit the immutable reviewed action exactly once. */
 static void submit_review(DebugUiModel *model)
 {
+    if (model->edit_epoch != model->snapshot.epoch ||
+        model->edit_reference != selected(model)->reference_generation ||
+        model->reviewed.target_motor_id != selected(model)->motor_id) {
+        model->reason = DEBUG_UI_REASON_OLD_EPOCH;
+        model->review_pressed = model->review_released = 0U;
+        model->confirm_elapsed_ms = 0U;
+        revoke_draft(model);
+        return;
+    }
     model->reason = validate_request(model, &model->reviewed);
     if (model->reason != DEBUG_UI_REASON_NONE) return;
     model->submitted = model->reviewed;
@@ -452,6 +538,7 @@ void debug_ui_model_event(DebugUiModel *model, const DebugUiInputEvent *event)
         return;
     }
     if (event->type == DEBUG_UI_INPUT_EVENT_RELEASE && model->page == DEBUG_UI_PAGE_REVIEW && !model->center_down) {
+        model->center_consumed = 0U;
         model->review_released = 1U;
         return;
     }
@@ -468,8 +555,9 @@ void debug_ui_model_event(DebugUiModel *model, const DebugUiInputEvent *event)
     if (model->page == DEBUG_UI_PAGE_RUNNING) return;
     if (model->page == DEBUG_UI_PAGE_REVIEW) {
         if (event->type == DEBUG_UI_INPUT_EVENT_PRESS && event->key == DEBUG_UI_KEY_LEFT) {
-            model->page = DEBUG_UI_PAGE_ACTIONS;
-            model->review_pressed = 0U;
+            navigate(model, model->review_return_page);
+            model->confirm_elapsed_ms = 0U;
+            model->review_pressed = model->review_released = 0U;
         } else if (event->key == DEBUG_UI_KEY_CENTER && !model->center_consumed) {
             if (event->type == DEBUG_UI_INPUT_EVENT_PRESS && model->review_released) {
                 model->review_pressed = 1U;
@@ -490,82 +578,123 @@ void debug_ui_model_event(DebugUiModel *model, const DebugUiInputEvent *event)
     case DEBUG_UI_PAGE_OVERVIEW:
         if (direction) model->focus = (uint8_t)((model->focus + 3 + direction) % 3);
         if (activation) {
-            if (model->focus == 0U) model->page = DEBUG_UI_PAGE_MOTORS;
-            else if (model->focus == 1U) model->page = DEBUG_UI_PAGE_DIAGNOSTICS;
-            else if (debug_ui_model_begin(model, model->snapshot.authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ?
-                                          DEBUG_UI_OPERATION_RELEASE : DEBUG_UI_OPERATION_ACQUIRE, DEBUG_UI_MODE_UNKNOWN))
-                  enter_review(model);
-              else model->page = DEBUG_UI_PAGE_PREPARE;
-          }
-          break;
-      case DEBUG_UI_PAGE_PREPARE:
-          if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_OVERVIEW;
-          else if (event->key == DEBUG_UI_KEY_RIGHT) {
-              model->page = DEBUG_UI_PAGE_DETAIL;
-              model->focus = 0U;
-          } else if (event->key == DEBUG_UI_KEY_CENTER) {
-              if (model->snapshot.unconfirmed_disable_mask != 0U)
-                  request_stop(model);
-              else if (debug_ui_model_begin(model, model->snapshot.authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ?
-                           DEBUG_UI_OPERATION_RELEASE : DEBUG_UI_OPERATION_ACQUIRE, DEBUG_UI_MODE_UNKNOWN))
-                  enter_review(model);
-              else if (model->snapshot.authority == DEBUG_UI_AUTHORITY_LOCAL_FAULT &&
-                       model->snapshot.target_motor_id == selected(model)->motor_id &&
-                       (model->reason == DEBUG_UI_REASON_NOT_READY ||
-                        model->reason == DEBUG_UI_REASON_NOT_DISABLED ||
-                        model->reason == DEBUG_UI_REASON_STALE_FEEDBACK))
-                  /* A disabled reply can retain residual speed forever when idle
-                   * feedback is silent. Refresh via STOP; never bypass arming gates. */
-                  request_stop_with_recovery_target(model, selected(model)->motor_id);
-          }
-          break;
+            if (model->focus == 0U) navigate(model, DEBUG_UI_PAGE_MOTORS);
+            else if (model->focus == 1U) {
+                model->diagnostic_return_page = DEBUG_UI_PAGE_OVERVIEW;
+                navigate(model, DEBUG_UI_PAGE_DIAGNOSTIC_MENU);
+            } else {
+                model->prepare_return_page = DEBUG_UI_PAGE_OVERVIEW;
+                navigate(model, DEBUG_UI_PAGE_PREPARE);
+                if (model->snapshot.authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED)
+                    (void)debug_ui_model_begin(model, DEBUG_UI_OPERATION_RELEASE, DEBUG_UI_MODE_UNKNOWN);
+            }
+        }
+        break;
+    case DEBUG_UI_PAGE_PREPARE:
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, model->prepare_return_page);
+        else if (event->key == DEBUG_UI_KEY_CENTER) {
+            if (model->snapshot.unconfirmed_disable_mask != 0U) request_stop(model);
+            else if (!debug_ui_model_begin(model, model->snapshot.authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ?
+                     DEBUG_UI_OPERATION_RELEASE : DEBUG_UI_OPERATION_ACQUIRE, DEBUG_UI_MODE_UNKNOWN) &&
+                     model->snapshot.authority == DEBUG_UI_AUTHORITY_LOCAL_FAULT &&
+                     model->snapshot.target_motor_id == selected(model)->motor_id &&
+                     (model->reason == DEBUG_UI_REASON_NOT_READY || model->reason == DEBUG_UI_REASON_NOT_DISABLED ||
+                      model->reason == DEBUG_UI_REASON_STALE_FEEDBACK))
+                request_stop_with_recovery_target(model, selected(model)->motor_id);
+        }
+        break;
     case DEBUG_UI_PAGE_MOTORS:
-        if (direction < 0 && model->selected_motor > 0U) model->selected_motor--;
-        if (direction > 0 && model->selected_motor + 1U < DEBUG_UI_MOTOR_COUNT) model->selected_motor++;
-        if (model->selected_motor < model->list_first) model->list_first = model->selected_motor;
-        if (model->selected_motor >= model->list_first + DEBUG_UI_VISIBLE_MOTORS)
-            model->list_first = (uint8_t)(model->selected_motor + 1U - DEBUG_UI_VISIBLE_MOTORS);
-        if (activation) { model->page = DEBUG_UI_PAGE_DETAIL; model->focus = 0U; }
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_OVERVIEW;
+        move_focus(model, direction, DEBUG_UI_MOTOR_COUNT);
+        model->selected_motor = model->focus;
+        if (activation) navigate(model, DEBUG_UI_PAGE_ACTIONS);
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, DEBUG_UI_PAGE_OVERVIEW);
         break;
     case DEBUG_UI_PAGE_DETAIL:
-        /* Opening the action menu is observation only and cannot create a draft. */
-        if (activation) { model->page = DEBUG_UI_PAGE_ACTIONS; model->focus = 0U; }
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_MOTORS;
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, DEBUG_UI_PAGE_ACTIONS);
         break;
     case DEBUG_UI_PAGE_ACTIONS:
-        if (direction) model->focus = (uint8_t)((model->focus + 8 + direction) % 8);
+        move_focus(model, direction, 6U);
         if (activation) {
-            static const DebugUiOperation operations[7] = { DEBUG_UI_OPERATION_POS_MOVE,
-                DEBUG_UI_OPERATION_MIT_HOLD, DEBUG_UI_OPERATION_MIT_MOVE, DEBUG_UI_OPERATION_SET_MODE,
-                DEBUG_UI_OPERATION_SET_MODE, DEBUG_UI_OPERATION_CLEAR_FAULT, DEBUG_UI_OPERATION_DISABLE };
-            if (model->focus == 7U) { model->page = DEBUG_UI_PAGE_REGISTERS; break; }
-            (void)debug_ui_model_begin(model, operations[model->focus],
-                                       model->focus == 0U || model->focus == 3U ? DEBUG_UI_MODE_POS_VEL : DEBUG_UI_MODE_MIT);
+            if (model->focus == 0U) navigate(model, DEBUG_UI_PAGE_DETAIL);
+            else if (model->focus == 4U) navigate(model, DEBUG_UI_PAGE_MODES);
+            else if (model->focus == 5U) navigate(model, DEBUG_UI_PAGE_RECOVERY);
+            else (void)debug_ui_model_begin(model, model->focus == 1U ? DEBUG_UI_OPERATION_POS_MOVE :
+                (model->focus == 2U ? DEBUG_UI_OPERATION_MIT_MOVE : DEBUG_UI_OPERATION_MIT_HOLD),
+                model->focus == 1U ? DEBUG_UI_MODE_POS_VEL : DEBUG_UI_MODE_MIT);
         }
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_DETAIL;
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, DEBUG_UI_PAGE_MOTORS);
+        break;
+    case DEBUG_UI_PAGE_MODES:
+        move_focus(model, direction, 2U);
+        if (activation) (void)debug_ui_model_begin(model, DEBUG_UI_OPERATION_SET_MODE,
+            model->focus == 0U ? DEBUG_UI_MODE_POS_VEL : DEBUG_UI_MODE_MIT);
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, DEBUG_UI_PAGE_ACTIONS);
+        break;
+    case DEBUG_UI_PAGE_RECOVERY:
+        move_focus(model, direction, 4U);
+        if (activation) {
+            if (model->focus == 2U) navigate(model, DEBUG_UI_PAGE_REGISTERS);
+            else if (model->focus == 3U) {
+                model->prepare_return_page = DEBUG_UI_PAGE_RECOVERY;
+                navigate(model, DEBUG_UI_PAGE_PREPARE);
+            } else (void)debug_ui_model_begin(model, model->focus == 0U ?
+                DEBUG_UI_OPERATION_CLEAR_FAULT : DEBUG_UI_OPERATION_DISABLE, DEBUG_UI_MODE_UNKNOWN);
+        }
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, DEBUG_UI_PAGE_ACTIONS);
         break;
     case DEBUG_UI_PAGE_REGISTERS:
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_ACTIONS;
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, DEBUG_UI_PAGE_RECOVERY);
         break;
     case DEBUG_UI_PAGE_EDIT:
+        move_focus(model, direction, (uint8_t)(debug_ui_model_parameter_count(model) + 1U));
+        if (activation) {
+            if (model->focus == debug_ui_model_parameter_count(model)) enter_review(model);
+            else {
+                model->edit_field = debug_ui_model_parameter_field(model, model->focus);
+                model->number_backup = model->draft;
+                navigate(model, DEBUG_UI_PAGE_NUMBER);
+            }
+        }
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, DEBUG_UI_PAGE_ACTIONS);
+        break;
+    case DEBUG_UI_PAGE_NUMBER:
         if (direction) edit_value(model, -direction);
-        if (event->key == DEBUG_UI_KEY_RIGHT)
-            model->edit_field = (uint8_t)((model->edit_field + 1U) % (is_mit(model->draft.operation) ? 5U : 2U));
-        if (event->key == DEBUG_UI_KEY_CENTER) enter_review(model);
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_ACTIONS;
+        if (event->key == DEBUG_UI_KEY_LEFT) {
+            model->draft = model->number_backup;
+            navigate(model, DEBUG_UI_PAGE_EDIT);
+        } else if (event->key == DEBUG_UI_KEY_CENTER) navigate(model, DEBUG_UI_PAGE_EDIT);
+        break;
+    case DEBUG_UI_PAGE_DIAGNOSTIC_MENU:
+        move_focus(model, direction, 3U);
+        if (activation) {
+            model->diagnostic_page = model->focus;
+            navigate(model, DEBUG_UI_PAGE_DIAGNOSTICS);
+        }
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, model->diagnostic_return_page);
         break;
     case DEBUG_UI_PAGE_DIAGNOSTICS:
-        if (activation || direction) model->diagnostic_page = (uint8_t)((model->diagnostic_page + 1U) % 3U);
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_OVERVIEW;
+        if (event->key == DEBUG_UI_KEY_LEFT) navigate(model, DEBUG_UI_PAGE_DIAGNOSTIC_MENU);
+        break;
+    case DEBUG_UI_PAGE_NOTICE:
+        if (event->key == DEBUG_UI_KEY_LEFT || event->key == DEBUG_UI_KEY_CENTER)
+            navigate(model, model->notice_return_page);
         break;
     case DEBUG_UI_PAGE_RESULT:
     case DEBUG_UI_PAGE_FAULT:
-        if (event->key == DEBUG_UI_KEY_RIGHT) model->page = DEBUG_UI_PAGE_DIAGNOSTICS;
+        if (event->key == DEBUG_UI_KEY_RIGHT) {
+            model->diagnostic_return_page = model->page;
+            navigate(model, DEBUG_UI_PAGE_DIAGNOSTIC_MENU);
+        }
         if (event->key == DEBUG_UI_KEY_LEFT || event->key == DEBUG_UI_KEY_CENTER) {
-            model->page = DEBUG_UI_PAGE_DETAIL;
-            model->completion_seen = 0U;
-            model->stop_latch_state = DEBUG_UI_STOP_LATCH_NONE;
+            uint8_t unconfirmed = debug_ui_model_result_requires_check(model);
+            if (unconfirmed && event->key == DEBUG_UI_KEY_CENTER) {
+                model->prepare_return_page = DEBUG_UI_PAGE_ACTIONS;
+                navigate(model, DEBUG_UI_PAGE_PREPARE);
+            } else navigate(model, DEBUG_UI_PAGE_ACTIONS);
+            if (!unconfirmed) {
+                model->completion_seen = 0U;
+                model->stop_latch_state = DEBUG_UI_STOP_LATCH_NONE;
+            }
         }
         break;
     default: break;
@@ -620,6 +749,8 @@ void debug_ui_model_completion(DebugUiModel *model, const DebugUiCompletion *com
     if (same_identity(&completion->identity, &model->outgoing_stop.identity)) {
         model->stop_waiting = 0U;
         model->stop_requested = 0U;
+        if (completion->disabled_confirmed)
+            model->stop_latch_state = DEBUG_UI_STOP_LATCH_NONE;
     }
     model->reason = completion->reason;
     model->page = settled_page(model);

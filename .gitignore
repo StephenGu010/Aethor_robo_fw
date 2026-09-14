@@ -30,5 +30,6 @@ output/
 # Reproducible host binaries and unused upstream font samples.
 Tests/host/lcd_fakes/build/
 Tests/ui/artifacts/*.ppm
+Tests/ui/artifacts-astra/*.ppm
 Middlewares/Third_Party/LVGL/src/extra/libs/freetype/arial.ttf
 Middlewares/Third_Party/LVGL/src/font/korean.ttf

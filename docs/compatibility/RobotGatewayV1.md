@@ -31,7 +31,7 @@ show diag
 - 显示和发送：ASCII；115200、8 数据位、1 停止位、流控 `NONE`、串口校验位 `NONE`。
 - 应用层校验算法：`无`，不附加 CRC、校验和或帧头。
 - 自动附加指令结束符：CRLF，HEX 为 `0D 0A`；也可只附加 LF `0A`。
-- 关闭循环发送。自包含 `bench move` 正文只发送一次。
+- 关闭循环发送。自包含 `bench move`、`bench mode` 和 `bench mit` 正文只发送一次。
 
 固件只有收到行结束符才会解析并响应。若调试工具已多次发送不带结束符的正文，应先复位板卡或发送一个单独换行清空残留半行，然后重新打开串口并从 `1 hello` 开始。确认只读响应后，可用新的非零编号执行和回零：
 
@@ -56,7 +56,7 @@ show diag
 ```
 
 - `request_id` 是可选十进制 `uint32`。省略编号时按 `0` 处理，适合手工调试且不保存重放结果。
-- 自包含 `bench move` 必须显式使用 `1..4294967295` 的编号；`0` 是内部活动动作哨兵，不接受为该命令的编号。
+- 自包含 `bench move/bench mode/bench mit` 必须显式使用 `1..4294967295` 的编号；`0` 是内部活动动作哨兵，不接受为这些命令的编号。
 - 正式上位机应为业务请求分配非零编号，并在至少 60 秒内避免给不同正文复用同一编号。
 - 同一非零编号和相同正文会返回近期结果，不会再次执行动作；相同编号配不同正文会返回冲突错误。
 - 字段名使用小写；重复字段、制表符、不可打印字符和超出容量的请求会被拒绝。
@@ -109,11 +109,19 @@ stream off
 13 bench jog 1,3 delta=0.2 speed=1
 50 bench move 1 position=90 speed=30
 51 bench move 1,3 position=90,-45 speed=30,20
+60 bench mode 1 mode=mit
+61 bench mit 1 action=hold kp=1 kd=1 torque_ff=0 duration_ms=1000
+62 bench mit 1 action=move position=5 speed=2 kp=1 kd=1 torque_ff=0 duration_ms=1000
+63 bench mode 1 mode=pos_vel
 14 bench stop 1,3
 15 bench disable 1,3
 ```
 
-- 旧 `bench init/enable/jog/stop/disable/clear` 的电机列表必须是严格升序、无重复的 `1..7` ESC/CAN ID。新 `bench move` 单独允许任意唯一顺序，其电机、位置和速度列表必须非空且严格等长，并严格按调用者列表顺序一一映射，不支持广播。
+- `bench init/mode/enable/jog/stop/disable/clear` 的电机列表必须是严格升序、无重复的 `1..7` ESC/CAN ID。`bench move` 单独允许任意唯一顺序，其电机、位置和速度列表必须非空且严格等长，并严格按调用者列表顺序一一映射，不支持广播。`bench mit` 当前只允许一个电机，禁止把未标定 MIT 参数同时施加到多个关节。
+- `bench mode` 只接受 `mode=mit` 或 `mode=pos_vel`。固件会完成所选电机发现、失能、低速门控、易失性模式寄存器写入和读回确认，成功后仍保持失能；它不会自动 `ENABLE`，也不写电机 Flash。
+- `bench mit` 的 `kp` 范围为 `0 < kp <= 500`，`kd` 范围为 `0 < kd <= 5`，`duration_ms` 范围为 `100..10000`。`position/speed` 与 `bench move` 一样是 S3519 输出端角度和角速度；`torque_ff` 是输出端 N·m。固件使用发现读回的 `PMAX/VMAX/TMAX/MAX_SPD` 拒绝越界参数，不截断、不使用静态量程回退。
+- `action=hold` 以受理时的新鲜输出端位置为目标，持续发送 MIT 帧到 `duration_ms`；`action=move` 由 STM32 本地生成五次时间缩放轨迹，`speed` 是轨迹最大期望速度上限，而不是 Windows 串口发帧频率。动作结束后按目标位置保持 `duration_ms`，然后自动失能。
+- `kp=1 kd=1 torque_ff=0` 仅来自厂商 MIT 示例，作为无负载首次上电的低能量起点，不代表当前机械臂已标定。参数实调步骤和记录表见 [S3519 MIT 参数标定与调试指南](S3519-MIT参数标定与调试指南.md)。
 - `bench jog` 的 `delta/speed` 使用与固件相同的普通十进制正常 `float32` 语法，不接受指数；`delta` 可正、可负或为 `0`，`speed` 必须大于 `0`。确定性模拟器不为 legacy jog 伪造发现能力上限；真实固件仍在动作执行阶段依据本次发现的 `PMAX/VMAX/MAX_SPD` 做运行时校验。
 - `bench move` 使用相对本次上电零点的 S3519 输出端绝对角度，不是机械臂关节软限位。位置和速度只接受不含指数的十进制正常 `float32`；位置还允许 `0`，速度必须大于 `0`。
 - 位置边界来自本次发现的 `PMAX`，速度边界来自 `min(VMAX,MAX_SPD)`；边界值允许，越界拒绝且不截断，任一发现值缺失时不回退默认值。`show motor <id>` 通过 `pmax_deg/vmax_deg_s/max_speed_deg_s/move_speed_limit_deg_s` 显示这些值，不可用时显示 `?`。
@@ -148,6 +156,7 @@ stream off
 ```
 
 - 新 `bench move` 只提交一次并等待同一编号的 `ok` 后接唯一 `done`，其等待期间不发送 `ping`。固件负责发现到失能清理全过程，完成仍要求新鲜 CAN 反馈、无驱动故障、控制周期安全且无 Bus-Off，并在所选电机收到新鲜 disabled 反馈后才报告 `completed`。
+- `bench mode` 和 `bench mit` 采用同一自包含生命周期：上位机只提交一次，不发送 `ping`；`bench stop <motor>` 可以抢占，任何失败均进入所选电机失能清理。模式切换动作完成后保持失能，MIT 动作完成后也必须收到新鲜 `disabled` 反馈才报告 `completed`。
 - 旧 `bench enable/jog` 不是自包含动作：带电或运动期间上位机每约 250 ms 发送一次独立 `ping`；调试脚本采用 200 ms。不要周期重发任何动作正文来代替保活。
 - 连续 1000 ms 没有有效请求时，固件执行停止和失能并发布链路超时事件。
 - 全部电机失能且无运动时，看门狗不触发停止/失能，因此只读手工调试不需要周期发送指令。
@@ -160,6 +169,9 @@ done 50 bench move result=completed elapsed_ms=3200 motors=01
 done 50 bench move result=failed stage=motion code=stale_feedback motor=1
 done 50 bench move result=cancelled
 done 50 bench move result=stopped
+done 60 bench mode result=completed elapsed_ms=18 motors=01
+done 62 bench mit result=completed elapsed_ms=5700 motors=01
+done 62 bench mit result=failed stage=motion code=stale_feedback motor=1
 ```
 
 `bench stop` 可抢占活动动作，原动作报告 `cancelled` 且 STOP 产生自己的终态；活动期间第二条普通命令返回 `busy`。相同非零编号和相同正文重放近期结果，相同编号配不同正文返回 `request_conflict`。
@@ -179,9 +191,10 @@ done 50 bench move result=stopped
 2. 验证 `hello`、`boot`、Profile、`show config` 映射和七轴 ID 顺序。
 3. 验证查询 `ok` 与动作 `ok accepted=1`、终态 `done/error` 的不同生命周期。
 4. 验证相同非零请求重放不会重复动作，冲突正文会被拒绝。
-5. 验证 `bench move` 仅发送一次且不启动保活、固件内部目标重发，以及旧 `bench enable/jog` 的周期 `ping` 不会重复执行业务动作。
+5. 验证 `bench move/bench mode/bench mit` 仅发送一次且不启动保活；验证 MIT 轨迹由固件内部连续更新，以及旧 `bench enable/jog` 的周期 `ping` 不会重复执行业务动作。
 6. 验证 `stream joints/motors` 的频率边界、序号间隙和丢旧保新。
 7. 验证 `stop`、`disable`、1000 ms 链路超时、USB 断开、重连和 `boot` 改变。
-8. 保存 Aethor Studio V2 的版本或 commit、固件 commit、精确命令、串口记录和结果。
+8. 逐电机验证 `MIT -> POS_VEL -> MIT` 只在失能且接近零速时切换，切换后不自动使能；记录读回模式和最终失能反馈。
+9. 保存 Aethor Studio V2 的版本或 commit、固件 commit、精确命令、串口记录和结果。
 
 外部上位机尚未完成上述验收时，只能声明“固件软件与兼容性测试包完成，外部上位机待验收”。

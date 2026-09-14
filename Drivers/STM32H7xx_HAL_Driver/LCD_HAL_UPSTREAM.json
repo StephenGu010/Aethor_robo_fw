@@ -1,0 +1,62 @@
+{
+  "version": "1.11.3",
+  "repository": "https://github.com/STMicroelectronics/stm32h7xx_hal_driver",
+  "tag": "v1.11.3",
+  "existing_hal_core_normalized_identical": true,
+  "files": [
+    {
+      "path": "Src/stm32h7xx_hal_adc.c",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Src/stm32h7xx_hal_adc.c",
+      "sha256": "9dd3ca62991acde6048b571517789706944ca179fe489ad6aeb6ea398c1fe2f6",
+      "bytes": 160713
+    },
+    {
+      "path": "Src/stm32h7xx_hal_adc_ex.c",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Src/stm32h7xx_hal_adc_ex.c",
+      "sha256": "61f04c49d480daaacf0f9409be55c1972cc7749b55e5eb18bd85fb9061c3657f",
+      "bytes": 103912
+    },
+    {
+      "path": "Src/stm32h7xx_hal_spi.c",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Src/stm32h7xx_hal_spi.c",
+      "sha256": "a5a032558e0a5051d3e2c66efe31144734ff3a263dbfbd4fc2dc8572772de6e0",
+      "bytes": 127096
+    },
+    {
+      "path": "Src/stm32h7xx_hal_spi_ex.c",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Src/stm32h7xx_hal_spi_ex.c",
+      "sha256": "ec36e7df75dd8e3a1f0be3464840582e6af9aa5a35db659b429a5572077983b1",
+      "bytes": 6588
+    },
+    {
+      "path": "Inc/stm32h7xx_hal_adc.h",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Inc/stm32h7xx_hal_adc.h",
+      "sha256": "28f8100a1a911636cfe48dbd0ade4bbcda880eb37975e4711d6534067aba7eeb",
+      "bytes": 137180
+    },
+    {
+      "path": "Inc/stm32h7xx_hal_adc_ex.h",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Inc/stm32h7xx_hal_adc_ex.h",
+      "sha256": "bc0fc08e76facb507127e3bffb285853a2e5118a2fc942e81f3de04d80f0acd0",
+      "bytes": 87580
+    },
+    {
+      "path": "Inc/stm32h7xx_hal_spi.h",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Inc/stm32h7xx_hal_spi.h",
+      "sha256": "9ea983fd0e3148a3291b2aa56b1d01709374a3a3845d6b592b3d3356b71f6cb5",
+      "bytes": 58261
+    },
+    {
+      "path": "Inc/stm32h7xx_hal_spi_ex.h",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Inc/stm32h7xx_hal_spi_ex.h",
+      "sha256": "44d854991d118840677da5ce86d88b1e555fe811808354522ad2f198ac4fa66c",
+      "bytes": 2392
+    },
+    {
+      "path": "Inc/stm32h7xx_ll_adc.h",
+      "url": "https://raw.githubusercontent.com/STMicroelectronics/stm32h7xx_hal_driver/v1.11.3/Inc/stm32h7xx_ll_adc.h",
+      "sha256": "6238be07c5758517309a85597c3518ebe722f5772de1f7bfb865ae0c040beb1c",
+      "bytes": 476663
+    }
+  ]
+}

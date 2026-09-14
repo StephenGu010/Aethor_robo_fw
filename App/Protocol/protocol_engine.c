@@ -6,6 +6,7 @@
 #include "protocol_engine.h"
 
 #include <float.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,25 @@ typedef enum
     PROTOCOL_CONFIG_V_LIMIT,
     PROTOCOL_CONFIG_A_LIMIT
 } ProtocolConfigVector;
+
+/** @brief Detects local ownership/results before USB resets its own session. */
+static uint8_t protocol_engine_has_local_work(const ProtocolEngine *engine)
+{
+    uint8_t sequence;
+    if ((engine->local_control_locked != 0U) ||
+        ((engine->active_motion_request_id != 0U) &&
+         (engine->active_motion_origin == DEBUG_UI_ORIGIN_LOCAL_UI)) ||
+        ((engine->active_stop_request_id != 0U) &&
+         (engine->active_stop_origin == DEBUG_UI_ORIGIN_LOCAL_UI)))
+    { return 1U; }
+    for (sequence = engine->result_read_sequence;
+         sequence != engine->result_write_sequence; ++sequence)
+    {
+        if (engine->results[sequence % PROTOCOL_ENGINE_RESULT_CAPACITY].origin ==
+            DEBUG_UI_ORIGIN_LOCAL_UI) { return 1U; }
+    }
+    return 0U;
+}
 
 /** @brief Creates a nonzero connection-scope identifier for internal ownership. */
 static uint32_t protocol_engine_create_session(ProtocolEngine *engine,
@@ -808,9 +828,13 @@ static uint8_t protocol_engine_publish_normal_command(
                                    engine->command_read_sequence);
     uint8_t slot_index;
     uint8_t owns_motion_lifecycle =
-        (uint8_t)((command->type == PROTOCOL_COMMAND_MOVE_JOINTS) ||
+        (uint8_t)((command->origin == DEBUG_UI_ORIGIN_LOCAL_UI) ||
+                  (command->type == PROTOCOL_COMMAND_MOVE_JOINTS) ||
                   (command->type ==
-                   PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED));
+                   PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+                  (command->type == PROTOCOL_COMMAND_MIT_ACTION) ||
+                  ((command->type == PROTOCOL_COMMAND_SET_MODE) &&
+                   (command->bench_relative_scope != 0U)));
 
     if ((used_count >= PROTOCOL_ENGINE_COMMAND_CAPACITY) ||
         ((owns_motion_lifecycle != 0U) &&
@@ -824,6 +848,8 @@ static uint8_t protocol_engine_publish_normal_command(
     if (owns_motion_lifecycle != 0U)
     {
         engine->active_motion_request_id = command->request_id;
+        engine->active_motion_origin = command->origin;
+        engine->active_motion_epoch = command->session_id;
         engine->active_motion_accepted_at_us = command->accepted_at_us;
         engine->active_motion_planned_duration_us =
             command->planned_duration_us;
@@ -837,6 +863,16 @@ static uint8_t protocol_engine_publish_normal_command(
 static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
                                                const ProtocolCommand *command)
 {
+    if (protocol_engine_validate_typed_command(command) != DEBUG_UI_REASON_NONE)
+    {
+        return 0U;
+    }
+    if ((command->origin == DEBUG_UI_ORIGIN_USB) &&
+        (engine->local_control_locked != 0U) &&
+        (command->type != PROTOCOL_COMMAND_STOP))
+    {
+        return 0U;
+    }
     if ((command->type != PROTOCOL_COMMAND_STOP) &&
         (engine->active_stop_request_id != 0U))
     {
@@ -851,6 +887,8 @@ static uint8_t protocol_engine_enqueue_command(ProtocolEngine *engine,
         }
         engine->stop_command = *command;
         engine->active_stop_request_id = command->request_id;
+        engine->active_stop_origin = command->origin;
+        engine->active_stop_epoch = command->session_id;
         protocol_engine_compiler_barrier();
         ++engine->stop_write_sequence;
         return 1U;
@@ -1874,8 +1912,10 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
     static const char profile[] = "arm";
 #endif
 
-    if ((engine->active_motion_request_id != 0U) ||
-        (engine->active_stop_request_id != 0U))
+    if (((engine->active_motion_request_id != 0U) &&
+         (engine->active_motion_origin == DEBUG_UI_ORIGIN_USB)) ||
+        ((engine->active_stop_request_id != 0U) &&
+         (engine->active_stop_origin == DEBUG_UI_ORIGIN_USB)))
     {
         (void)protocol_engine_append_text_command_error(output_batch,
                                                         request,
@@ -1891,10 +1931,13 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
     }
     memset(engine->recent_results, 0, sizeof(engine->recent_results));
     engine->recent_write_index = 0U;
-    engine->command_read_sequence = engine->command_write_sequence;
-    engine->stop_read_sequence = engine->stop_write_sequence;
-    engine->result_read_sequence = engine->result_write_sequence;
-    engine->cancelled_queued_motion_request_id = 0U;
+    if (protocol_engine_has_local_work(engine) == 0U)
+    {
+        engine->command_read_sequence = engine->command_write_sequence;
+        engine->stop_read_sequence = engine->stop_write_sequence;
+        engine->result_read_sequence = engine->result_write_sequence;
+        engine->cancelled_queued_motion_request_id = 0U;
+    }
     engine->session_id = protocol_engine_create_session(engine,
                                                         request->request_id,
                                                         timestamp_us);
@@ -1990,7 +2033,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_help(
         return protocol_engine_append_text_format(
             output_batch,
             PROTOCOL_OUTPUT_QUERY,
-            "ok %lu help topics=show,stream,arm,bench examples=show_state,arm_move,bench_jog",
+            "ok %lu help topics=show,stream,arm,bench examples=show_state,arm_move,bench_mit",
             (unsigned long)request->request_id);
     }
     (void)text_protocol_get_positional(request, 0U, &topic);
@@ -2023,7 +2066,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_help(
         return protocol_engine_append_text_format(
             output_batch,
             PROTOCOL_OUTPUT_QUERY,
-            "ok %lu help bench commands=init,enable,jog,move,stop,disable,clear",
+            "ok %lu help bench commands=init,mode,mit,enable,jog,move,stop,disable,clear",
             (unsigned long)request->request_id);
     }
     (void)protocol_engine_append_text_command_error(output_batch,
@@ -2701,12 +2744,32 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_diag(
     }
     if ((section.length == 4U) && (strncmp(section.data, "rtos", 4U) == 0))
     {
+        char stack_text[DIAGNOSTIC_TASK_COUNT][24];
+        uint8_t task_index;
+        for (task_index = 0U; task_index < DIAGNOSTIC_TASK_COUNT; ++task_index)
+        {
+            const DiagnosticTaskStack *stack = &diagnostics->task_stacks[task_index];
+            if (stack->allocated_words == 0U || stack->free_words > stack->allocated_words)
+            {
+                (void)strcpy(stack_text[task_index], "?");
+            }
+            else
+            {
+                (void)snprintf(stack_text[task_index], sizeof(stack_text[task_index]), "%lu/%lu",
+                    (unsigned long)stack->free_words, (unsigned long)stack->allocated_words);
+            }
+        }
         return protocol_engine_append_text_format(
             output_batch,
             PROTOCOL_OUTPUT_QUERY,
-            "ok %lu show diag rtos control_stack=? can_stack=? protocol_stack=? usb_stack=? heap_min=%lu",
+            "ok %lu show diag rtos control_stack=%s can_stack=%s protocol_stack=%s usb_stack=%s heap_min=%lu "
+            "telemetry_stack=%s diag_stack=%s ui_stack=%s stack_unit=words",
             (unsigned long)request->request_id,
-            (unsigned long)diagnostics->minimum_heap_bytes);
+            stack_text[DIAGNOSTIC_TASK_CONTROL], stack_text[DIAGNOSTIC_TASK_CAN],
+            stack_text[DIAGNOSTIC_TASK_PROTOCOL], stack_text[DIAGNOSTIC_TASK_USB],
+            (unsigned long)diagnostics->minimum_heap_bytes,
+            stack_text[DIAGNOSTIC_TASK_TELEMETRY], stack_text[DIAGNOSTIC_TASK_DIAGNOSTICS],
+            stack_text[DIAGNOSTIC_TASK_UI]);
     }
     (void)protocol_engine_append_text_command_error(output_batch,
                                                     request,
@@ -2736,6 +2799,14 @@ static uint8_t protocol_engine_text_bench_command_type(
     {
         *command_type = PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED;
     }
+    else if (text_protocol_request_path_equals(request, "bench", "mode") != 0U)
+    {
+        *command_type = PROTOCOL_COMMAND_SET_MODE;
+    }
+    else if (text_protocol_request_path_equals(request, "bench", "mit") != 0U)
+    {
+        *command_type = PROTOCOL_COMMAND_MIT_ACTION;
+    }
     else if (text_protocol_request_path_equals(request, "bench", "stop") != 0U)
     {
         *command_type = PROTOCOL_COMMAND_STOP;
@@ -2753,6 +2824,239 @@ static uint8_t protocol_engine_text_bench_command_type(
         return 0U;
     }
     return 1U;
+}
+
+/** @brief Compares one parsed field value with an exact ASCII literal. */
+static uint8_t protocol_engine_text_span_equals_literal(
+    const TextProtocolSpan *span,
+    const char *literal)
+{
+    size_t literal_length;
+
+    if ((span == NULL) || (literal == NULL))
+    {
+        return 0U;
+    }
+    literal_length = strlen(literal);
+    return (uint8_t)((span->length == literal_length) &&
+                     (strncmp(span->data, literal, literal_length) == 0));
+}
+
+/** @brief Appends one field-specific bench request validation error. */
+static ProtocolEngineStatus protocol_engine_append_bench_field_error(
+    ProtocolOutputBatch *output_batch,
+    const TextProtocolRequest *request,
+    const char *error_code,
+    const char *field_name)
+{
+    (void)protocol_engine_append_text_format(
+        output_batch,
+        PROTOCOL_OUTPUT_HIGH_PRIORITY,
+        "error %lu bench %.*s code=%s field=%s",
+        (unsigned long)request->request_id,
+        (int)request->command_words[1].length,
+        request->command_words[1].data,
+        error_code,
+        field_name);
+    return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+}
+
+/** @brief Parses a safe disabled-state bench mode-switch request. */
+static ProtocolEngineStatus protocol_engine_parse_text_bench_mode(
+    const TextProtocolRequest *request,
+    ProtocolCommand *command,
+    ProtocolOutputBatch *output_batch)
+{
+    TextProtocolSpan mode_span;
+
+    if ((request->field_count != 1U) ||
+        (text_protocol_find_field(request, "mode", &mode_span) == 0U))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "mode");
+    }
+    if (protocol_engine_text_span_equals_literal(&mode_span, "mit") != 0U)
+    {
+        command->control_mode = ARM_CONTROL_MODE_MIT;
+    }
+    else if (protocol_engine_text_span_equals_literal(&mode_span, "pos_vel") !=
+             0U)
+    {
+        command->control_mode = ARM_CONTROL_MODE_POSITION_VELOCITY;
+    }
+    else
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "mode");
+    }
+    return PROTOCOL_ENGINE_STATUS_OK;
+}
+
+/** @brief Parses one bounded single-motor MIT hold or move request. */
+static ProtocolEngineStatus protocol_engine_parse_text_bench_mit(
+    const TextProtocolRequest *request,
+    const TextProtocolSpan *motors_span,
+    ProtocolCommand *command,
+    ProtocolOutputBatch *output_batch)
+{
+    TextProtocolSpan action_span;
+    TextProtocolSpan kp_span;
+    TextProtocolSpan kd_span;
+    TextProtocolSpan torque_ff_span;
+    TextProtocolSpan duration_span;
+    TextProtocolSpan position_span;
+    TextProtocolSpan speed_span;
+    uint8_t joint_order[ARM_JOINT_COUNT];
+    uint8_t motor_count = 0U;
+    uint32_t duration_ms;
+    uint8_t expected_field_count;
+    uint8_t joint_index;
+
+    if ((protocol_engine_parse_text_motor_list(motors_span,
+                                               &command->motor_mask,
+                                               joint_order,
+                                               &motor_count) !=
+         PROTOCOL_TEXT_LIST_PARSE_OK) ||
+        (motor_count != 1U))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "motors");
+    }
+    joint_index = joint_order[0U];
+    if (text_protocol_find_field(request, "action", &action_span) == 0U)
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "action");
+    }
+    if (protocol_engine_text_span_equals_literal(&action_span, "hold") != 0U)
+    {
+        command->mit_action = PROTOCOL_MIT_ACTION_HOLD;
+        expected_field_count = 5U;
+    }
+    else if (protocol_engine_text_span_equals_literal(&action_span, "move") !=
+             0U)
+    {
+        command->mit_action = PROTOCOL_MIT_ACTION_MOVE;
+        expected_field_count = 7U;
+    }
+    else
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "action");
+    }
+    if (request->field_count != expected_field_count)
+    {
+        (void)protocol_engine_append_text_command_error(output_batch,
+                                                        request,
+                                                        "bad_argument");
+        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+    }
+    if ((text_protocol_find_field(request, "kp", &kp_span) == 0U) ||
+        (text_protocol_span_to_float(&kp_span, &command->mit_kp) !=
+         TEXT_PROTOCOL_STATUS_OK))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "kp");
+    }
+    if ((command->mit_kp <= S3519_KP_MIN) ||
+        (command->mit_kp > S3519_KP_MAX))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "out_of_range",
+                                                        "kp");
+    }
+    if ((text_protocol_find_field(request, "kd", &kd_span) == 0U) ||
+        (text_protocol_span_to_float(&kd_span, &command->mit_kd) !=
+         TEXT_PROTOCOL_STATUS_OK))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "kd");
+    }
+    if ((command->mit_kd <= S3519_KD_MIN) ||
+        (command->mit_kd > S3519_KD_MAX))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "out_of_range",
+                                                        "kd");
+    }
+    if ((text_protocol_find_field(request, "torque_ff", &torque_ff_span) ==
+         0U) ||
+        (text_protocol_span_to_float(&torque_ff_span,
+                                     &command->mit_torque_ff_nm) !=
+         TEXT_PROTOCOL_STATUS_OK))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "torque_ff");
+    }
+    if ((text_protocol_find_field(request, "duration_ms", &duration_span) ==
+         0U) ||
+        (protocol_engine_parse_text_u32(&duration_span, &duration_ms) == 0U))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "duration_ms");
+    }
+    if ((duration_ms < 100U) || (duration_ms > 10000U))
+    {
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "out_of_range",
+                                                        "duration_ms");
+    }
+    command->hold_duration_us = (uint64_t)duration_ms * 1000ULL;
+    command->planned_duration_us = command->hold_duration_us;
+    if (command->mit_action == PROTOCOL_MIT_ACTION_MOVE)
+    {
+        if ((text_protocol_find_field(request, "position", &position_span) ==
+             0U) ||
+            (text_protocol_span_to_float(&position_span,
+                                         &command->values[joint_index]) !=
+             TEXT_PROTOCOL_STATUS_OK))
+        {
+            return protocol_engine_append_bench_field_error(output_batch,
+                                                            request,
+                                                            "bad_argument",
+                                                            "position");
+        }
+        if ((text_protocol_find_field(request, "speed", &speed_span) == 0U) ||
+            (text_protocol_span_to_float(&speed_span,
+                                         &command->speeds[joint_index]) !=
+             TEXT_PROTOCOL_STATUS_OK))
+        {
+            return protocol_engine_append_bench_field_error(output_batch,
+                                                            request,
+                                                            "bad_argument",
+                                                            "speed");
+        }
+        if (command->speeds[joint_index] <= 0.0F)
+        {
+            return protocol_engine_append_bench_field_error(output_batch,
+                                                            request,
+                                                            "out_of_range",
+                                                            "speed");
+        }
+    }
+    command->control_mode = ARM_CONTROL_MODE_MIT;
+    return PROTOCOL_ENGINE_STATUS_OK;
 }
 
 /** @brief Validates and enqueues one explicitly scoped low-energy bench action. */
@@ -2777,14 +3081,15 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                                                         "unknown_command");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if ((command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+    if (((command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+         (command_type == PROTOCOL_COMMAND_SET_MODE) ||
+         (command_type == PROTOCOL_COMMAND_MIT_ACTION)) &&
         (request->request_id == 0U))
     {
-        (void)protocol_engine_append_text_format(
-            output_batch,
-            PROTOCOL_OUTPUT_HIGH_PRIORITY,
-            "error 0 bench move code=bad_argument field=request_id");
-        return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        return protocol_engine_append_bench_field_error(output_batch,
+                                                        request,
+                                                        "bad_argument",
+                                                        "request_id");
     }
     if ((request->positional_count != 1U) ||
         (text_protocol_get_positional(request, 0U, &motors_span) == 0U))
@@ -2807,7 +3112,20 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
                                                         "busy");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if (command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
+    if (command_type == PROTOCOL_COMMAND_MIT_ACTION)
+    {
+        ProtocolEngineStatus parse_status =
+            protocol_engine_parse_text_bench_mit(request,
+                                                 &motors_span,
+                                                 &command,
+                                                 output_batch);
+
+        if (parse_status != PROTOCOL_ENGINE_STATUS_OK)
+        {
+            return parse_status;
+        }
+    }
+    else if (command_type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED)
     {
         TextProtocolSpan position_span;
         TextProtocolSpan speed_span;
@@ -2910,6 +3228,18 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
             request->command_words[1].data);
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
+    else if (command_type == PROTOCOL_COMMAND_SET_MODE)
+    {
+        ProtocolEngineStatus parse_status =
+            protocol_engine_parse_text_bench_mode(request,
+                                                  &command,
+                                                  output_batch);
+
+        if (parse_status != PROTOCOL_ENGINE_STATUS_OK)
+        {
+            return parse_status;
+        }
+    }
     else if (command_type == PROTOCOL_COMMAND_MOVE_RELATIVE)
     {
         TextProtocolSpan delta_span;
@@ -2969,7 +3299,11 @@ static ProtocolEngineStatus protocol_engine_handle_text_bench_action(
     command.request_id = request->request_id;
     command.session_id = engine->session_id;
     command.accepted_at_us = timestamp_us;
-    command.control_mode = ARM_CONTROL_MODE_POSITION_VELOCITY;
+    if ((command_type != PROTOCOL_COMMAND_SET_MODE) &&
+        (command_type != PROTOCOL_COMMAND_MIT_ACTION))
+    {
+        command.control_mode = ARM_CONTROL_MODE_POSITION_VELOCITY;
+    }
     command.bench_relative_scope = 1U;
     if (protocol_engine_enqueue_command(engine, &command) == 0U)
     {
@@ -3115,8 +3449,10 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
     AsciiProtocolSpan protocol;
     const BuildInfo *build_info = build_info_get();
 
-    if ((engine->active_motion_request_id != 0U) ||
-        (engine->active_stop_request_id != 0U))
+    if (((engine->active_motion_request_id != 0U) &&
+         (engine->active_motion_origin == DEBUG_UI_ORIGIN_USB)) ||
+        ((engine->active_stop_request_id != 0U) &&
+         (engine->active_stop_origin == DEBUG_UI_ORIGIN_USB)))
     {
         (void)protocol_engine_append_format(output_batch,
                                             PROTOCOL_OUTPUT_HIGH_PRIORITY,
@@ -3139,10 +3475,13 @@ static ProtocolEngineStatus protocol_engine_handle_hello(
 
     memset(engine->recent_results, 0, sizeof(engine->recent_results));
     engine->recent_write_index = 0U;
-    engine->command_read_sequence = engine->command_write_sequence;
-    engine->stop_read_sequence = engine->stop_write_sequence;
-    engine->result_read_sequence = engine->result_write_sequence;
-    engine->cancelled_queued_motion_request_id = 0U;
+    if (protocol_engine_has_local_work(engine) == 0U)
+    {
+        engine->command_read_sequence = engine->command_write_sequence;
+        engine->stop_read_sequence = engine->stop_write_sequence;
+        engine->result_read_sequence = engine->result_write_sequence;
+        engine->cancelled_queued_motion_request_id = 0U;
+    }
     engine->session_id = protocol_engine_create_session(engine,
                                                         request->request_id,
                                                         timestamp_us);
@@ -4323,10 +4662,15 @@ uint8_t protocol_engine_pop_command(ProtocolEngine *engine,
         protocol_engine_compiler_barrier();
         ++engine->command_read_sequence;
         if ((engine->cancelled_queued_motion_request_id != 0U) &&
-            (command->type ==
-             PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
+            ((command->origin == DEBUG_UI_ORIGIN_LOCAL_UI) ||
+             (command->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+             (command->type == PROTOCOL_COMMAND_MIT_ACTION) ||
+             ((command->type == PROTOCOL_COMMAND_SET_MODE) &&
+              (command->bench_relative_scope != 0U))) &&
             (command->request_id ==
-             engine->cancelled_queued_motion_request_id))
+             engine->cancelled_queued_motion_request_id) &&
+            (command->origin == engine->cancelled_queued_motion_origin) &&
+            (command->session_id == engine->cancelled_queued_motion_epoch))
         {
             engine->cancelled_queued_motion_request_id = 0U;
             continue;
@@ -4399,11 +4743,19 @@ uint8_t protocol_engine_take_queued_active_motion(ProtocolEngine *engine,
                                        PROTOCOL_ENGINE_COMMAND_CAPACITY);
         ProtocolCommand candidate = engine->commands[slot_index];
 
-        if ((candidate.type ==
-             PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
-            (candidate.request_id == engine->active_motion_request_id))
+        if (((candidate.origin == DEBUG_UI_ORIGIN_LOCAL_UI) ||
+             (candidate.type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+             (candidate.type == PROTOCOL_COMMAND_MIT_ACTION) ||
+             ((candidate.type == PROTOCOL_COMMAND_SET_MODE) &&
+              (candidate.bench_relative_scope != 0U))) &&
+            (candidate.request_id == engine->active_motion_request_id) &&
+            (candidate.origin == engine->active_motion_origin) &&
+            (candidate.session_id == engine->active_motion_epoch))
         {
             *command = candidate;
+            protocol_engine_compiler_barrier();
+            engine->cancelled_queued_motion_origin = candidate.origin;
+            engine->cancelled_queued_motion_epoch = candidate.session_id;
             protocol_engine_compiler_barrier();
             engine->cancelled_queued_motion_request_id = candidate.request_id;
             return 1U;
@@ -4463,18 +4815,113 @@ uint8_t protocol_engine_submit_command_result(
     engine->results[slot_index] = *result;
     protocol_engine_compiler_barrier();
     ++engine->result_write_sequence;
-    if ((result->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) &&
-        (result->request_id == engine->active_motion_request_id))
+    if ((((result->origin == DEBUG_UI_ORIGIN_LOCAL_UI) &&
+          (result->type != PROTOCOL_COMMAND_STOP)) ||
+         (result->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+         (result->type == PROTOCOL_COMMAND_MIT_ACTION) ||
+         ((result->type == PROTOCOL_COMMAND_SET_MODE) &&
+          (result->bench_relative_scope != 0U))) &&
+        (result->request_id == engine->active_motion_request_id) &&
+        (result->origin == engine->active_motion_origin) &&
+        (result->session_id == engine->active_motion_epoch))
     {
         engine->active_motion_request_id = 0U;
         engine->active_motion_accepted_at_us = 0U;
         engine->active_motion_planned_duration_us = 0U;
     }
     if ((result->type == PROTOCOL_COMMAND_STOP) &&
-        (result->request_id == engine->active_stop_request_id))
+        (result->request_id == engine->active_stop_request_id) &&
+        (result->origin == engine->active_stop_origin) &&
+        (result->session_id == engine->active_stop_epoch))
     {
         engine->active_stop_request_id = 0U;
     }
+    return 1U;
+}
+
+/** @brief Validates typed values shared by USB parse output and local SI requests. */
+DebugUiReason protocol_engine_validate_typed_command(const ProtocolCommand *command)
+{
+    uint8_t joint_index;
+    uint8_t finite_motion;
+    if (command == NULL) { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+    finite_motion = (uint8_t)((command->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+                              (command->type == PROTOCOL_COMMAND_MIT_ACTION) ||
+                              (command->type == PROTOCOL_COMMAND_MOVE_RELATIVE));
+    if ((finite_motion != 0U) &&
+        ((command->motor_mask == 0U) || ((command->motor_mask & 0x80U) != 0U)))
+    { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        if ((finite_motion != 0U) && ((command->motor_mask & (1U << joint_index)) != 0U))
+        {
+            if (!isfinite(command->values[joint_index]) || !isfinite(command->speeds[joint_index]))
+            { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+            if (!((command->type == PROTOCOL_COMMAND_MIT_ACTION) &&
+                  (command->mit_action == PROTOCOL_MIT_ACTION_HOLD)) &&
+                (command->speeds[joint_index] <= 0.0F))
+            { return DEBUG_UI_REASON_OUT_OF_RANGE; }
+        }
+    }
+    if (command->type == PROTOCOL_COMMAND_MIT_ACTION)
+    {
+        if (!isfinite(command->mit_kp) || !isfinite(command->mit_kd) ||
+            !isfinite(command->mit_torque_ff_nm)) { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+        if ((command->mit_kp <= S3519_KP_MIN) || (command->mit_kp > S3519_KP_MAX) ||
+            (command->mit_kd <= S3519_KD_MIN) || (command->mit_kd > S3519_KD_MAX) ||
+            (command->hold_duration_us < 100000ULL) || (command->hold_duration_us > 10000000ULL) ||
+            ((command->mit_action != PROTOCOL_MIT_ACTION_HOLD) &&
+             (command->mit_action != PROTOCOL_MIT_ACTION_MOVE)) ||
+            ((command->motor_mask & (command->motor_mask - 1U)) != 0U))
+        { return DEBUG_UI_REASON_OUT_OF_RANGE; }
+    }
+    return DEBUG_UI_REASON_NONE;
+}
+
+/** @brief Publishes local typed work from the sole ProtocolTask normal producer. */
+DebugUiReason protocol_engine_submit_local_command(ProtocolEngine *engine, const ProtocolCommand *command)
+{
+#if !AETHOR_DEBUG_UI_ALLOW_MOTION
+    (void)engine;
+    (void)command;
+    return DEBUG_UI_REASON_DISABLED;
+#else
+    DebugUiReason reason;
+    if ((engine == NULL) || (command == NULL) ||
+        (command->origin != DEBUG_UI_ORIGIN_LOCAL_UI) || (command->request_id == 0U) ||
+        (command->session_id == 0U) || (command->motor_mask == 0U) ||
+        ((command->motor_mask & 0x80U) != 0U) ||
+        ((command->type != PROTOCOL_COMMAND_STOP) &&
+         ((command->motor_mask & (command->motor_mask - 1U)) != 0U)))
+    { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+    reason = protocol_engine_validate_typed_command(command);
+    if (reason != DEBUG_UI_REASON_NONE) { return reason; }
+    if ((command->type != PROTOCOL_COMMAND_STOP) &&
+        ((engine->active_motion_request_id != 0U) || (engine->active_stop_request_id != 0U) ||
+         (engine->command_write_sequence != engine->command_read_sequence)))
+    { return DEBUG_UI_REASON_BUSY; }
+    return protocol_engine_enqueue_command(engine, command) != 0U
+        ? DEBUG_UI_REASON_NONE : DEBUG_UI_REASON_BUSY;
+#endif
+}
+
+/** @brief Copies an immutable result head before its owner decides how to route it. */
+uint8_t protocol_engine_peek_command_result(const ProtocolEngine *engine, ProtocolCommandResult *result)
+{
+    if ((engine == NULL) || (result == NULL) ||
+        (engine->result_read_sequence == engine->result_write_sequence)) { return 0U; }
+    protocol_engine_compiler_barrier();
+    *result = engine->results[engine->result_read_sequence % PROTOCOL_ENGINE_RESULT_CAPACITY];
+    return 1U;
+}
+
+/** @brief Consumes local output only; USB cache/text paths cannot see this terminal. */
+uint8_t protocol_engine_pop_local_result(ProtocolEngine *engine, ProtocolCommandResult *result)
+{
+    if ((protocol_engine_peek_command_result(engine, result) == 0U) ||
+        (result->origin != DEBUG_UI_ORIGIN_LOCAL_UI)) { return 0U; }
+    protocol_engine_compiler_barrier();
+    ++engine->result_read_sequence;
     return 1U;
 }
 
@@ -4694,6 +5141,61 @@ static uint8_t protocol_engine_format_text_result(
                              (unsigned long)result->request_id,
                              result_text) == PROTOCOL_ENGINE_STATUS_OK);
     }
+    if ((result->bench_relative_scope != 0U) &&
+        ((result->type == PROTOCOL_COMMAND_SET_MODE) ||
+         (result->type == PROTOCOL_COMMAND_MIT_ACTION)))
+    {
+        const char *operation =
+            (result->type == PROTOCOL_COMMAND_SET_MODE) ? "mode" : "mit";
+
+        if (result->code == PROTOCOL_COMMAND_RESULT_FAILED)
+        {
+            failure_metadata =
+                protocol_engine_normalize_failure_metadata(result);
+            if (failure_metadata.failed_motor_number_is_valid != 0U)
+            {
+                return (uint8_t)(protocol_engine_append_text_format(
+                                     output_batch,
+                                     PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                     "done %lu bench %s result=failed stage=%s code=%s motor=%u",
+                                     (unsigned long)result->request_id,
+                                     operation,
+                                     failure_metadata.stage_token,
+                                     failure_metadata.error_token,
+                                     (unsigned int)failure_metadata
+                                         .failed_motor_number) ==
+                                 PROTOCOL_ENGINE_STATUS_OK);
+            }
+            return (uint8_t)(protocol_engine_append_text_format(
+                                 output_batch,
+                                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                 "done %lu bench %s result=failed stage=%s code=%s motor=?",
+                                 (unsigned long)result->request_id,
+                                 operation,
+                                 failure_metadata.stage_token,
+                                 failure_metadata.error_token) ==
+                             PROTOCOL_ENGINE_STATUS_OK);
+        }
+        if (result->code == PROTOCOL_COMMAND_RESULT_COMPLETED)
+        {
+            return (uint8_t)(protocol_engine_append_text_format(
+                                 output_batch,
+                                 PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                                 "done %lu bench %s result=completed elapsed_ms=%lu motors=%02x",
+                                 (unsigned long)result->request_id,
+                                 operation,
+                                 (unsigned long)elapsed_ms,
+                                 (unsigned int)result->motor_mask) ==
+                             PROTOCOL_ENGINE_STATUS_OK);
+        }
+        return (uint8_t)(protocol_engine_append_text_format(
+                             output_batch,
+                             PROTOCOL_OUTPUT_HIGH_PRIORITY,
+                             "done %lu bench %s result=%s",
+                             (unsigned long)result->request_id,
+                             operation,
+                             result_text) == PROTOCOL_ENGINE_STATUS_OK);
+    }
     if (result->bench_relative_scope != 0U)
     {
         const char *operation;
@@ -4729,17 +5231,13 @@ static uint8_t protocol_engine_format_text_result(
                                  "done %lu bench init result=%s identity=%02x mode=%02x ranges=%02x version=%02x",
                                  (unsigned long)result->request_id,
                                  result_text,
-                                 (unsigned int)(engine->query_context
-                                                    .motor_identity_verified_mask &
+                                 (unsigned int)(result->discovery_identity_mask &
                                                 result->motor_mask),
-                                 (unsigned int)(engine->query_context
-                                                    .motor_mode_verified_mask &
+                                 (unsigned int)(result->discovery_mode_mask &
                                                 result->motor_mask),
-                                 (unsigned int)(engine->query_context
-                                                    .motor_ranges_verified_mask &
+                                 (unsigned int)(result->discovery_ranges_mask &
                                                 result->motor_mask),
-                                 (unsigned int)(engine->query_context
-                                                    .motor_version_verified_mask &
+                                 (unsigned int)(result->discovery_version_mask &
                                                 result->motor_mask)) ==
                              PROTOCOL_ENGINE_STATUS_OK);
         }
@@ -4873,12 +5371,19 @@ uint8_t protocol_engine_pop_result_output(
         slot_index = (uint8_t)(engine->result_read_sequence %
                                PROTOCOL_ENGINE_RESULT_CAPACITY);
         result = engine->results[slot_index];
+        if (result.origin == DEBUG_UI_ORIGIN_LOCAL_UI)
+        {
+            protocol_engine_clear_output(output_batch);
+            return 0U;
+        }
         protocol_engine_compiler_barrier();
         ++engine->result_read_sequence;
     } while (result.session_id != engine->session_id);
 
     if ((result.type == PROTOCOL_COMMAND_MOVE_JOINTS) &&
-        (result.request_id == engine->active_motion_request_id))
+        (result.request_id == engine->active_motion_request_id) &&
+        (result.origin == engine->active_motion_origin) &&
+        (result.session_id == engine->active_motion_epoch))
     {
         uint64_t actual_duration_us =
             (result.completed_at_us >= engine->active_motion_accepted_at_us)

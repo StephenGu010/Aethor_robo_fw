@@ -1,0 +1,15 @@
+{
+  "font": "NotoSansCJKsc-Regular.otf",
+  "tag": "Sans2.004",
+  "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+  "source_sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+  "copyright": [
+    "\u00a9 2014-2021 Adobe (http://www.adobe.com/)."
+  ],
+  "license": "SIL Open Font License 1.1 (OFL.txt)",
+  "generator": "Tests/ui/generate_font_subset.py (Pillow/FreeType)",
+  "glyphs": 340,
+  "bitmap_bytes": 36189,
+  "size_px": 16,
+  "bpp": 4
+}

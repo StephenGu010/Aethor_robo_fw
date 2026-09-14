@@ -46,6 +46,49 @@ function Assert-TextContains {
     }
 }
 
+function Test-NormalCommandPublicationOrder {
+    <# Checks publication order within the named C function, regardless of its size. #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text
+    )
+
+    $publicationFunction = [regex]::Match($Text,
+        '(?ms)^static uint8_t protocol_engine_publish_normal_command\([^)]*\)\s*\{.*?^\}')
+    if (-not $publicationFunction.Success) { return $false }
+    if (([regex]::Matches($publicationFunction.Value, '\+\+engine->command_write_sequence')).Count -ne 1) {
+        return $false
+    }
+
+    $publicationPattern = 'commands\[slot_index\]\s*=\s*\*command;[\s\S]*?' +
+        'active_motion_request_id\s*=\s*command->request_id;[\s\S]*?' +
+        'active_motion_origin\s*=\s*command->origin;[\s\S]*?' +
+        'active_motion_epoch\s*=\s*command->session_id;[\s\S]*?' +
+        'active_motion_accepted_at_us\s*=\s*command->accepted_at_us;[\s\S]*?' +
+        'active_motion_planned_duration_us\s*=\s*command->planned_duration_us;[\s\S]*?' +
+        'protocol_engine_compiler_barrier\s*\(\s*\)\s*;[\s\S]*?' +
+        '\+\+engine->command_write_sequence'
+    return $publicationFunction.Value -match $publicationPattern
+}
+
+function Test-StopCommandPublicationOrder {
+    <# Verifies STOP payload and complete source identity before its one publish. #>
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $publicationFunction = [regex]::Match($Text,
+        '(?ms)^static uint8_t protocol_engine_enqueue_command\([^)]*\)\s*\{.*?^\}')
+    if (-not $publicationFunction.Success) { return $false }
+    if (([regex]::Matches($publicationFunction.Value, '\+\+engine->stop_write_sequence')).Count -ne 1) {
+        return $false
+    }
+    $publicationPattern = 'stop_command\s*=\s*\*command;[\s\S]*?' +
+        'active_stop_request_id\s*=\s*command->request_id;[\s\S]*?' +
+        'active_stop_origin\s*=\s*command->origin;[\s\S]*?' +
+        'active_stop_epoch\s*=\s*command->session_id;[\s\S]*?' +
+        'protocol_engine_compiler_barrier\s*\(\s*\)\s*;[\s\S]*?' +
+        '\+\+engine->stop_write_sequence'
+    return $publicationFunction.Value -match $publicationPattern
+}
+
 function Invoke-Phase0ArchitectureCheck {
     <# Runs all Phase 0 architecture checks and returns a process-friendly result. #>
     $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -109,12 +152,25 @@ function Invoke-Phase0ArchitectureCheck {
             -Pattern "osThreadStaticDef\s*\(\s*$requiredStaticTask\s*," `
             -Message "freertos.c does not create $requiredStaticTask statically."
     }
-    if (([regex]::Matches($freertosText, 'osThreadStaticDef\s*\(')).Count -ne $requiredStaticTasks.Count)
+    # The optional UI is hand-maintained in the CubeMX USER section. Check the
+    # exact feature guard before excluding that one task from the six-task base.
+    $optionalUiTaskBlock = [regex]::Match($freertosText,
+        '(?s)#if AETHOR_DEBUG_UI_ENABLE\s+osThreadStaticDef\(DebugUiTask,.*?#endif')
+    $baseTaskText = $freertosText
+    if ($optionalUiTaskBlock.Success)
     {
-        Add-ArchitectureFailure -FailureList $failureList -Message 'freertos.c must create exactly six static application tasks.'
+        $baseTaskText = $baseTaskText.Replace($optionalUiTaskBlock.Value, '')
+        if (([regex]::Matches($optionalUiTaskBlock.Value, 'osThreadStaticDef\s*\(')).Count -ne 1)
+        {
+            Add-ArchitectureFailure -FailureList $failureList -Message 'Optional UI guard contains more than one task.'
+        }
+    }
+    if (([regex]::Matches($baseTaskText, 'osThreadStaticDef\s*\(')).Count -ne $requiredStaticTasks.Count)
+    {
+        Add-ArchitectureFailure -FailureList $failureList -Message 'freertos.c must retain six base tasks and only one feature-gated UI task.'
     }
     $requiredTaskStackWords = [ordered]@{
-        ArmControlTask = 768
+        ArmControlTask = 1280
         ProtocolTask = 1280
         TelemetryTask = 1024
     }
@@ -195,7 +251,7 @@ function Invoke-Phase0ArchitectureCheck {
     else
     {
         Assert-TextContains -FailureList $failureList -Text $protocolTaskMatch.Value `
-            -Pattern 'aethor_app_pop_protocol_result_output[\s\S]*stm32_platform_usb_next_line[\s\S]*while\s*\(\s*\(lineStatus[\s\S]*AethorMonotonicTimestampUs\s*\(\s*\)[\s\S]{0,240}aethor_app_generate_stream_output[\s\S]{0,240}QueueProtocolOutputBatch' `
+            -Pattern 'aethor_app_pop_protocol_result_output[\s\S]*stm32_platform_usb_next_line[\s\S]*while\s*\(\s*\(+lineStatus[\s\S]*AethorMonotonicTimestampUs\s*\(\s*\)[\s\S]{0,240}aethor_app_generate_stream_output[\s\S]{0,240}QueueProtocolOutputBatch' `
             -Message 'ProtocolTask does not drain results and USB lines before telemetry formatting.'
     }
     if (-not $telemetryTaskMatch.Success)
@@ -310,18 +366,26 @@ function Invoke-Phase0ArchitectureCheck {
         -Message 'One-shot cleanup HOLD does not require enabled_by_action_mask to cover the cleanup mask.'
     # STOP ownership is part of priority-slot publication, so the consumer may
     # never observe a STOP before its admission gate has become visible.
-    Assert-TextContains -FailureList $failureList -Text $protocolEngineText `
-        -Pattern 'active_stop_request_id\s*=\s*command->request_id;[\s\S]{0,160}\+\+engine->stop_write_sequence' `
-        -Message 'STOP lifecycle ownership is published after its priority command slot.'
+    if (-not (Test-StopCommandPublicationOrder -Text $protocolEngineText)) {
+        Add-ArchitectureFailure -FailureList $failureList `
+            -Message 'STOP payload/origin/epoch ownership must precede priority-slot publication.'
+    }
     # A normal motion slot is visible only after its admission metadata. This
     # prevents ArmControlTask from consuming a MOVE before its gate is owned.
-    Assert-TextContains -FailureList $failureList -Text $protocolEngineText `
-        -Pattern 'protocol_engine_publish_normal_command[\s\S]{0,900}commands\[slot_index\]\s*=\s*\*command;[\s\S]{0,500}active_motion_request_id\s*=\s*command->request_id;[\s\S]{0,240}active_motion_accepted_at_us\s*=\s*command->accepted_at_us;[\s\S]{0,240}active_motion_planned_duration_us\s*=\s*command->planned_duration_us;[\s\S]{0,240}protocol_engine_compiler_barrier\s*\(\s*\)\s*;[\s\S]{0,120}\+\+engine->command_write_sequence' `
-        -Message 'Normal MOVE ownership metadata is not published before command_write_sequence.'
+    if (-not (Test-NormalCommandPublicationOrder -Text $protocolEngineText)) {
+        Add-ArchitectureFailure -FailureList $failureList `
+            -Message 'Normal MOVE ownership metadata is not published before command_write_sequence.'
+    }
 
     $keilProjectPath = Join-Path $projectRoot 'MDK-ARM\CtrBoard-H7_FDCAN.uvprojx'
     $keilProjectXml = [xml](Get-Content -LiteralPath $keilProjectPath -Raw)
-    $keilFileNames = @($keilProjectXml.SelectNodes('//FileName') | ForEach-Object { $_.'#text' })
+    $baseKeilTargets = @($keilProjectXml.Project.Targets.Target |
+        Where-Object { $_.TargetName -eq 'CtrBoard-H7_FDCAN' })
+    if ($baseKeilTargets.Count -ne 1)
+    {
+        throw 'The original CtrBoard-H7_FDCAN Keil target must remain unique.'
+    }
+    $keilFileNames = @($baseKeilTargets[0].SelectNodes('.//FileName') | ForEach-Object { $_.'#text' })
     $requiredKeilSources = @(
         'aethor_app.c',
         'arm_config.c',
@@ -383,7 +447,7 @@ function Invoke-Phase0ArchitectureCheck {
     Write-Host '[PASS] App sources contain no dynamic allocation calls.'
     Write-Host '[PASS] App business layers do not include platform headers.'
     Write-Host '[PASS] Executable motor frame generation is confined to App/Motor.'
-    Write-Host '[PASS] CubeMX retains six static application tasks and the USER_KEY label.'
+    Write-Host '[PASS] Six base tasks, optional guarded UI task, and USER_KEY remain valid.'
     Write-Host '[PASS] main.c and freertos.c use the Phase 0 application entry.'
     Write-Host '[PASS] One-shot cleanup HOLD requires completed ENABLE ownership.'
     Write-Host '[PASS] Keil compiles one copy of each required source and no legacy controller.'

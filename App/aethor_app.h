@@ -14,6 +14,26 @@
 #include "diagnostics.h"
 #include "motor_runtime.h"
 #include "protocol_engine.h"
+#include "DebugUi/debug_ui_contract.h"
+
+/** @brief ProtocolTask-only bounded local STOP/admission and health service pass. */
+void aethor_app_debug_ui_process(uint64_t timestamp_us);
+/** @brief UiTask reserves a mailbox request; success does not mean motion admitted. */
+DebugUiReason aethor_app_debug_ui_submit(const DebugUiRequest *request);
+/** @brief Copies a coherent UI snapshot under the existing task critical hooks. */
+bool aethor_app_debug_ui_get_snapshot(uint64_t timestamp_us, DebugUiSnapshot *snapshot);
+/** @brief UiTask consumes one admission acknowledgement, matched by complete identity. */
+bool aethor_app_debug_ui_poll_admission(DebugUiAdmission *admission);
+/** @brief UiTask consumes one terminal acknowledgement, matched by complete identity. */
+bool aethor_app_debug_ui_poll_completion(DebugUiCompletion *completion);
+/** @brief UiTask publishes input/display-checked progress; does not refresh USB watchdog. */
+void aethor_app_debug_ui_update_health(const DebugUiHealth *health);
+/** @brief Indicates local request/STOP/health work for a ProtocolTask notification. */
+bool aethor_app_debug_ui_needs_service(void);
+/** @brief Injects one explicit evidence profile while REMOTE and idle; defaults are invalid. */
+bool aethor_app_debug_ui_set_motor_profile(uint8_t motor_id, const DebugUiMotorProfile *profile);
+/** @brief Copies the exact current evidence profile; ID is one-based 1..7. */
+bool aethor_app_debug_ui_get_motor_profile(uint8_t motor_id, DebugUiMotorProfile *profile);
 
 /** @brief Enters or exits one platform task-scheduling critical boundary. */
 typedef void (*AethorAppTaskCriticalHook)(void);

@@ -15,6 +15,7 @@
 #include "diagnostics.h"
 #include "joint_reference.h"
 #include "motor_types.h"
+#include "../DebugUi/debug_ui_contract.h"
 
 #define PROTOCOL_ENGINE_MESSAGE_CAPACITY (520U)
 #define PROTOCOL_ENGINE_MAX_OUTPUT_COUNT (2U)
@@ -104,8 +105,17 @@ typedef enum
     PROTOCOL_COMMAND_INIT_MOTORS,
     PROTOCOL_COMMAND_MOVE_RELATIVE,
     PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED,
+    PROTOCOL_COMMAND_MIT_ACTION,
     PROTOCOL_COMMAND_LINK_TIMEOUT
 } ProtocolCommandType;
+
+/** @brief Selects the bounded single-motor MIT bench action. */
+typedef enum
+{
+    PROTOCOL_MIT_ACTION_NONE = 0,
+    PROTOCOL_MIT_ACTION_HOLD,
+    PROTOCOL_MIT_ACTION_MOVE
+} ProtocolMitAction;
 
 /** @brief Owns one validated fixed-size command transferred to ArmControlTask. */
 typedef struct
@@ -114,13 +124,26 @@ typedef struct
     float speeds[ARM_JOINT_COUNT];
     uint64_t accepted_at_us;
     uint64_t planned_duration_us;
+    uint64_t hold_duration_us;
+    float mit_kp;
+    float mit_kd;
+    float mit_torque_ff_nm;
     uint32_t request_id;
     uint32_t session_id;
     ProtocolCommandType type;
+    ProtocolMitAction mit_action;
     uint8_t motor_mask;
     ArmControlMode control_mode;
     uint8_t scope_joint;
     uint8_t bench_relative_scope;
+    /** @brief Full source identity and local SI-relative draft, published before sequence. */
+    DebugUiOrigin origin;
+    DebugUiOperation local_operation;
+    uint64_t created_at_us;
+    uint32_t reference_generation;
+    uint8_t values_in_radians;
+    uint8_t relative_target;
+    uint8_t cleanup_after_stop;
 } ProtocolCommand;
 
 /** @brief Identifies one terminal action result produced by ArmControlTask. */
@@ -180,6 +203,16 @@ typedef struct
     uint8_t bench_relative_scope;
     /** @brief Public one-based failed motor number, or zero when not specific. */
     uint8_t failed_motor_number;
+    /** @brief Source metadata survives cancellation, deferral and result consumption. */
+    DebugUiOrigin origin;
+    DebugUiOperation local_operation;
+    uint8_t disabled_confirmed;
+    DebugUiReason local_reason;
+    /** @brief Init verification masks captured by the owner at terminal creation. */
+    uint8_t discovery_identity_mask;
+    uint8_t discovery_mode_mask;
+    uint8_t discovery_ranges_mask;
+    uint8_t discovery_version_mask;
 } ProtocolCommandResult;
 
 /** @brief Owns the fixed current session and bounded recent-result cache. */
@@ -205,6 +238,14 @@ typedef struct
     uint32_t active_motion_request_id;
     uint32_t active_stop_request_id;
     uint32_t cancelled_queued_motion_request_id;
+    /** @brief Side-by-side origin/epoch ownership for the legacy public ID fields. */
+    DebugUiOrigin active_motion_origin;
+    DebugUiOrigin active_stop_origin;
+    DebugUiOrigin cancelled_queued_motion_origin;
+    uint32_t active_motion_epoch;
+    uint32_t active_stop_epoch;
+    uint32_t cancelled_queued_motion_epoch;
+    uint8_t local_control_locked;
     uint32_t last_motion_actual_duration_ms;
     uint32_t last_motion_max_following_error_mdeg;
     uint32_t bad_frame_count;
@@ -225,6 +266,15 @@ typedef struct
     ArmState last_published_state;
     uint8_t last_published_state_valid;
 } ProtocolEngine;
+
+/** @brief Shared finite/range validation for parsed USB and local typed commands. */
+DebugUiReason protocol_engine_validate_typed_command(const ProtocolCommand *command);
+/** @brief ProtocolTask-only typed local publication through the existing normal/STOP queues. */
+DebugUiReason protocol_engine_submit_local_command(ProtocolEngine *engine, const ProtocolCommand *command);
+/** @brief Peeks the oldest terminal without consuming it or crossing source namespaces. */
+uint8_t protocol_engine_peek_command_result(const ProtocolEngine *engine, ProtocolCommandResult *result);
+/** @brief Consumes a LOCAL_UI head only after App retained its reserved terminal. */
+uint8_t protocol_engine_pop_local_result(ProtocolEngine *engine, ProtocolCommandResult *result);
 
 /**
  * @brief Initializes one protocol engine for the current firmware boot.

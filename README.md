@@ -1,20 +1,28 @@
 # Aethor 七自由度机械臂固件
 
-当前分支已经实现 PRD 首组七自由度机械臂的固件软件与上位机兼容性测试包：电脑通过板卡 Type-C USB CDC 发送可手工输入的 `aethor-text-v1` 文本指令，可按正式整组或台架显式子集控制 S3519 电机。默认台架 Profile 支持一条 `bench move` 命令完成所选电机的发现、校验、使能、绝对运动、保持和自动失能；位置与速度边界只来自本次上电发现的 S3519 `PMAX/VMAX/MAX_SPD`，不使用固定 3° 默认值。生产 Profile 仍因真实机械参数未逐轴验证而锁定使能。旧 `aethor-arm-ascii-v1` 及其 CRC 测试资产仅用于回归，不进入固件正式协议入口。
+## 2026-09-14 发布基线
+
+最新发布为电机7的 **LCD-MIT 输出轴坐标与3.5 Nm反馈保护版本**，同时支持本地POS。固定HEX与可移植验证摘要见 [固件发布目录](firmware/2026-09-14/README.md)。它包含当前文字式LVGL界面；新的图标界面已完成设计确认，后续单独实现，本次发布尚未包含。
+
+LCD角度以输出轴、本次上电零点为基准；POS使用固定终点及速度上限，MIT使用本地轨迹。正常动作后保留本地控制，每个动作仍需松开后长按800 ms确认，运行中中键立即请求STOP。LCD Kp=80、Kd=0.2；3.5 Nm为反馈保护阈值，不是瞬时硬限流。操作与证据边界见 [最新发布说明](docs/debug-ui/release-20260914.md)。
+
+当前分支已经实现 PRD 首组七自由度机械臂的固件软件与上位机兼容性测试包：电脑通过板卡 Type-C USB CDC 发送可手工输入的 `aethor-text-v1` 文本指令，可按正式整组或台架显式子集控制 S3519 电机。默认台架 Profile 支持自包含 `bench move`、安全失能态 `bench mode` 和单电机 `bench mit`；位置、速度和转矩编码边界只来自本次上电发现的 S3519 `PMAX/VMAX/TMAX/MAX_SPD`。MIT 动作由 STM32 本地连续执行五次时间缩放轨迹或定时保持，最后自动失能。生产 Profile 仍因真实机械参数未逐轴验证而锁定使能。旧 `aethor-arm-ascii-v1` 及其 CRC 测试资产仅用于回归，不进入固件正式协议入口。
 
 ## 当前入口与范围
 
-- 正式入口：`App/aethor_app.c`，由 6 个静态 FreeRTOS 任务分别承担 250 Hz 控制、CAN RX、协议、USB TX、遥测和诊断。
+- 正式入口：`App/aethor_app.c`，默认由 6 个静态 FreeRTOS 任务分别承担 250 Hz 控制、CAN RX、协议、USB TX、遥测和诊断；可选 LCD 目标另加低优先级静态 UiTask。
 - 关节模型：固定7轴；ESC ID为`0x01–0x07`，Master ID为`0x11–0x17`。
 - 物理参数：方向、零位/限位、速度、加速度、MIT 增益、电机量程和外部减速比均保持未验证状态，因此配置不能通过使能就绪检查。
 - 旧验证代码：`User/` 原样保留作为迁移参考，但旧按键双电机和旧七轴控制链不进入当前 Keil 目标。
 - 正式传输：板卡Type-C USB CDC虚拟串口；USART不作为第二套正式协议入口。
-- 当前默认配置：`USB_BENCH_RELATIVE`，允许使用 `bench init/enable/jog/move/stop/disable/clear` 显式选取一个或多个电机；未选电机不变。
+- 当前默认配置：`USB_BENCH_RELATIVE`，允许使用 `bench init/mode/mit/enable/jog/move/stop/disable/clear`；MIT 动作当前只允许一个电机，其他台架命令按各自合同选择子集。
 - `ARM_PRODUCTION` 已实现参考位、整组 POS_VEL、MIT 五次时间标度、受控停止、反馈确认、故障和通信看门狗，但需全部参数验证位有效才可真实使能。
 - STM32 只执行关节空间控制。DH/URDF、逆运动学、笛卡尔控制、动力学和碰撞规划不在固件范围内。
 - 首组 `arm-1` 完成；第二组只保留 `controller_id/arm_id` 扩展边界，尚未实现双会话。
 
 ## 分层目录
+
+DM_TFT 的 LVGL 五向键界面、构建目标和软件验证入口见 [LCD 调试界面说明](docs/debug-ui/README.md)。默认目标关闭 LCD；首次硬件接入使用 `LCD-ReadOnly`。POS/MIT 本地入口仍要求有效配置和运行时授权。现已取得电机7的有限空载台架证据；模拟画面与主机测试不能代替整臂、带载及完整故障验收。
 
 ```text
 App/
@@ -45,6 +53,10 @@ Windows 串口工具使用 COM7（以实际枚举为准）、115200、8N1、串�
 71 bench move 1 position=0 speed=5
 50 bench move 1 position=90 speed=30
 51 bench move 1,3 position=90,-45 speed=30,20
+60 bench mode 1 mode=mit
+61 bench mit 1 action=hold kp=1 kd=1 torque_ff=0 duration_ms=1000
+62 bench mit 1 action=move position=5 speed=2 kp=1 kd=1 torque_ff=0 duration_ms=1000
+63 bench mode 1 mode=pos_vel
 1 bench init 1
 2 bench enable 1
 3 bench jog 1 delta=0.2 speed=1
@@ -55,6 +67,8 @@ Windows 串口工具使用 COM7（以实际枚举为准）、115200、8N1、串�
 `bench move` 是绝对输出端角度命令，零点是本次上电零点。请求编号必须位于 `1..UINT32_MAX`；`motor/position/speed` 三个列表必须严格等长，按列表顺序一一对应，电机编号必须是唯一的 `1..7`，不支持广播。数值必须是正常 `float32`，位置另允许 `0`，速度必须大于 0。固件允许位置等于已发现 `PMAX`、速度等于 `min(VMAX,MAX_SPD)`，越界时拒绝而不截断；任一发现值缺失时不回退默认范围。`show motor <id>` 可查看 `pmax_deg/vmax_deg_s/max_speed_deg_s/move_speed_limit_deg_s`，不可用字段显示 `?`。
 
 新 `bench move` 只发送一次。收到 `ok <id> bench move accepted=1` 后无需发送 `ping`，固件内部会重发固定 CAN 目标，并继续执行新鲜反馈、驱动故障、控制周期和 Bus-Off 安全检查；到位后依次发送最终位置加零速度的 HOLD、仅对所选电机失能，并在收到全部所选电机的新鲜 disabled 反馈后返回 `done`。旧 `bench enable/jog` 仍需在带电期间约每 250 ms 发送一次独立 `ping`，连续 1000 ms 无有效请求仍会停止和失能。不要周期重发任何动作正文来代替保活。
+
+`bench mode` 只在所选电机已发现、反馈新鲜、无故障、已失能且输出速度接近零时执行易失性模式写入与读回，完成后保持失能。`bench mit` 使用命令内的 `kp/kd/torque_ff`，当前限定单电机；`kp=1 kd=1 torque_ff=0` 只是厂商示例起点，并未完成真实机械参数标定。逐项参数清单和实调步骤见 [S3519 MIT 参数标定与调试指南](docs/compatibility/S3519-MIT参数标定与调试指南.md)。
 
 软件解析、主机测试和构建只证明接口与状态机合同，不证明机械臂软限位、输出方向、外部减速比、实际角速度、带载性能、七轴联动或真实硬件已经验收。
 

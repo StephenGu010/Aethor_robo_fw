@@ -61,7 +61,10 @@ void FDCAN3_IT0_IRQHandler(void);
 void FDCAN3_IT1_IRQHandler(void);
 void TIM23_IRQHandler(void);
 /* USER CODE BEGIN EFP */
-
+/** @brief Optional UI interrupt forwarders; weak startup entries remain when disabled. */
+void DMA1_Stream0_IRQHandler(void);
+void SPI1_IRQHandler(void);
+void ADC_IRQHandler(void);
 /* USER CODE END EFP */
 
 #ifdef __cplusplus

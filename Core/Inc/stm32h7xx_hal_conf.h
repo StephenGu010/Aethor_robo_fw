@@ -34,6 +34,13 @@
   */
 #define HAL_MODULE_ENABLED
 
+/* LCD peripherals are initialized only by the optional low-priority UI task. */
+#include "debug_ui_config.h"
+#if AETHOR_DEBUG_UI_ENABLE
+#define HAL_ADC_MODULE_ENABLED
+#define HAL_SPI_MODULE_ENABLED
+#endif
+
   /* #define HAL_ADC_MODULE_ENABLED   */
 #define HAL_FDCAN_MODULE_ENABLED
 /* #define HAL_FMAC_MODULE_ENABLED   */

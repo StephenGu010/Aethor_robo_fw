@@ -851,6 +851,87 @@ MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
     return MOTOR_RUNTIME_STATUS_OK;
 }
 
+/** @brief Ends an unconfirmed read with a 500ms late-response quarantine. */
+static void motor_runtime_cancel_position_read(MotorRegisterPosition *state, uint64_t now_us)
+{
+    state->pending = 0U;
+    state->not_before_us = now_us > UINT64_MAX - 500000ULL ? UINT64_MAX : now_us + 500000ULL;
+}
+
+/** @brief Serializes two documented raw position reads without altering motor control state. */
+MotorRuntimeStatus motor_runtime_next_position_read(MotorRuntime *runtime,
+    uint8_t joint_index, uint64_t timestamp_us, uint8_t allowed, CanFrame *frame)
+{
+    MotorRegisterPosition *state;
+    uint8_t payload[4] = {0U, 0U, 0x33U, 0U};
+    const MotorObject *motor;
+    if (runtime == NULL || frame == NULL || joint_index >= ARM_JOINT_COUNT)
+    { return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT; }
+    if (!runtime->initialized) { return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED; }
+    state = &runtime->position_read;
+    if (state->pending && (!allowed || state->joint_index != joint_index || timestamp_us < state->sent_us))
+    { motor_runtime_cancel_position_read(state, timestamp_us); }
+    if (state->pending && timestamp_us - state->sent_us >= 100000ULL)
+    {
+        if (state->timeout_count != UINT32_MAX) { ++state->timeout_count; }
+        motor_runtime_cancel_position_read(state, timestamp_us);
+    }
+    if (!allowed || state->pending || timestamp_us < state->not_before_us || timestamp_us > UINT64_MAX - 100000ULL)
+    { return MOTOR_RUNTIME_STATUS_WAITING; }
+    if (state->joint_index != joint_index)
+    {
+        state->seen_mask = 0U;
+        state->next_register = 0U;
+        state->joint_index = joint_index;
+    }
+    motor = &runtime->bank.motors[joint_index];
+    payload[0] = (uint8_t)motor->esc_id;
+    payload[1] = (uint8_t)(motor->esc_id >> 8U);
+    payload[3] = (uint8_t)(0x50U + state->next_register);
+    if (can_frame_init(frame, 0x7FFU, payload, sizeof(payload)) != CAN_FRAME_STATUS_OK)
+    { return MOTOR_RUNTIME_STATUS_CODEC_ERROR; }
+    state->pending_register = state->next_register;
+    state->next_register ^= 1U;
+    state->sent_us = timestamp_us;
+    state->not_before_us = timestamp_us + 100000ULL;
+    state->pending = 1U;
+    return MOTOR_RUNTIME_STATUS_FRAME_READY;
+}
+
+/** @brief Validates an exact pending tuple; position samples never update MotorBank feedback. */
+static MotorRuntimeStatus motor_runtime_accept_position_read(MotorRuntime *runtime,
+    const CanFrame *frame, uint64_t timestamp_us)
+{
+    MotorRegisterPosition *state = &runtime->position_read;
+    const MotorObject *motor;
+    uint32_t raw_value;
+    float value;
+    if (state->joint_index >= ARM_JOINT_COUNT) { return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT; }
+    motor = &runtime->bank.motors[state->joint_index];
+    if (!state->pending || frame->length != 8U || frame->data[2] != 0x33U || frame->identifier != motor->master_id ||
+        frame->data[0] != (uint8_t)motor->esc_id || frame->data[1] != (uint8_t)(motor->esc_id >> 8U) ||
+        frame->data[3] != 0x50U + state->pending_register ||
+        timestamp_us < state->sent_us || timestamp_us - state->sent_us >= 100000ULL)
+    {
+        if (state->rejected_count != UINT32_MAX) { ++state->rejected_count; }
+        return MOTOR_RUNTIME_STATUS_STALE_FEEDBACK;
+    }
+    raw_value = (uint32_t)frame->data[4] | ((uint32_t)frame->data[5] << 8U) |
+        ((uint32_t)frame->data[6] << 16U) | ((uint32_t)frame->data[7] << 24U);
+    memcpy(&value, &raw_value, sizeof(value));
+    if (!isfinite(value))
+    {
+        if (state->rejected_count != UINT32_MAX) { ++state->rejected_count; }
+        return MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE;
+    }
+    state->values[state->pending_register] = value;
+    state->sample_us[state->pending_register] = timestamp_us;
+    state->seen_mask |= (uint8_t)(1U << state->pending_register);
+    state->pending = 0U;
+    if (state->accepted_count != UINT32_MAX) { ++state->accepted_count; }
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
 /**
  * @brief Routes one validated Classic CAN frame to discovery or feedback decode.
  */
@@ -868,6 +949,17 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
     {
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
+
+    /* The packed feedback position/velocity bytes can equal opcode/RID. Require
+     * an established reader and its full ESC prefix before diverting a frame. */
+    if (runtime->position_read.not_before_us != 0U &&
+        runtime->position_read.joint_index < ARM_JOINT_COUNT &&
+        frame->length >= 4U && frame->length <= 8U &&
+        frame->data[0] == (uint8_t)runtime->bank.motors[runtime->position_read.joint_index].esc_id &&
+        frame->data[1] == (uint8_t)(runtime->bank.motors[runtime->position_read.joint_index].esc_id >> 8U) &&
+        (frame->data[2] == 0x33U || frame->data[2] == 0x55U) &&
+        (frame->data[3] == 0x50U || frame->data[3] == 0x51U))
+    { return motor_runtime_accept_position_read(runtime, frame, timestamp_us); }
 
     motor_runtime_expire_parameter_set(&runtime->parameter_expectations,
                                        timestamp_us);
@@ -1351,6 +1443,80 @@ MotorRuntimeStatus motor_runtime_build_position_velocity_subset(
                 (uint8_t)runtime->configuration->joints[joint_index].esc_id,
                 motor_position_rad[joint_index],
                 motor_velocity_rad_s[joint_index],
+                &validated_batch.frames[validated_batch.count]) !=
+            S3519_CODEC_STATUS_OK)
+        {
+            return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+        }
+        ++validated_batch.count;
+    }
+    memcpy(batch, &validated_batch, sizeof(*batch));
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/**
+ * @brief Encodes selected MIT targets with command-scoped gains and torque.
+ */
+MotorRuntimeStatus motor_runtime_build_mit_subset(
+    const MotorRuntime *runtime,
+    uint8_t motor_mask,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_velocity_rad_s[ARM_JOINT_COUNT],
+    float kp,
+    float kd,
+    float torque_ff_nm,
+    MotorEmergencyFrameBatch *batch)
+{
+    MotorEmergencyFrameBatch validated_batch;
+    uint8_t joint_index;
+
+    if (batch != NULL)
+    {
+        memset(batch, 0, sizeof(*batch));
+    }
+    if ((runtime == NULL) || (motor_position_rad == NULL) ||
+        (motor_velocity_rad_s == NULL) || (batch == NULL) ||
+        (motor_mask == 0U) || ((motor_mask & (uint8_t)~0x7FU) != 0U))
+    {
+        return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    }
+    if (runtime->initialized == 0U)
+    {
+        return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
+    }
+    if (!isfinite(kp) || !isfinite(kd) || !isfinite(torque_ff_nm) ||
+        (kp <= S3519_KP_MIN) || (kp > S3519_KP_MAX) ||
+        (kd <= S3519_KD_MIN) || (kd > S3519_KD_MAX))
+    {
+        return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
+    }
+
+    memset(&validated_batch, 0, sizeof(validated_batch));
+    for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
+    {
+        const MotorDiscoveryResult *discovery_result;
+        uint8_t joint_bit = (uint8_t)(1U << joint_index);
+
+        if ((motor_mask & joint_bit) == 0U)
+        {
+            continue;
+        }
+        discovery_result = &runtime->discovery.results[joint_index];
+        if (((runtime->discovery.verified_joint_mask & joint_bit) == 0U) ||
+            ((discovery_result->verified_fields_mask &
+              MOTOR_DISCOVERY_ALL_FIELDS_MASK) !=
+             MOTOR_DISCOVERY_ALL_FIELDS_MASK))
+        {
+            return MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE;
+        }
+        if (s3519_pack_mit(
+                (uint8_t)runtime->configuration->joints[joint_index].esc_id,
+                &discovery_result->ranges,
+                motor_position_rad[joint_index],
+                motor_velocity_rad_s[joint_index],
+                kp,
+                kd,
+                torque_ff_nm,
                 &validated_batch.frames[validated_batch.count]) !=
             S3519_CODEC_STATUS_OK)
         {

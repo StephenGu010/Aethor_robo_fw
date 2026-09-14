@@ -1,6 +1,6 @@
 # 协议测试资产
 
-当前固件正式入口是 `aethor-text-v1`。`aethor-text-v1-vectors.json` 固定可打印 ASCII 请求、可选十进制请求编号、LF/CRLF、分片/粘连、一次提交的 `bench move` 和统一 `ok/done/error/event/data` 输出示例；正式传输不包含应用层 CRC。
+当前固件正式入口是 `aethor-text-v1`。`aethor-text-v1-vectors.json` 固定可打印 ASCII 请求、可选十进制请求编号、LF/CRLF、分片/粘连、一次提交的 `bench move` 和统一 `ok/done/error/event/data` 输出示例；正式传输不包含应用层 CRC。`bench mode` 与 `bench mit` 的解析、安全拒绝、模式写回读、MIT 保持、本地五次轨迹、STOP 抢占和最终失能由 C 主机测试直接覆盖。
 
 对应的主机测试：
 
@@ -30,6 +30,8 @@
 参考客户端把固件 `strtof` 可接收的正常 `float32` 编码为不含指数的纯十进制定点文本，保留可往返的非零小数并把位置 `-0` 规范为 `0`。非零绝对值必须位于 `FLT_MIN..FLT_MAX`，位置另允许 `0`，速度必须大于 `0`；请求编号必须位于 `1..UINT32_MAX`。完整 ASCII 请求正文不得超过 160 字节；该限制与 `TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH` 相同且不计 CR/LF。动作超时必须是有限正数且不超过 `4294967.295` 秒，使内部毫秒预算可表示为 `uint32`。客户端在调用串口写入前拒绝非法编号/数值、非法动作超时以及超长的单轴或多轴组合。
 
 台架动作只由上位机提交一次；固件在未到位时内部重发固定 CAN 目标。自包含 `bench move` 不启动 `ping`，最终 HOLD、所选电机失能并收到新鲜 disabled 反馈后才完成；旧 `bench enable/jog` 带电期间仍通过约 250 ms 的独立 `ping` 保活。该边界由协议引擎、应用门面和主机测试共同覆盖，不由 JSON 向量单独证明。
+
+自包含 `bench mode` 与 `bench mit` 同样只提交一次且不启动 `ping`。模式切换必须在发现完成、新鲜无故障反馈、失能和近零速门控后执行，并以寄存器读回作为完成证据；MIT 只允许单电机，使用命令内 `kp/kd/torque_ff` 和发现读回的 `PMAX/VMAX/TMAX/MAX_SPD`。主机测试不等同于真实电机参数标定。
 
 以下资产属于迁移前 `aethor-arm-ascii-v1`，保留用于回归，不是固件正式协议入口：
 

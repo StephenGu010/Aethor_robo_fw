@@ -22,6 +22,11 @@
 #include "stm32h7xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "debug_ui_config.h"
+#if AETHOR_DEBUG_UI_ENABLE
+#include "lcd_st7789.h"
+#include "lcd_key_adc.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -276,5 +281,25 @@ void TIM23_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+#if AETHOR_DEBUG_UI_ENABLE
+/** @brief Routes the reserved LCD TX DMA stream to its sole platform owner. */
+void DMA1_Stream0_IRQHandler(void)
+{
+  lcd_st7789_dma_irq();
+}
+
+/** @brief Routes SPI1 EOT/error notifications; no UI rendering is done here. */
+void SPI1_IRQHandler(void)
+{
+  lcd_st7789_spi_irq();
+}
+
+/** @brief Publishes the raw PA5 five-way-key sample through the ADC1 owner. */
+void ADC_IRQHandler(void)
+{
+  lcd_key_adc_irq();
+}
+#endif
 
 /* USER CODE END 1 */

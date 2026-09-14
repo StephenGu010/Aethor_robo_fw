@@ -114,15 +114,119 @@ def _validate_action_timeout(action_timeout: object) -> float:
     return timeout_value
 
 
+def _validate_nonzero_request_id(request_id: object) -> int:
+    """Returns one nonzero uint32 request ID before building an action."""
+    if (isinstance(request_id, bool) or not isinstance(request_id, int) or
+            request_id < 1 or request_id > 0xFFFFFFFF):
+        raise ValueError("request_id must be a nonzero uint32 integer")
+    return request_id
+
+
+def _validate_motor_number(motor_number: object) -> int:
+    """Returns one public one-based motor number."""
+    if (isinstance(motor_number, bool) or not isinstance(motor_number, int) or
+            motor_number < 1 or motor_number > 7):
+        raise ValueError("motor number must be an integer from 1 through 7")
+    return motor_number
+
+
+def _validate_mit_duration_ms(duration_ms: object) -> int:
+    """Returns one firmware-supported MIT hold duration in milliseconds."""
+    if (isinstance(duration_ms, bool) or not isinstance(duration_ms, int) or
+            duration_ms < 100 or duration_ms > 10000):
+        raise ValueError("duration_ms must be an integer from 100 through 10000")
+    return duration_ms
+
+
+def _validate_mit_gains(kp: object, kd: object) -> tuple[float, float]:
+    """Returns finite positive MIT gains within the vendor mapping range."""
+    kp_value = _coerce_firmware_float32(kp, "kp", False)
+    kd_value = _coerce_firmware_float32(kd, "kd", False)
+    if kp_value > 500.0:
+        raise ValueError("kp must be no greater than 500")
+    if kd_value > 5.0:
+        raise ValueError("kd must be no greater than 5")
+    return kp_value, kd_value
+
+
+def build_bench_mode(request_id: int,
+                     motor_numbers: Sequence[int],
+                     mode: str) -> str:
+    """Builds one safe disabled-state volatile mode-switch request."""
+    validated_request_id = _validate_nonzero_request_id(request_id)
+    motors = list(motor_numbers)
+    if not motors:
+        raise ValueError("motor list must not be empty")
+    if any(_validate_motor_number(motor) != motor for motor in motors):
+        raise AssertionError("validated motor number changed unexpectedly")
+    if motors != sorted(set(motors)):
+        raise ValueError("mode motor numbers must be unique and ascending")
+    if mode not in {"mit", "pos_vel"}:
+        raise ValueError("mode must be 'mit' or 'pos_vel'")
+    body = (f"{validated_request_id} bench mode "
+            f"{','.join(str(motor) for motor in motors)} mode={mode}")
+    if len(body.encode("ascii")) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES:
+        raise ValueError("bench mode request exceeds 160 ASCII bytes excluding CR/LF")
+    return body
+
+
+def build_bench_mit_hold(request_id: int,
+                         motor_number: int,
+                         kp: Real,
+                         kd: Real,
+                         torque_ff_nm: Real,
+                         duration_ms: int) -> str:
+    """Builds one single-motor MIT hold request with explicit safe parameters."""
+    validated_request_id = _validate_nonzero_request_id(request_id)
+    validated_motor_number = _validate_motor_number(motor_number)
+    kp_value, kd_value = _validate_mit_gains(kp, kd)
+    torque_value = _coerce_firmware_float32(torque_ff_nm, "torque_ff", True)
+    validated_duration_ms = _validate_mit_duration_ms(duration_ms)
+    body = (f"{validated_request_id} bench mit {validated_motor_number} "
+            f"action=hold kp={_format_finite_number(kp_value)} "
+            f"kd={_format_finite_number(kd_value)} "
+            f"torque_ff={_format_finite_number(torque_value)} "
+            f"duration_ms={validated_duration_ms}")
+    if len(body.encode("ascii")) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES:
+        raise ValueError("bench mit request exceeds 160 ASCII bytes excluding CR/LF")
+    return body
+
+
+def build_bench_mit_move(request_id: int,
+                         motor_number: int,
+                         position_deg: Real,
+                         speed_deg_s: Real,
+                         kp: Real,
+                         kd: Real,
+                         torque_ff_nm: Real,
+                         duration_ms: int) -> str:
+    """Builds one single-motor MIT quintic move request."""
+    validated_request_id = _validate_nonzero_request_id(request_id)
+    validated_motor_number = _validate_motor_number(motor_number)
+    position_value = _coerce_firmware_float32(position_deg, "position", True)
+    speed_value = _coerce_firmware_float32(speed_deg_s, "speed", False)
+    kp_value, kd_value = _validate_mit_gains(kp, kd)
+    torque_value = _coerce_firmware_float32(torque_ff_nm, "torque_ff", True)
+    validated_duration_ms = _validate_mit_duration_ms(duration_ms)
+    body = (f"{validated_request_id} bench mit {validated_motor_number} "
+            f"action=move position={_format_finite_number(position_value)} "
+            f"speed={_format_finite_number(speed_value)} "
+            f"kp={_format_finite_number(kp_value)} "
+            f"kd={_format_finite_number(kd_value)} "
+            f"torque_ff={_format_finite_number(torque_value)} "
+            f"duration_ms={validated_duration_ms}")
+    if len(body.encode("ascii")) > AETHOR_TEXT_MAX_REQUEST_BODY_BYTES:
+        raise ValueError("bench mit request exceeds 160 ASCII bytes excluding CR/LF")
+    return body
+
+
 def build_one_shot_bench_move(
         request_id: int,
         motor_numbers: Sequence[int],
         positions_deg: Sequence[Real],
         speeds_deg_s: Sequence[Real]) -> str:
     """Builds one strict absolute bench-move request without broadcasting values."""
-    if (isinstance(request_id, bool) or not isinstance(request_id, int) or
-            request_id < 1 or request_id > 0xFFFFFFFF):
-        raise ValueError("request_id must be a nonzero uint32 integer")
+    _validate_nonzero_request_id(request_id)
 
     motors = list(motor_numbers)
     positions_input = list(positions_deg)
@@ -171,12 +275,16 @@ def _parse_nonzero_request_id(value: str, field_name: str) -> int:
     return request_id
 
 
-def parse_one_shot_move_terminal(line: str,
-                                 request_id: int) -> OneShotMoveResult:
-    """Parses one matching completed, failed, cancelled, or stopped move terminal."""
+def parse_bench_action_terminal(line: str,
+                                request_id: int,
+                                operation: str) -> OneShotMoveResult:
+    """Parses one matching self-contained bench action terminal."""
     tokens = line.strip().split()
-    if len(tokens) < 5 or tokens[:1] != ["done"] or tokens[2:4] != ["bench", "move"]:
-        raise ValueError("line is not a bench move terminal")
+    if operation not in {"move", "mode", "mit"}:
+        raise ValueError("bench operation is unsupported")
+    if (len(tokens) < 5 or tokens[:1] != ["done"] or
+            tokens[2:4] != ["bench", operation]):
+        raise ValueError(f"line is not a bench {operation} terminal")
     if (isinstance(request_id, bool) or not isinstance(request_id, int) or
             request_id < 1 or request_id > 0xFFFFFFFF):
         raise ValueError("expected request ID must be a nonzero uint32")
@@ -243,6 +351,12 @@ def parse_one_shot_move_terminal(line: str,
     )
 
 
+def parse_one_shot_move_terminal(line: str,
+                                 request_id: int) -> OneShotMoveResult:
+    """Parses one matching completed, failed, cancelled, or stopped move terminal."""
+    return parse_bench_action_terminal(line, request_id, "move")
+
+
 class SimulatorTransport:
     """Adapts the deterministic in-process simulator to LineTransport."""
 
@@ -261,7 +375,11 @@ class SimulatorTransport:
         """Processes one simulated action write and drains deterministic outputs."""
         timeout_value = _validate_action_timeout(action_timeout)
         outputs = self.simulator.process_line(encode_line(body))
-        accepted = f"ok {request_id} bench move accepted=1"
+        body_tokens = body.split()
+        operation = (body_tokens[2]
+                     if len(body_tokens) >= 3 and body_tokens[1] == "bench"
+                     else "move")
+        accepted = f"ok {request_id} bench {operation} accepted=1"
         if accepted in outputs and self.simulator.active_motion is not None:
             remaining_ms = max(
                 0,
@@ -309,8 +427,12 @@ class SerialTransport:
         self.serial.write(encode_line(body))
         self.serial.flush()
         outputs: list[str] = []
-        done_prefix = f"done {request_id} bench move "
-        error_prefix = f"error {request_id} bench move "
+        body_tokens = body.split()
+        operation = (body_tokens[2]
+                     if len(body_tokens) >= 3 and body_tokens[1] == "bench"
+                     else "move")
+        done_prefix = f"done {request_id} bench {operation} "
+        error_prefix = f"error {request_id} bench {operation} "
         deadline = time.monotonic() + timeout_value
         while time.monotonic() < deadline:
             line = self.serial.readline()
@@ -382,6 +504,112 @@ class AethorReferenceClient:
                 (selected_mask & (1 << (result.motor - 1))) == 0):
             raise RuntimeError("one-shot move failed motor is outside request")
         return result
+
+    def _bench_action_once(self,
+                           body: str,
+                           request_id: int,
+                           operation: str,
+                           selected_mask: int,
+                           action_timeout: float | None) -> OneShotMoveResult:
+        """Sends one named bench action once and validates ACK/DONE ordering."""
+        timeout_value = _validate_action_timeout(
+            getattr(self.transport, "action_timeout", 120.0)
+            if action_timeout is None else action_timeout)
+        outputs = self.transport.transact_until_done(
+            body, request_id, timeout_value)
+        self.transcript.append(f"> {body}")
+        self.transcript.extend(f"< {output}" for output in outputs)
+        acceptance = f"ok {request_id} bench {operation} accepted=1"
+        acceptance_indexes = [index for index, output in enumerate(outputs)
+                              if output == acceptance]
+        if len(acceptance_indexes) != 1:
+            raise RuntimeError(
+                f"bench {operation} did not receive matching acceptance")
+        terminal_prefix = f"done {request_id} bench {operation} "
+        terminal_lines = [output for output in outputs
+                          if output.startswith(terminal_prefix)]
+        if len(terminal_lines) != 1:
+            raise RuntimeError(
+                f"bench {operation} did not receive one matching terminal")
+        terminal_index = outputs.index(terminal_lines[0])
+        if acceptance_indexes[0] >= terminal_index:
+            raise RuntimeError(
+                f"bench {operation} terminal arrived before acceptance")
+        result = parse_bench_action_terminal(
+            terminal_lines[0], request_id, operation)
+        if result.result == "completed" and result.motor_mask != selected_mask:
+            raise RuntimeError(
+                f"bench {operation} completed mask does not match request")
+        if (result.result == "failed" and result.motor is not None and
+                (selected_mask & (1 << (result.motor - 1))) == 0):
+            raise RuntimeError(
+                f"bench {operation} failed motor is outside request")
+        return result
+
+    def bench_mode_once(self,
+                        motor_numbers: Sequence[int],
+                        mode: str,
+                        action_timeout: float | None = None) -> OneShotMoveResult:
+        """Switches selected disabled motors and waits for register readback DONE."""
+        request_id = self.next_request_id
+        self.next_request_id += 1
+        body = build_bench_mode(request_id, motor_numbers, mode)
+        selected_mask = sum(1 << (motor - 1) for motor in motor_numbers)
+        return self._bench_action_once(body,
+                                       request_id,
+                                       "mode",
+                                       selected_mask,
+                                       action_timeout)
+
+    def bench_mit_hold_once(self,
+                            motor_number: int,
+                            kp: Real,
+                            kd: Real,
+                            torque_ff_nm: Real,
+                            duration_ms: int,
+                            action_timeout: float | None = None
+                            ) -> OneShotMoveResult:
+        """Runs one timed MIT hold and waits through final disabled feedback."""
+        request_id = self.next_request_id
+        self.next_request_id += 1
+        body = build_bench_mit_hold(request_id,
+                                    motor_number,
+                                    kp,
+                                    kd,
+                                    torque_ff_nm,
+                                    duration_ms)
+        return self._bench_action_once(body,
+                                       request_id,
+                                       "mit",
+                                       1 << (motor_number - 1),
+                                       action_timeout)
+
+    def bench_mit_move_once(self,
+                            motor_number: int,
+                            position_deg: Real,
+                            speed_deg_s: Real,
+                            kp: Real,
+                            kd: Real,
+                            torque_ff_nm: Real,
+                            duration_ms: int,
+                            action_timeout: float | None = None
+                            ) -> OneShotMoveResult:
+        """Runs one local MIT quintic move and waits through final disable."""
+        request_id = self.next_request_id
+        self.next_request_id += 1
+        body = build_bench_mit_move(request_id,
+                                    motor_number,
+                                    position_deg,
+                                    speed_deg_s,
+                                    kp,
+                                    kd,
+                                    torque_ff_nm,
+                                    duration_ms)
+        return self._bench_action_once(body,
+                                       request_id,
+                                       "mit",
+                                       1 << (motor_number - 1),
+                                       action_timeout)
 
     def run_safe_contract_probe(self) -> None:
         """Runs query-only shared checks that never enable or move hardware."""

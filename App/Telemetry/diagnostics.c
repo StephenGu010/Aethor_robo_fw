@@ -225,6 +225,7 @@ void diagnostics_update_runtime_sample(
     const RuntimeDiagnosticSample *sample)
 {
     DiagnosticCounters *counters;
+    uint8_t task_index;
 
     if ((diagnostics == NULL) || (sample == NULL))
     {
@@ -256,4 +257,17 @@ void diagnostics_update_runtime_sample(
     counters->control_group_skew_max_us = sample->control_group_skew_max_us;
     counters->minimum_stack_words = sample->minimum_stack_words;
     counters->minimum_heap_bytes = sample->minimum_heap_bytes;
+    for (task_index = 0U; task_index < DIAGNOSTIC_TASK_COUNT; ++task_index)
+    {
+        const DiagnosticTaskStack *stack = &sample->task_stacks[task_index];
+        if (stack->allocated_words != 0U && stack->free_words <= stack->allocated_words)
+        {
+            counters->task_stacks[task_index] = *stack;
+        }
+        else
+        {
+            counters->task_stacks[task_index].free_words = 0U;
+            counters->task_stacks[task_index].allocated_words = 0U;
+        }
+    }
 }

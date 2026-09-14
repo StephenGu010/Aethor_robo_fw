@@ -1,0 +1,13 @@
+{
+  "version": "8.3.11",
+  "tag": "v8.3.11",
+  "tag_object": {
+    "sha": "396f70508480f79725fc1354cd290cc83f69b2ef",
+    "type": "tag",
+    "url": "https://api.github.com/repos/lvgl/lvgl/git/tags/396f70508480f79725fc1354cd290cc83f69b2ef"
+  },
+  "archive_url": "https://codeload.github.com/lvgl/lvgl/zip/refs/tags/v8.3.11",
+  "archive_sha256": "a992bdb8a13b9b706857889ac88d28e76d23c0aa57e1da8ddfc2816a093171c1",
+  "selection": "src headers and source, only selected bundled font C files; no demos/examples/assets",
+  "commit": "74d0a816a440eea53e030c4f1af842a94f7ce3d3"
+}

@@ -20,6 +20,9 @@ from aethor_reference_client import (  # noqa: E402
     AethorReferenceClient,
     SerialTransport,
     SimulatorTransport,
+    build_bench_mit_hold,
+    build_bench_mit_move,
+    build_bench_mode,
     build_one_shot_bench_move,
     parse_one_shot_move_terminal,
 )
@@ -568,6 +571,49 @@ class AethorTextSimulatorTests(unittest.TestCase):
             mismatch["firmware_response"],
             "error 52 bench move code=count_mismatch field=position",
         )
+
+    def test_public_mode_and_mit_request_builders(self) -> None:
+        """Builds strict public mode, MIT HOLD, and MIT MOVE requests."""
+        self.assertEqual(build_bench_mode(90, [1, 3], "mit"),
+                         "90 bench mode 1,3 mode=mit")
+        self.assertEqual(build_bench_mode(91, [1], "pos_vel"),
+                         "91 bench mode 1 mode=pos_vel")
+        self.assertEqual(
+            build_bench_mit_hold(92, 1, 1.0, 1.0, 0.0, 1000),
+            "92 bench mit 1 action=hold kp=1 kd=1 torque_ff=0 duration_ms=1000")
+        self.assertEqual(
+            build_bench_mit_move(93, 3, 5.0, 2.0, 1.0, 1.0, 0.0, 1000),
+            "93 bench mit 3 action=move position=5 speed=2 kp=1 kd=1 "
+            "torque_ff=0 duration_ms=1000")
+        with self.assertRaises(ValueError):
+            build_bench_mode(94, [3, 1], "mit")
+        with self.assertRaises(ValueError):
+            build_bench_mit_hold(95, 1, 1.0, 0.0, 0.0, 1000)
+        with self.assertRaises(ValueError):
+            build_bench_mit_move(96, 1, 5.0, 0.0, 1.0, 1.0, 0.0, 1000)
+
+    def test_reference_client_waits_for_mode_and_mit_terminals(self) -> None:
+        """Sends each self-contained public action once and matches its DONE."""
+        mode_transport = ScriptedActionTransport([
+            "ok 1 bench mode accepted=1",
+            "done 1 bench mode result=completed elapsed_ms=20 motors=01",
+        ])
+        mode_result = AethorReferenceClient(mode_transport).bench_mode_once(
+            [1], "mit")
+        self.assertEqual(mode_result.result, "completed")
+        self.assertEqual(mode_transport.action_bodies,
+                         ["1 bench mode 1 mode=mit"])
+
+        mit_transport = ScriptedActionTransport([
+            "ok 1 bench mit accepted=1",
+            "done 1 bench mit result=completed elapsed_ms=1200 motors=01",
+        ])
+        mit_result = AethorReferenceClient(mit_transport).bench_mit_hold_once(
+            1, 1.0, 1.0, 0.0, 1000)
+        self.assertEqual(mit_result.result, "completed")
+        self.assertEqual(mit_transport.action_bodies, [
+            "1 bench mit 1 action=hold kp=1 kd=1 torque_ff=0 duration_ms=1000",
+        ])
 
     def test_one_shot_move_builder_rejects_unsafe_local_values(self) -> None:
         """Rejects duplicate IDs, invalid IDs, non-finite values, and nonpositive speed."""

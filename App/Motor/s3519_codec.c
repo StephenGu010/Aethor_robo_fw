@@ -4,6 +4,7 @@
  */
 
 #include "s3519_codec.h"
+#include "../Config/motor_compatibility.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -221,8 +222,12 @@ S3519CodecStatus s3519_pack_mode_command(uint8_t esc_id,
     }
 
     payload[7] = (uint8_t)command;
+    /* Only explicitly commissioned IDs use the newer base-ID special commands. */
     if (can_frame_init(frame,
-                       (uint16_t)((uint16_t)control_mode + esc_id),
+                       (esc_id <= 7U &&
+                        (AETHOR_S3519_BASE_SPECIAL_COMMAND_MASK & (1U << (esc_id - 1U))) != 0U)
+                           ? (uint16_t)esc_id
+                           : (uint16_t)((uint16_t)control_mode + esc_id),
                        payload,
                        sizeof(payload)) != CAN_FRAME_STATUS_OK)
     {

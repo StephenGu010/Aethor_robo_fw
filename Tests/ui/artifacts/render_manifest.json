@@ -1,0 +1,157 @@
+{
+  "renderer": "actual LVGL 8.3.11 software raster + production double-buffer flush port",
+  "data": "SIMULATED ONLY; no hardware validation",
+  "images": [
+    {
+      "image": "01_overview.png",
+      "rgb_sha256": "d30bf8686a55efe8248776d4d6ddf2d126daa0488658024aa90e7633b956d4f1",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "02_motors_scrolled.png",
+      "rgb_sha256": "fa98ea2f6c8ab794052412336867c3e7fdf4ca9af2d6e963c5daca24867104cc",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "03_motor_detail.png",
+      "rgb_sha256": "0ce0bfb9b3f120c2f334565492a18de9ccb121ca77a5ae4893aaac6610041e9b",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "04_feedback_stale.png",
+      "rgb_sha256": "5180c8cfd035fe3b8aacb7fc9c362dde1d6073a4a89bcda810211728a5862a7f",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "05_diagnostics.png",
+      "rgb_sha256": "5cf3cd6f30efc6e59205da579c607ddd84276c94e6d595887fe37803d84833ec",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "06_control_diagnostics.png",
+      "rgb_sha256": "7fb99c8ccf0f317690807cf1dfa4a43eb6cc50881a8dcbea41c8fc975092fd67",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "07_pos_draft.png",
+      "rgb_sha256": "6ffa736c8111df22f9331ef33f0c56476dea75bd5eb730132be2324a7471c90a",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "08_mit_draft.png",
+      "rgb_sha256": "60d177e8697f3b83cf638fc76c44a0dd9efd7734d58b56e0945bb8f63d78de0b",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "09_review_release.png",
+      "rgb_sha256": "94a7a4cc39a07d42f3170ec2f75d44c21af1051fe44d83082528f77699dcb832",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "10_review_hold.png",
+      "rgb_sha256": "e23b29dfe5c66f80dff7c384df685597ff08051281a508d48f1e43870db8bc2d",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "11_running.png",
+      "rgb_sha256": "41433e7bfbb8f022e8fc962b57dd3e79b538aa7c3ebbbf43210998789a61202c",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "12_stop_cleanup.png",
+      "rgb_sha256": "f5c1e01c8c8926deef20dce7b11872e7587e3d56d42ecdba26002f60bc8efb9c",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "13_result.png",
+      "rgb_sha256": "0573247d794c486c229eb937f931a548b8b803c8130ca40e04efa5026c2181ce",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "14_fault.png",
+      "rgb_sha256": "288c8743ecd11f8f9ae813307b8a3092eac6c6595db376332795c592f5624a35",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "15_readonly_running.png",
+      "rgb_sha256": "1b7197a130fc8081ca3943f251bca9fd5eddb6fd4815d979cb83e162c451a137",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "16_runtime_diagnostics.png",
+      "rgb_sha256": "24355ae2891138d0a2e3ea3e3bbbbbe780f967d0b96f416e28174f98af1096d9",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "17_review_set_pos.png",
+      "rgb_sha256": "d9f98346b0374231a8e7a55d6dbcb75f54fcc633f8ff2525184d6f64c7cc79d7",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "18_review_set_mit.png",
+      "rgb_sha256": "c14e5fe7daf3d358ed35850bb1cad2aa726837b038bb8aff159b7023fb457079",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "19_remote_id3.png",
+      "rgb_sha256": "391f314175c2e26c435cd958a585a5eae2a7861357e36793b0ddb3b6833ef6a3",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "20_stop_latched.png",
+      "rgb_sha256": "fec176f48d25b12613d869bf2370ecbd296deb1c2f61bb383794af877e8ee267",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "21_stop_latch_confirmed.png",
+      "rgb_sha256": "633e1dfaf2dca30b652f72395de7d81a85388c969df9e81a45c8b3d90cdf70b0",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "22_stop_latch_unconfirmed.png",
+      "rgb_sha256": "cf7228d9c2edc16f0e1f5301c8a44d59a7858ec7cac90af702035b3a5430363a",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "23_remote_multiple_targets.png",
+      "rgb_sha256": "f83c18de02de62bf17edc991a18d9fcf93cadb0cc2b9aa39005d36d469855cc3",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "24_control_prepare.png",
+      "rgb_sha256": "6195932c47aa5f22cecf3f89db60c38837bd1c5da31f7448f4b154cdb383ba2d",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "25_position_registers.png",
+      "rgb_sha256": "8eebe413dba71343fc12059882c9a7f3219bb1ed3fb9dd8a17e374f4c7f22928",
+      "width": 280,
+      "height": 240
+    }
+  ],
+  "all_current_literal_codepoints_in_font_inventory": true
+}

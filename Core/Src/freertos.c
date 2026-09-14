@@ -28,6 +28,10 @@
 #include "aethor_app.h"
 #include "monotonic_time.h"
 #include "stm32_platform.h"
+#include "debug_ui_config.h"
+#if AETHOR_DEBUG_UI_ENABLE
+#include "debug_ui_task.h"
+#endif
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -38,7 +42,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#if AETHOR_DEBUG_UI_ENABLE
+#define AETHOR_STATIC_TASK_COUNT (7U)
+#else
+#define AETHOR_STATIC_TASK_COUNT (6U)
+#endif
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,9 +57,18 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 static AethorMonotonicTimeState aethorMonotonicTimeState;
+#if AETHOR_DEBUG_UI_ENABLE
+static osThreadId DebugUiTaskHandle;
+static uint32_t debugUiTaskBuffer[2048];
+static osStaticThreadDef_t debugUiTaskControlBlock;
+static uint32_t controlExecutionMaxUs;
+static uint32_t controlPeriodMaxUs;
+static uint32_t controlPreviousCycle;
+static uint8_t controlCycleValid;
+#endif
 /* USER CODE END Variables */
 osThreadId ArmControlTaskHandle;
-uint32_t armControlTaskBuffer[ 768 ];
+uint32_t armControlTaskBuffer[ 1280 ];
 osStaticThreadDef_t armControlTaskControlBlock;
 osThreadId CanRxTaskHandle;
 uint32_t canRxTaskBuffer[ 384 ];
@@ -116,6 +133,12 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
   aethor_app_set_task_critical_hooks(EnterAethorAppTaskCritical,
                                      ExitAethorAppTaskCritical);
+#if AETHOR_DEBUG_UI_ENABLE
+  /* Internal DWT counting does not enable the PB3 SWO output pin. */
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->CYCCNT = 0U;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+#endif
 
   /* USER CODE END Init */
 
@@ -137,7 +160,8 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* definition and creation of ArmControlTask */
-  osThreadStaticDef(ArmControlTask, StartArmControlTask, osPriorityRealtime, 0, 768, armControlTaskBuffer, &armControlTaskControlBlock);
+  /* Result metadata extends cleanup depth: Keil reports >=3152 B before IRQ context. */
+  osThreadStaticDef(ArmControlTask, StartArmControlTask, osPriorityRealtime, 0, 1280, armControlTaskBuffer, &armControlTaskControlBlock);
   ArmControlTaskHandle = osThreadCreate(osThread(ArmControlTask), NULL);
 
   /* definition and creation of CanRxTask */
@@ -161,6 +185,11 @@ void MX_FREERTOS_Init(void) {
   DiagnosticsTaskHandle = osThreadCreate(osThread(DiagnosticsTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
+#if AETHOR_DEBUG_UI_ENABLE
+  osThreadStaticDef(DebugUiTask, StartDebugUiTask, osPriorityLow, 0, 2048, debugUiTaskBuffer, &debugUiTaskControlBlock);
+  DebugUiTaskHandle = osThreadCreate(osThread(DebugUiTask), NULL);
+  configASSERT(DebugUiTaskHandle != NULL);
+#endif
   configASSERT(ArmControlTaskHandle != NULL);
   configASSERT(CanRxTaskHandle != NULL);
   configASSERT(ProtocolTaskHandle != NULL);
@@ -189,6 +218,10 @@ void StartArmControlTask(void const * argument)
   (void)argument;
   for(;;)
   {
+#if AETHOR_DEBUG_UI_ENABLE
+    uint32_t controlStartCycle = DWT->CYCCNT;
+    uint32_t cyclesPerMicrosecond = SystemCoreClock / 1000000U;
+#endif
     uint64_t timestampUs = AethorMonotonicTimestampUs();
     CanFrame pendingFrame;
     CanFrame controlGroup[ARM_JOINT_COUNT];
@@ -226,6 +259,28 @@ void StartArmControlTask(void const * argument)
       (void)stm32_platform_can_submit(pendingPriority, &pendingFrame);
     }
     (void)stm32_platform_can_service_tx(ARM_JOINT_COUNT);
+#if AETHOR_DEBUG_UI_ENABLE
+    if (cyclesPerMicrosecond != 0U)
+    {
+      uint32_t elapsedUs = (DWT->CYCCNT - controlStartCycle) /
+          cyclesPerMicrosecond;
+      if (elapsedUs > controlExecutionMaxUs)
+      {
+        controlExecutionMaxUs = elapsedUs;
+      }
+      if (controlCycleValid != 0U)
+      {
+        uint32_t periodUs = (controlStartCycle - controlPreviousCycle) /
+            cyclesPerMicrosecond;
+        if (periodUs > controlPeriodMaxUs)
+        {
+          controlPeriodMaxUs = periodUs;
+        }
+      }
+      controlPreviousCycle = controlStartCycle;
+      controlCycleValid = 1U;
+    }
+#endif
     vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(4U));
   }
   /* USER CODE END StartArmControlTask */
@@ -285,12 +340,18 @@ void StartProtocolTask(void const * argument)
   for(;;)
   {
     UsbCdcStreamStatus lineStatus;
+#if AETHOR_DEBUG_UI_ENABLE
+    uint8_t protocolLinesProcessed = 0U;
+#endif
 
     (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     while (aethor_app_pop_protocol_result_output(&outputBatch) != 0U)
     {
       QueueProtocolOutputBatch(&outputBatch);
     }
+#if AETHOR_DEBUG_UI_ENABLE
+    aethor_app_debug_ui_process(AethorMonotonicTimestampUs());
+#endif
     do
     {
       uint16_t lineLength = 0U;
@@ -315,8 +376,15 @@ void StartProtocolTask(void const * argument)
           QueueProtocolOutputBatch(&outputBatch);
         }
       }
-    } while ((lineStatus == USB_CDC_STREAM_STATUS_OK) ||
-             (lineStatus == USB_CDC_STREAM_STATUS_LINE_TOO_LONG));
+#if AETHOR_DEBUG_UI_ENABLE
+      ++protocolLinesProcessed;
+#endif
+    } while (((lineStatus == USB_CDC_STREAM_STATUS_OK) ||
+              (lineStatus == USB_CDC_STREAM_STATUS_LINE_TOO_LONG))
+#if AETHOR_DEBUG_UI_ENABLE
+             && (protocolLinesProcessed < 4U)
+#endif
+             );
     {
       uint64_t timestampUs = AethorMonotonicTimestampUs();
 
@@ -325,6 +393,15 @@ void StartProtocolTask(void const * argument)
         QueueProtocolOutputBatch(&outputBatch);
       }
     }
+#if AETHOR_DEBUG_UI_ENABLE
+    /* Keep the sole producer responsive even under continuous USB input. */
+    aethor_app_debug_ui_process(AethorMonotonicTimestampUs());
+    if (protocolLinesProcessed >= 4U)
+    {
+      (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
+      vTaskDelay(pdMS_TO_TICKS(1U));
+    }
+#endif
   }
 }
 
@@ -387,8 +464,19 @@ void StartDiagnosticsTask(void const * argument)
     const Stm32PlatformDiagnostics *platformDiagnostics =
         stm32_platform_get_diagnostics();
     RuntimeDiagnosticSample runtimeSample;
-    TaskHandle_t applicationTaskHandles[6];
+    TaskHandle_t applicationTaskHandles[AETHOR_STATIC_TASK_COUNT];
     uint32_t minimumStackWords = UINT32_MAX;
+    const uint32_t applicationStackWords[AETHOR_STATIC_TASK_COUNT] = {
+      sizeof(armControlTaskBuffer) / sizeof(armControlTaskBuffer[0]),
+      sizeof(canRxTaskBuffer) / sizeof(canRxTaskBuffer[0]),
+      sizeof(protocolTaskBuffer) / sizeof(protocolTaskBuffer[0]),
+      sizeof(usbTxTaskBuffer) / sizeof(usbTxTaskBuffer[0]),
+      sizeof(telemetryTaskBuffer) / sizeof(telemetryTaskBuffer[0]),
+      sizeof(diagnosticsTaskBuffer) / sizeof(diagnosticsTaskBuffer[0])
+#if AETHOR_DEBUG_UI_ENABLE
+      , sizeof(debugUiTaskBuffer) / sizeof(debugUiTaskBuffer[0])
+#endif
+    };
     uint8_t taskIndex;
 
     memset(&runtimeSample, 0, sizeof(runtimeSample));
@@ -398,12 +486,18 @@ void StartDiagnosticsTask(void const * argument)
     applicationTaskHandles[3] = (TaskHandle_t)UsbTxTaskHandle;
     applicationTaskHandles[4] = (TaskHandle_t)TelemetryTaskHandle;
     applicationTaskHandles[5] = (TaskHandle_t)DiagnosticsTaskHandle;
-    for (taskIndex = 0U; taskIndex < 6U; ++taskIndex)
+#if AETHOR_DEBUG_UI_ENABLE
+    applicationTaskHandles[6] = (TaskHandle_t)DebugUiTaskHandle;
+#endif
+    for (taskIndex = 0U; taskIndex < AETHOR_STATIC_TASK_COUNT; ++taskIndex)
     {
       if (applicationTaskHandles[taskIndex] != NULL)
       {
         UBaseType_t stackWords = uxTaskGetStackHighWaterMark(
             applicationTaskHandles[taskIndex]);
+
+        runtimeSample.task_stacks[taskIndex].free_words = (uint32_t)stackWords;
+        runtimeSample.task_stacks[taskIndex].allocated_words = applicationStackWords[taskIndex];
 
         if ((uint32_t)stackWords < minimumStackWords)
         {
@@ -482,6 +576,39 @@ void StartDiagnosticsTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+#if AETHOR_DEBUG_UI_ENABLE
+/** @brief Wakes the sole command producer from the low-priority UI task. */
+void AethorNotifyProtocolTask(void)
+{
+  if (ProtocolTaskHandle != NULL)
+  {
+    (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
+  }
+}
+
+/** @brief Returns the same monotonic clock used for command admission/control. */
+uint64_t AethorUiTimestampUs(void)
+{
+  return AethorMonotonicTimestampUs();
+}
+
+/** @brief Copies DWT timing watermarks; no board measurements are fabricated. */
+void AethorGetControlTiming(uint32_t *execution_max_us,
+                            uint32_t *period_max_us)
+{
+  taskENTER_CRITICAL();
+  if (execution_max_us != NULL)
+  {
+    *execution_max_us = controlExecutionMaxUs;
+  }
+  if (period_max_us != NULL)
+  {
+    *period_max_us = controlPeriodMaxUs;
+  }
+  taskEXIT_CRITICAL();
+}
+#endif
 
 /** @brief Enters the scheduler boundary shared by app query readers. */
 static void EnterAethorAppTaskCritical(void)

@@ -99,6 +99,26 @@ typedef struct
     uint8_t count;
 } MotorParameterResponseSet;
 
+/** @brief Arm-owned raw position samples, independent of control feedback and its validity.
+ * Index 0 is RID 0x50, index 1 is RID 0x51. No unit conversion is implied.
+ * One outstanding request and a bounded late-response quarantine serialize reads.
+ */
+typedef struct
+{
+    float values[2];
+    uint64_t sample_us[2];
+    uint64_t sent_us;
+    uint64_t not_before_us;
+    uint32_t timeout_count;
+    uint32_t rejected_count;
+    uint32_t accepted_count;
+    uint8_t joint_index;
+    uint8_t next_register;
+    uint8_t pending_register;
+    uint8_t pending;
+    uint8_t seen_mask;
+} MotorRegisterPosition;
+
 /**
  * @brief Owns all static receive-side state for the first seven-axis arm.
  */
@@ -122,7 +142,15 @@ typedef struct
     uint8_t initialized;
     MotorParameterResponseSet parameter_expectations;
     MotorParameterResponseSet parameter_quarantine;
+    MotorRegisterPosition position_read;
 } MotorRuntime;
+
+/** @brief Produces one read-only 0x50/0x51 request when the App owner permits idle reads.
+ * Calling with allowed=0 cancels a pending read and quarantines late replies.
+ * Does not discover identity, authorize motion, or refresh standard feedback.
+ */
+MotorRuntimeStatus motor_runtime_next_position_read(MotorRuntime *runtime,
+    uint8_t joint_index, uint64_t timestamp_us, uint8_t allowed, CanFrame *frame);
 
 /**
  * @brief Initializes seven motor identities and read-only discovery state.
@@ -271,6 +299,28 @@ MotorRuntimeStatus motor_runtime_build_position_velocity_subset(
     uint8_t motor_mask,
     const float motor_position_rad[ARM_JOINT_COUNT],
     const float motor_velocity_rad_s[ARM_JOINT_COUNT],
+    MotorEmergencyFrameBatch *batch);
+
+/**
+ * @brief Encodes selected MIT targets with command-scoped gains and torque.
+ * @param runtime Initialized runtime owning discovered MIT mapping ranges.
+ * @param motor_mask Nonzero J1-J7 selection mask.
+ * @param motor_position_rad Joint-indexed motor output-shaft targets.
+ * @param motor_velocity_rad_s Joint-indexed signed motor velocities.
+ * @param kp Position gain within the vendor MIT mapping range.
+ * @param kd Damping gain within the vendor MIT mapping range.
+ * @param torque_ff_nm Feed-forward output-shaft torque within discovered TMAX.
+ * @param batch Destination bounded selected-motor frame batch, cleared on failure.
+ * @return OK or an argument, range-unavailable, or codec error.
+ */
+MotorRuntimeStatus motor_runtime_build_mit_subset(
+    const MotorRuntime *runtime,
+    uint8_t motor_mask,
+    const float motor_position_rad[ARM_JOINT_COUNT],
+    const float motor_velocity_rad_s[ARM_JOINT_COUNT],
+    float kp,
+    float kd,
+    float torque_ff_nm,
     MotorEmergencyFrameBatch *batch);
 
 /**

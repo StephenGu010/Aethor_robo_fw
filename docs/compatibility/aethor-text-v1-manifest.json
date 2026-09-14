@@ -25,11 +25,34 @@
     "duplicate_fields": "rejected"
   },
   "output_types": ["ok", "done", "error", "event", "data"],
-  "public_control_mode": "POS_VEL",
+  "public_control_modes": ["POS_VEL", "MIT"],
   "profiles": {
     "bench": {
-      "commands": ["init", "enable", "jog", "move", "stop", "disable", "clear"],
+      "commands": ["init", "mode", "mit", "enable", "jog", "move", "stop", "disable", "clear"],
       "explicit_motor_list": true,
+      "mode": {
+        "request": "<id> bench mode <ascending-motors> mode=<mit|pos_vel>",
+        "request_id_min": 1,
+        "safe_entry": "selected motors discovered, fresh, fault-free, disabled, and abs(output speed) <= 0.05 rad/s",
+        "effect": "volatile driver register write followed by readback confirmation; motors remain disabled",
+        "flash_write": false
+      },
+      "mit": {
+        "hold_request": "<id> bench mit <one-motor> action=hold kp=<float> kd=<float> torque_ff=<Nm> duration_ms=<100..10000>",
+        "move_request": "<id> bench mit <one-motor> action=move position=<deg> speed=<deg/s> kp=<float> kd=<float> torque_ff=<Nm> duration_ms=<100..10000>",
+        "request_id_min": 1,
+        "motor_count": 1,
+        "coordinates": "absolute S3519 output-shaft angle relative to this power-on zero",
+        "kp_range": "0 < kp <= 500",
+        "kd_range": "0 < kd <= 5",
+        "torque_ff_limit": "abs(torque_ff) <= discovered TMAX; reject without clamping",
+        "position_limit": "abs(position_deg) <= discovered PMAX converted to degrees",
+        "speed_limit": "speed_deg_s <= min(discovered VMAX, discovered MAX_SPD) converted to degrees per second",
+        "initial_unverified_tuning_example": "kp=1 kd=1 torque_ff=0 from the vendor MIT example; not a calibrated production value",
+        "host_submission": "send exactly once and wait for matching ok and done; no ping keepalive",
+        "firmware_lifecycle": ["discovery", "disabled_zero_speed_gate", "mode_readback", "clear", "enable", "local_quintic_or_hold", "timed_hold", "disable"],
+        "completion_gate": "fresh disabled feedback for the selected motor"
+      },
       "move": {
         "request": "<id> bench move <motors> position=<deg-list> speed=<deg/s-list>",
         "request_id_min": 1,
@@ -73,7 +96,7 @@
     "keepalive_command": "ping",
     "host_period_ms_while_energized": 250,
     "watchdog_timeout_ms": 1000,
-    "watchdog_scope": "any motor enabled or motion active, except an accepted self-contained bench move while it owns discovery-through-disable cleanup",
+    "watchdog_scope": "any motor enabled or motion active, except an accepted self-contained bench move, bench mit, or safe bench mode action while it owns discovery-through-disable cleanup",
     "watchdog_action": "stop_disable",
     "valid_request_refreshes_watchdog": true,
     "exact_replay_refreshes_watchdog": "only_when_original_request_status_is_ok",
@@ -100,9 +123,16 @@
     "failed_motor": "one-based selected motor when attributable, otherwise ?",
     "motors_mask": "selected motor bit mask; motor 1 is bit 0"
   },
+  "bench_mode_and_mit_results": {
+    "accepted": "ok <id> bench <mode|mit> accepted=1",
+    "completed": "done <id> bench <mode|mit> result=completed elapsed_ms=<uint32> motors=<two-digit-hex-mask>",
+    "failed": "done <id> bench <mode|mit> result=failed stage=<stage> code=<code> motor=<1..7|?>",
+    "cancelled": "done <id> bench <mode|mit> result=cancelled",
+    "stopped": "done <id> bench <mode|mit> result=stopped"
+  },
   "request_arbitration": {
-    "active_action": "a second ordinary command returns code=busy without replacing the active move",
-    "stop": "bench stop may preempt an active move; the original move ends as cancelled and stop has its own terminal result",
+    "active_action": "a second ordinary command returns code=busy without replacing the active self-contained action",
+    "stop": "bench stop may preempt an active move, MIT action, or mode action; the original action ends as cancelled and stop has its own terminal result",
     "replay": "an identical nonzero request ID and normalized body replays its recent result without moving again",
     "conflict": "the same nonzero request ID with a different normalized body returns code=request_conflict"
   },

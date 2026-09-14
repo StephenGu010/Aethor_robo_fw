@@ -24,6 +24,7 @@ FLOAT32_MAX = 3.4028234663852886e38
 SIMULATED_PMAX_DEG = 180.0
 SIMULATED_VMAX_DEG_S = 360.0
 SIMULATED_MAX_SPEED_DEG_S = 360.0
+SIMULATED_TMAX_NM = 8.0
 SIMULATED_MOVE_SPEED_LIMIT_DEG_S = min(
     SIMULATED_VMAX_DEG_S, SIMULATED_MAX_SPEED_DEG_S)
 
@@ -217,6 +218,10 @@ class AethorTextSimulator:
             self.motor_enabled_mask &= ~motion.selected_mask
             output = (f"done {motion.request_id} bench move result=completed "
                       f"elapsed_ms={elapsed_ms} motors={motion.selected_mask:02x}")
+        elif motion.namespace == "bench_mit":
+            self.motor_enabled_mask &= ~motion.selected_mask
+            output = (f"done {motion.request_id} bench mit result=completed "
+                      f"elapsed_ms={elapsed_ms} motors={motion.selected_mask:02x}")
         else:
             output = (f"done {motion.request_id} arm move result=completed "
                       f"elapsed_ms={elapsed_ms} max_error_deg=0")
@@ -271,7 +276,7 @@ class AethorTextSimulator:
         self._expire_replay()
         self_contained_move_active = (
             self.active_motion is not None and
-            self.active_motion.namespace == "bench_move")
+            self.active_motion.namespace in {"bench_move", "bench_mit"})
         if (self.motor_enabled_mask and not self_contained_move_active and
                 not self.watchdog_reported and
                 self.now_ms - self.last_request_ms >= 1000):
@@ -399,7 +404,8 @@ class AethorTextSimulator:
                 if section == "rtos":
                     return ([f"ok {request_id} show diag rtos control_stack=? "
                              "can_stack=? protocol_stack=? usb_stack=? "
-                             "heap_min=0"], True)
+                             "heap_min=0 telemetry_stack=? diag_stack=? ui_stack=? "
+                             "stack_unit=words"], True)
                 return [f"error {request_id} show diag code=bad_argument"], False
             return ([f"ok {request_id} show diag loop_max_us=4000 deadline_miss=0 "
                      "can_error=0 usb_drop=0 fault=none"], True)
@@ -411,12 +417,13 @@ class AethorTextSimulator:
         if self.profile != "bench":
             return ([f"error {request_id} bench {operation} code=profile "
                      "current=arm required=bench"], False)
-        if operation not in {"init", "enable", "jog", "move", "stop",
-                             "disable", "clear"}:
+        if operation not in {"init", "mode", "mit", "enable", "jog", "move",
+                             "stop", "disable", "clear"}:
             return ([f"error {request_id} bench {operation} "
                      "code=unknown_command"], False)
-        if operation == "move" and request_id == 0:
-            return ["error 0 bench move code=bad_argument field=request_id"], False
+        if operation in {"move", "mode", "mit"} and request_id == 0:
+            return ([f"error 0 bench {operation} "
+                     "code=bad_argument field=request_id"], False)
         try:
             if len(positionals) != 1:
                 raise ValueError("motors")
@@ -427,13 +434,90 @@ class AethorTextSimulator:
                      "code=bad_argument field=motors"], False)
         if self.active_motion is not None and operation != "stop":
             return [f"error {request_id} bench {operation} code=busy"], False
-        if operation not in {"jog", "move"} and fields:
+        if operation not in {"jog", "move", "mode", "mit"} and fields:
             return ([f"error {request_id} bench {operation} "
                      "code=bad_argument"], False)
         accepted = f"ok {request_id} bench {operation} accepted=1"
         if operation == "init":
             done = (f"done {request_id} bench init result=completed identity={mask:02x} "
                     f"mode={mask:02x} ranges={mask:02x} version={mask:02x}")
+        elif operation == "mode":
+            if set(fields) != {"mode"} or fields["mode"] not in {"mit", "pos_vel"}:
+                return ([f"error {request_id} bench mode "
+                         "code=bad_argument field=mode"], False)
+            self.motor_enabled_mask &= ~mask
+            done = (f"done {request_id} bench mode result=completed "
+                    f"elapsed_ms=0 motors={mask:02x}")
+        elif operation == "mit":
+            if len(motors) != 1:
+                return ([f"error {request_id} bench mit "
+                         "code=bad_argument field=motors"], False)
+            action = fields.get("action")
+            expected_fields = ({"action", "kp", "kd", "torque_ff", "duration_ms"}
+                               if action == "hold" else
+                               {"action", "position", "speed", "kp", "kd",
+                                "torque_ff", "duration_ms"})
+            if action not in {"hold", "move"}:
+                return ([f"error {request_id} bench mit "
+                         "code=bad_argument field=action"], False)
+            if set(fields) != expected_fields:
+                return [f"error {request_id} bench mit code=bad_argument"], False
+            parsed_parameters: dict[str, float] = {}
+            for field_name in ("kp", "kd", "torque_ff"):
+                parse_status, parsed_value = parse_strict_float32_token(
+                    fields[field_name])
+                if parse_status != "ok":
+                    return ([f"error {request_id} bench mit "
+                             f"code=bad_argument field={field_name}"], False)
+                parsed_parameters[field_name] = parsed_value
+            if not 0.0 < parsed_parameters["kp"] <= 500.0:
+                return ([f"error {request_id} bench mit "
+                         "code=out_of_range field=kp"], False)
+            if not 0.0 < parsed_parameters["kd"] <= 5.0:
+                return ([f"error {request_id} bench mit "
+                         "code=out_of_range field=kd"], False)
+            if abs(parsed_parameters["torque_ff"]) > SIMULATED_TMAX_NM:
+                return ([f"error {request_id} bench mit "
+                         "code=out_of_range field=torque_ff"], False)
+            try:
+                duration_ms = parse_strict_ascii_u32_token(fields["duration_ms"])
+            except ValueError:
+                return ([f"error {request_id} bench mit "
+                         "code=bad_argument field=duration_ms"], False)
+            if not 100 <= duration_ms <= 10000:
+                return ([f"error {request_id} bench mit "
+                         "code=out_of_range field=duration_ms"], False)
+            target = list(self.joint_position_deg)
+            total_duration_ms = duration_ms
+            if action == "move":
+                position_status, position = parse_strict_float32_token(
+                    fields["position"])
+                speed_status, speed = parse_strict_float32_token(fields["speed"])
+                if position_status != "ok":
+                    return ([f"error {request_id} bench mit "
+                             "code=bad_argument field=position"], False)
+                if abs(position) > SIMULATED_PMAX_DEG:
+                    return ([f"error {request_id} bench mit "
+                             "code=position_out_of_range field=position"], False)
+                if speed_status != "ok":
+                    return ([f"error {request_id} bench mit "
+                             "code=bad_argument field=speed"], False)
+                if not 0.0 < speed <= SIMULATED_MOVE_SPEED_LIMIT_DEG_S:
+                    return ([f"error {request_id} bench mit "
+                             "code=out_of_range field=speed"], False)
+                motor_index = motors[0] - 1
+                trajectory_ms = max(
+                    4,
+                    math.ceil(1.875 * abs(position - target[motor_index]) /
+                              speed * 1000),
+                )
+                target[motor_index] = position
+                total_duration_ms += trajectory_ms
+            self.motor_enabled_mask |= mask
+            self.active_motion = SimulatedMotion(
+                request_id, "bench_mit", mask, self.now_ms,
+                total_duration_ms, list(self.joint_position_deg), target)
+            return [accepted], True
         elif operation == "enable":
             self.motor_enabled_mask |= mask
             done = f"done {request_id} bench enable result=completed enabled={mask:02x}"
@@ -525,6 +609,9 @@ class AethorTextSimulator:
                 if cancelled_motion.namespace == "bench_move":
                     cancelled = (f"done {cancelled_motion.request_id} "
                                  "bench move result=cancelled")
+                elif cancelled_motion.namespace == "bench_mit":
+                    cancelled = (f"done {cancelled_motion.request_id} "
+                                 "bench mit result=cancelled")
                 else:
                     elapsed_ms = self.now_ms - cancelled_motion.start_ms
                     cancelled = (f"done {cancelled_motion.request_id} bench jog "
@@ -577,12 +664,12 @@ class AethorTextSimulator:
                 return [f"error {request_id} help code=bad_argument"], False
             if not positionals:
                 return ([f"ok {request_id} help topics=show,stream,arm,bench "
-                         "examples=show_state,arm_move,bench_jog"], True)
+                         "examples=show_state,arm_move,bench_mit"], True)
             help_topics = {
                 "show": "commands=info,state,joints,motors,motor,config,diag",
                 "stream": "commands=joints,motors,off rates=joints_1_50,motors_1_10",
                 "arm": "commands=align,enable,move,stop,disable,clear",
-                "bench": "commands=init,enable,jog,move,stop,disable,clear",
+                "bench": "commands=init,mode,mit,enable,jog,move,stop,disable,clear",
             }
             topic = positionals[0]
             if topic not in help_topics:

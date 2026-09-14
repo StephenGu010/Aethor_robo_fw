@@ -12,6 +12,21 @@
 #define DIAGNOSTICS_CAPACITY (256U)
 #define DIAGNOSTIC_WATERMARK_NOT_SAMPLED (UINT32_MAX)
 
+/** @brief Stable order of the seven application tasks; no kernel idle task is implied. */
+typedef enum
+{
+    DIAGNOSTIC_TASK_CONTROL = 0, DIAGNOSTIC_TASK_CAN, DIAGNOSTIC_TASK_PROTOCOL,
+    DIAGNOSTIC_TASK_USB, DIAGNOSTIC_TASK_TELEMETRY, DIAGNOSTIC_TASK_DIAGNOSTICS,
+    DIAGNOSTIC_TASK_UI, DIAGNOSTIC_TASK_COUNT
+} DiagnosticTaskIndex;
+
+/** @brief CPU-sampled stack watermark in 32-bit words; allocated=0 means unsampled. */
+typedef struct
+{
+    uint32_t free_words;
+    uint32_t allocated_words;
+} DiagnosticTaskStack;
+
 /**
  * @brief Defines diagnostic event severity without text formatting.
  */
@@ -82,6 +97,7 @@ typedef struct
     uint32_t usb_transmit_busy_count;
     uint32_t usb_transmit_error_count;
     uint32_t event_overwrite_count;
+    DiagnosticTaskStack task_stacks[DIAGNOSTIC_TASK_COUNT];
 } DiagnosticCounters;
 
 /** @brief Carries one platform-neutral runtime transport/resource sample. */
@@ -107,6 +123,7 @@ typedef struct
     uint32_t control_group_skew_max_us;
     uint32_t minimum_stack_words;
     uint32_t minimum_heap_bytes;
+    DiagnosticTaskStack task_stacks[DIAGNOSTIC_TASK_COUNT];
 } RuntimeDiagnosticSample;
 
 /**

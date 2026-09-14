@@ -37,6 +37,7 @@ function Invoke-Phase0HostTests {
     $sourceFiles = @(
         'Tests\host\phase0_test_main.c',
         'App\aethor_app.c',
+        'App\DebugUi\debug_ui_mailbox.c',
         'App\Config\arm_config.c',
         'App\Config\build_info.c',
         'App\Telemetry\diagnostics.c',

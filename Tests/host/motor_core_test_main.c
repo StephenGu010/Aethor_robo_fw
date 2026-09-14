@@ -331,6 +331,68 @@ static void test_motor_runtime_builds_position_velocity_subset_atomically(void)
 }
 
 /**
+ * @brief Verifies command-scoped MIT gains and feed-forward torque are encoded atomically.
+ */
+static void test_motor_runtime_builds_mit_subset_with_public_parameters(void)
+{
+    MotorRuntime runtime;
+    MotorEmergencyFrameBatch batch;
+    CanFrame expected_frame;
+    float motor_position_rad[ARM_JOINT_COUNT] = {0.0F};
+    float motor_velocity_rad_s[ARM_JOINT_COUNT] = {0.0F};
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    motor_position_rad[2] = -1.0F;
+    motor_velocity_rad_s[2] = 0.5F;
+
+    assert(motor_runtime_build_mit_subset(&runtime,
+                                          0x04U,
+                                          motor_position_rad,
+                                          motor_velocity_rad_s,
+                                          1.0F,
+                                          1.0F,
+                                          0.25F,
+                                          &batch) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(batch.count == 1U);
+    assert(s3519_pack_mit(
+               3U,
+               &runtime.discovery.results[2].ranges,
+               -1.0F,
+               0.5F,
+               1.0F,
+               1.0F,
+               0.25F,
+               &expected_frame) == S3519_CODEC_STATUS_OK);
+    assert(memcmp(&batch.frames[0], &expected_frame, sizeof(expected_frame)) ==
+           0);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    assert(motor_runtime_build_mit_subset(&runtime,
+                                          0x04U,
+                                          motor_position_rad,
+                                          motor_velocity_rad_s,
+                                          1.0F,
+                                          0.0F,
+                                          0.25F,
+                                          &batch) ==
+           MOTOR_RUNTIME_STATUS_CODEC_ERROR);
+    assert_motor_frame_batch_is_zeroed(&batch);
+
+    memset(&batch, 0xA5, sizeof(batch));
+    assert(motor_runtime_build_mit_subset(&runtime,
+                                          0x04U,
+                                          motor_position_rad,
+                                          motor_velocity_rad_s,
+                                          1.0F,
+                                          1.0F,
+                                          16.1F,
+                                          &batch) ==
+           MOTOR_RUNTIME_STATUS_CODEC_ERROR);
+    assert_motor_frame_batch_is_zeroed(&batch);
+}
+
+/**
  * @brief Verifies the production mapping creates exactly seven independent motors.
  */
 static void test_motor_bank_uses_frozen_seven_axis_mapping(void)
@@ -1675,6 +1737,13 @@ static void test_s3519_command_encoding(void)
     assert(frame.identifier == 0x103U);
     assert(frame.data[7] == 0xFCU);
 
+    /* Commissioned motor7 uses the SDK base-ID special-command convention. */
+    assert(s3519_pack_mode_command(7U, S3519_CONTROL_MODE_POSITION_VELOCITY,
+                                  S3519_MODE_COMMAND_DISABLE, &frame) == S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x007U && frame.data[7] == 0xFDU);
+    assert(s3519_pack_position_velocity(7U, 0.0F, 0.01F, &frame) == S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x107U);
+
     assert(s3519_pack_parameter_read(3U, S3519_REGISTER_MASTER_ID, &frame) ==
            S3519_CODEC_STATUS_OK);
     assert(frame.identifier == 0x7FFU);
@@ -2102,19 +2171,78 @@ static void test_motor_runtime_routes_discovery_and_feedback(void)
     assert(runtime.accepted_feedback_count == 3U);
     assert(runtime.accepted_parameter_response_count ==
            (uint32_t)(ARM_JOINT_COUNT * MOTOR_DISCOVERY_REGISTER_COUNT));
+    {
+        /* Packed feedback bytes may equal the read opcode/RID without being a reply. */
+        uint8_t collision_payload[8] = {0x11U, 0x80U, 0x33U, 0x50U, 8U, 0U, 42U, 40U};
+        CanFrame collision_frame;
+        CanFrame read_request;
+        assert(can_frame_init(&collision_frame, 0x11U, collision_payload, 8U) == CAN_FRAME_STATUS_OK);
+        assert(motor_runtime_accept_frame(&runtime, &collision_frame, timestamp_us + 10U) == MOTOR_RUNTIME_STATUS_OK);
+        assert(motor_runtime_next_position_read(&runtime, 0U, timestamp_us + 11U, 1U, &read_request) == MOTOR_RUNTIME_STATUS_FRAME_READY);
+        assert(motor_runtime_accept_frame(&runtime, &collision_frame, timestamp_us + 12U) == MOTOR_RUNTIME_STATUS_OK);
+        collision_frame.data[0] = 1U;
+        assert(motor_runtime_accept_frame(&runtime, &collision_frame, timestamp_us + 13U) == MOTOR_RUNTIME_STATUS_OK);
+        assert(runtime.accepted_feedback_count == 6U && runtime.position_read.accepted_count == 0U);
+    }
 }
 
-/**
- * @brief Runs all seven-motor core tests.
- * @return Zero when every assertion passes.
- */
+/** @brief Position register responses never renew ordinary motor feedback. */
+static void test_position_register_reads(void)
+{
+    MotorRuntime runtime;
+    CanFrame request, response;
+    uint8_t payload[8] = {7U, 0U, 0x33U, 0x50U, 0U, 0U, 0x80U, 0x3FU};
+    assert(motor_runtime_init(&runtime, arm_config_get_production()) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_next_position_read(&runtime, 6U, 1000000ULL, 1U, &request) == MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.identifier == 0x7FFU && request.length == 4U && request.data[3] == 0x50U);
+    assert(motor_runtime_next_position_read(&runtime, 6U, 1000001ULL, 1U, &request) == MOTOR_RUNTIME_STATUS_WAITING);
+    assert(can_frame_init(&response, runtime.bank.motors[6].master_id, payload, 8U) == CAN_FRAME_STATUS_OK);
+    response.identifier ^= 1U;
+    assert(motor_runtime_accept_frame(&runtime, &response, 1000002ULL) != MOTOR_RUNTIME_STATUS_OK);
+    response.identifier ^= 1U;
+    response.data[0] = 6U;
+    assert(motor_runtime_accept_frame(&runtime, &response, 1000003ULL) != MOTOR_RUNTIME_STATUS_OK);
+    response.data[0] = 7U;
+    response.data[3] = 0x51U;
+    assert(motor_runtime_accept_frame(&runtime, &response, 1000004ULL) != MOTOR_RUNTIME_STATUS_OK);
+    response.data[3] = 0x50U;
+    response.data[2] = 0x55U;
+    assert(motor_runtime_accept_frame(&runtime, &response, 1000005ULL) != MOTOR_RUNTIME_STATUS_OK);
+    response.data[2] = 0x33U;
+    response.length = 4U;
+    assert(motor_runtime_accept_frame(&runtime, &response, 1000006ULL) != MOTOR_RUNTIME_STATUS_OK);
+    response.length = 8U;
+    assert(motor_runtime_accept_frame(&runtime, &response, 1000010ULL) == MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.position_read.values[0] == 1.0F && runtime.position_read.seen_mask == 1U);
+    assert(runtime.accepted_feedback_count == 0U && runtime.bank.motors[6].feedback.timestamp_us == 0U);
+    assert(motor_runtime_next_position_read(&runtime, 6U, 1100010ULL, 1U, &request) == MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(request.data[3] == 0x51U);
+    payload[3] = 0x51U; payload[6] = 0xC0U; payload[7] = 0x7FU; /* NaN */
+    assert(can_frame_init(&response, runtime.bank.motors[6].master_id, payload, 8U) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response, 1100020ULL) != MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.position_read.seen_mask == 1U);
+    assert(motor_runtime_next_position_read(&runtime, 6U, 1200010ULL, 1U, &request) == MOTOR_RUNTIME_STATUS_WAITING);
+    assert(runtime.position_read.timeout_count == 1U);
+    payload[6] = 0U; payload[7] = 0x40U;
+    assert(can_frame_init(&response, runtime.bank.motors[6].master_id, payload, 8U) == CAN_FRAME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &response, 1200020ULL) != MOTOR_RUNTIME_STATUS_OK);
+    assert(runtime.position_read.seen_mask == 1U);
+    assert(motor_runtime_next_position_read(&runtime, 6U, 1800010ULL, 0U, &request) == MOTOR_RUNTIME_STATUS_WAITING);
+    assert(motor_runtime_next_position_read(&runtime, 6U, 1800020ULL, 1U, &request) == MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(motor_runtime_next_position_read(&runtime, 6U, 1800030ULL, 0U, &request) == MOTOR_RUNTIME_STATUS_WAITING);
+    assert(runtime.position_read.pending == 0U);
+}
+
+/** @brief Runs all seven-motor core assertions; returns zero on success. */
 int main(void)
 {
+    test_position_register_reads();
     test_motor_runtime_reports_discovered_position_velocity_limits();
     test_motor_runtime_accepts_valid_position_velocity_move_limits();
     test_motor_runtime_rejects_invalid_position_velocity_moves();
     test_motor_runtime_rejects_missing_or_faulted_move_feedback();
     test_motor_runtime_builds_position_velocity_subset_atomically();
+    test_motor_runtime_builds_mit_subset_with_public_parameters();
     test_motor_bank_uses_frozen_seven_axis_mapping();
     test_motor_bank_publishes_coherent_feedback_snapshots();
     test_motor_bank_rejects_snapshot_during_publish();

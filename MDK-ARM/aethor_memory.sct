@@ -1,0 +1,23 @@
+; File: aethor_memory.sct
+; Purpose: STM32H723 UI target layout. DMA cannot use the default DTCM region.
+; Keep pixel buffers cache-line aligned and isolated from unrelated CPU data.
+LR_IROM1 0x08000000 0x00100000 {
+  ER_IROM1 0x08000000 0x00100000 {
+    *.o (RESET, +First)
+    *(InRoot$$Sections)
+    .ANY (+RO)
+    .ANY (+XO)
+  }
+  RW_LCD_DMA 0x24000000 0x00008000 {
+    * (.lcd_dma)
+  }
+  RW_LVGL_POOL 0x24008000 0x00010000 {
+    * (.lvgl_pool)
+  }
+  RW_IRAM1 0x20000000 0x00020000 {
+    .ANY (+RW +ZI)
+  }
+  RW_IRAM2 0x24018000 0x00038000 {
+    .ANY (+RW +ZI)
+  }
+}

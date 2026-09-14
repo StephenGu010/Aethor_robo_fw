@@ -1,0 +1,2136 @@
+{
+  "version": "8.3.11",
+  "archive_sha256": "a992bdb8a13b9b706857889ac88d28e76d23c0aa57e1da8ddfc2816a093171c1",
+  "files": [
+    {
+      "path": "LICENCE.txt",
+      "sha256": "6a916130a36e83a79bb0dca6c6a7bfe60a67af7d118605e2b7b23bd5ad5c4eb0",
+      "upstream_sha256": "6a916130a36e83a79bb0dca6c6a7bfe60a67af7d118605e2b7b23bd5ad5c4eb0",
+      "upstream_equal": true
+    },
+    {
+      "path": "lv_conf_template.h",
+      "sha256": "fce1a88a9346c8a024651ae4c7c37deb2bcbfd402f46baccc94894e768dbd2b4",
+      "upstream_sha256": "fce1a88a9346c8a024651ae4c7c37deb2bcbfd402f46baccc94894e768dbd2b4",
+      "upstream_equal": true
+    },
+    {
+      "path": "lvgl.h",
+      "sha256": "98c536dba790e1a30424fc95163147bf7005c5ffd0f637906c339890893872a3",
+      "upstream_sha256": "98c536dba790e1a30424fc95163147bf7005c5ffd0f637906c339890893872a3",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_core.mk",
+      "sha256": "4e484856a86a70f8cf62c61e5c2b94cf97f5a1296e23466b5fa227a495270674",
+      "upstream_sha256": "4e484856a86a70f8cf62c61e5c2b94cf97f5a1296e23466b5fa227a495270674",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_disp.c",
+      "sha256": "64779f1d024f3c0aaa9374859ce9228869ff8931c828d31d454919f215624124",
+      "upstream_sha256": "64779f1d024f3c0aaa9374859ce9228869ff8931c828d31d454919f215624124",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_disp.h",
+      "sha256": "4cdf3acd468375d0f1f918b2a3d50cb820265655ed7ef67ffa066c3dfd778e31",
+      "upstream_sha256": "4cdf3acd468375d0f1f918b2a3d50cb820265655ed7ef67ffa066c3dfd778e31",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_event.c",
+      "sha256": "a67f117c82368ce10d80c7125b1bb6c6094b3ca666f522c9d5dc1169492c35a9",
+      "upstream_sha256": "826e48a359a50c5bd4e9e3d8f53375c7392eefd7667083dd6e85a1f7a445c63f",
+      "upstream_equal": false
+    },
+    {
+      "path": "src/core/lv_event.h",
+      "sha256": "b906f6141ce601c07ac5cd1cab65c1d2fe28192cc12782c4362aff939d2a7550",
+      "upstream_sha256": "b906f6141ce601c07ac5cd1cab65c1d2fe28192cc12782c4362aff939d2a7550",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_group.c",
+      "sha256": "eb3a038897cde40f0ff519017f02a25ea355c776516c6507fe8368c474f27033",
+      "upstream_sha256": "eb3a038897cde40f0ff519017f02a25ea355c776516c6507fe8368c474f27033",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_group.h",
+      "sha256": "faff4b13effd63da9ca857ffcb6c7f82ed3f52b81656e3017a1347344e48f8a9",
+      "upstream_sha256": "faff4b13effd63da9ca857ffcb6c7f82ed3f52b81656e3017a1347344e48f8a9",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_indev.c",
+      "sha256": "45a169a6d8af02bbac25eb2249c5fdff1d67d64d2af7609882c2fb6cbdab19f6",
+      "upstream_sha256": "45a169a6d8af02bbac25eb2249c5fdff1d67d64d2af7609882c2fb6cbdab19f6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_indev.h",
+      "sha256": "10aac9ffdf5105b8e699f2e6e4edc604fd176409a52a499377adc85e5e6f3382",
+      "upstream_sha256": "10aac9ffdf5105b8e699f2e6e4edc604fd176409a52a499377adc85e5e6f3382",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_indev_scroll.c",
+      "sha256": "7bbb7d490576592a46821930dcad3bfdbc6edb93c246e1d85e63877152317f72",
+      "upstream_sha256": "7bbb7d490576592a46821930dcad3bfdbc6edb93c246e1d85e63877152317f72",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_indev_scroll.h",
+      "sha256": "3b552db89aeeed85dd2cbdaafcc66f040459063465f07dad745f9fb89aba861f",
+      "upstream_sha256": "3b552db89aeeed85dd2cbdaafcc66f040459063465f07dad745f9fb89aba861f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj.c",
+      "sha256": "f959f1026ed406fd9786f6d29f58b8d0a94ba69458041bc41327dd27fc226775",
+      "upstream_sha256": "f959f1026ed406fd9786f6d29f58b8d0a94ba69458041bc41327dd27fc226775",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj.h",
+      "sha256": "e6a1d2db3413021e873eec763b006c737fe805a7ee7a4ff25d91abd622c43bfa",
+      "upstream_sha256": "e6a1d2db3413021e873eec763b006c737fe805a7ee7a4ff25d91abd622c43bfa",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_class.c",
+      "sha256": "f56368d1f291d78871eee167f1ee1900ab2882693de09ee3f50caafaeedf1f77",
+      "upstream_sha256": "f56368d1f291d78871eee167f1ee1900ab2882693de09ee3f50caafaeedf1f77",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_class.h",
+      "sha256": "7fe17ea5a2b949a66825a1b8165c2f863046b03eaae67d1b8667466fee342c5b",
+      "upstream_sha256": "7fe17ea5a2b949a66825a1b8165c2f863046b03eaae67d1b8667466fee342c5b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_draw.c",
+      "sha256": "5d6544ca418077dd2562f6181f1fdbd013d604b0550717a345b4f0e56320e8dc",
+      "upstream_sha256": "025c755e75cbf3b4968b9b4687d96cdf9d99de0336883dbf20f238ad144524cf",
+      "upstream_equal": false
+    },
+    {
+      "path": "src/core/lv_obj_draw.h",
+      "sha256": "d9b69e183af16ab8b9a26f85ead4147f961fbf15988e117658f84fd7002befe1",
+      "upstream_sha256": "d9b69e183af16ab8b9a26f85ead4147f961fbf15988e117658f84fd7002befe1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_pos.c",
+      "sha256": "23e9c2a2f9d89f6aa640f2ad3f9fe87e082f3a49ae1baf577a93a0e6f8bfea73",
+      "upstream_sha256": "23e9c2a2f9d89f6aa640f2ad3f9fe87e082f3a49ae1baf577a93a0e6f8bfea73",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_pos.h",
+      "sha256": "57edddf04ad0fb8517dbe86ef6349501399ae26012c2297fa144fd5cc62fbdf6",
+      "upstream_sha256": "57edddf04ad0fb8517dbe86ef6349501399ae26012c2297fa144fd5cc62fbdf6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_scroll.c",
+      "sha256": "4f30bdab4c2cdef8b1dd0dce3531663d8f8f5f175a589f12c074d263fb350498",
+      "upstream_sha256": "4f30bdab4c2cdef8b1dd0dce3531663d8f8f5f175a589f12c074d263fb350498",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_scroll.h",
+      "sha256": "d4e210944ace64c883535482eda66ca2071d9e3804f445232f8ebefa2ee798e0",
+      "upstream_sha256": "d4e210944ace64c883535482eda66ca2071d9e3804f445232f8ebefa2ee798e0",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_style.c",
+      "sha256": "8c7143d4a1f245203e759f6477f1c1d68d10f9752c0dd38836dc24cd304fb4cc",
+      "upstream_sha256": "8c7143d4a1f245203e759f6477f1c1d68d10f9752c0dd38836dc24cd304fb4cc",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_style.h",
+      "sha256": "6dbfdb378fd6379ab5ad567aac0970a7615a1f79e8121953e9d182e83d58122b",
+      "upstream_sha256": "6dbfdb378fd6379ab5ad567aac0970a7615a1f79e8121953e9d182e83d58122b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_style_gen.c",
+      "sha256": "8ddda9268506e10d2b2436cb53b66455ee54132679f063511f056a3993dccc49",
+      "upstream_sha256": "8ddda9268506e10d2b2436cb53b66455ee54132679f063511f056a3993dccc49",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_style_gen.h",
+      "sha256": "9317c91f8072eef12b10c2383148ca108667d83a4ee6f98d37dedc8216e9dc64",
+      "upstream_sha256": "9317c91f8072eef12b10c2383148ca108667d83a4ee6f98d37dedc8216e9dc64",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_tree.c",
+      "sha256": "a689efc2e5d592d98146d183aae408de3d1e6f423ee7533d17c20a1139cf4202",
+      "upstream_sha256": "a689efc2e5d592d98146d183aae408de3d1e6f423ee7533d17c20a1139cf4202",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_obj_tree.h",
+      "sha256": "930140c278836e36c14aef8b83e54a02eac78c8503ec2dbc0db546c8b66baf4b",
+      "upstream_sha256": "930140c278836e36c14aef8b83e54a02eac78c8503ec2dbc0db546c8b66baf4b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_refr.c",
+      "sha256": "1509818f43df2f721c06f4a7b591469e434cb524186595460006fe1bd9470c47",
+      "upstream_sha256": "1509818f43df2f721c06f4a7b591469e434cb524186595460006fe1bd9470c47",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_refr.h",
+      "sha256": "e5bce21ae5175f5c2ed622039aac59a594531878b28be17381f55d535079eebd",
+      "upstream_sha256": "e5bce21ae5175f5c2ed622039aac59a594531878b28be17381f55d535079eebd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_theme.c",
+      "sha256": "90877775a9f5f6d3eaf65fba6b75e0c18628e952dfc00c3e79ebaf6526ce4983",
+      "upstream_sha256": "90877775a9f5f6d3eaf65fba6b75e0c18628e952dfc00c3e79ebaf6526ce4983",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/core/lv_theme.h",
+      "sha256": "951f83d283f01c6f4c2bf1cf6f2aa30f16c068d63dcf5aee5b6c93cb5903764a",
+      "upstream_sha256": "951f83d283f01c6f4c2bf1cf6f2aa30f16c068d63dcf5aee5b6c93cb5903764a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/arm2d/lv_draw_arm2d.mk",
+      "sha256": "7c5ab95a37ecfbaca3587ea7b3d85bb52656889350eabc9fc689de5c868f08f2",
+      "upstream_sha256": "7c5ab95a37ecfbaca3587ea7b3d85bb52656889350eabc9fc689de5c868f08f2",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/arm2d/lv_gpu_arm2d.c",
+      "sha256": "5f6b43d15d78e7fbb783d6ab7261dc3d3ca00bd782ed0cb115c095962f67bd61",
+      "upstream_sha256": "5f6b43d15d78e7fbb783d6ab7261dc3d3ca00bd782ed0cb115c095962f67bd61",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/arm2d/lv_gpu_arm2d.h",
+      "sha256": "1917c286c862969f7d7f9e0542e2374b6584997d419af37e6ce15b90b0a12b00",
+      "upstream_sha256": "1917c286c862969f7d7f9e0542e2374b6584997d419af37e6ce15b90b0a12b00",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw.c",
+      "sha256": "b61110a739d1cb98aaa78cb414cece155880c22c79f95ae8810d10420ffeb7f0",
+      "upstream_sha256": "b61110a739d1cb98aaa78cb414cece155880c22c79f95ae8810d10420ffeb7f0",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw.h",
+      "sha256": "166be2cf9e87842cafd140476973ee90e6dc8fe05c28b47374c4fe2e1a68ab69",
+      "upstream_sha256": "166be2cf9e87842cafd140476973ee90e6dc8fe05c28b47374c4fe2e1a68ab69",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw.mk",
+      "sha256": "97094df8a8d22a6bab92827269eb5fb149be99b9fb9d9d919961e2102729f78c",
+      "upstream_sha256": "97094df8a8d22a6bab92827269eb5fb149be99b9fb9d9d919961e2102729f78c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_arc.c",
+      "sha256": "112e6f8081cb993fc1dfa505de08b00e802f12e0c3bdd04ac382af14ffbf31ce",
+      "upstream_sha256": "112e6f8081cb993fc1dfa505de08b00e802f12e0c3bdd04ac382af14ffbf31ce",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_arc.h",
+      "sha256": "95fd2ed8a5c143e5691de5ad92928ea3fce6ee229fcdd298b140bbddcd7c9c7d",
+      "upstream_sha256": "95fd2ed8a5c143e5691de5ad92928ea3fce6ee229fcdd298b140bbddcd7c9c7d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_img.c",
+      "sha256": "0a67e4fd09aabb0ca3900df7999e68d0176bb27e8c3da0cad78f10516552bb7f",
+      "upstream_sha256": "0a67e4fd09aabb0ca3900df7999e68d0176bb27e8c3da0cad78f10516552bb7f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_img.h",
+      "sha256": "ece6ef266440426ce364f71cfe608d6f0c3b0489587be0833a162c8bfac9abc5",
+      "upstream_sha256": "ece6ef266440426ce364f71cfe608d6f0c3b0489587be0833a162c8bfac9abc5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_label.c",
+      "sha256": "ef4fcf560629e3b8453a54014d311cc30426db03e8857f3bbee16aad5e23b8ed",
+      "upstream_sha256": "ef4fcf560629e3b8453a54014d311cc30426db03e8857f3bbee16aad5e23b8ed",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_label.h",
+      "sha256": "0349692fc5035bda6ec893e8820b6c2792a0cf34d05dc61ff361f1c1de7c3c9a",
+      "upstream_sha256": "0349692fc5035bda6ec893e8820b6c2792a0cf34d05dc61ff361f1c1de7c3c9a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_layer.c",
+      "sha256": "3cc437da7f49dd716f3ca6ef8d2d9e692bd470a41b0679a1cd6f75af42e0adbf",
+      "upstream_sha256": "3cc437da7f49dd716f3ca6ef8d2d9e692bd470a41b0679a1cd6f75af42e0adbf",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_layer.h",
+      "sha256": "bbc802d79ff87752b7548b05b82b8c4b77ad1797459baac4c965731bb0881b8c",
+      "upstream_sha256": "bbc802d79ff87752b7548b05b82b8c4b77ad1797459baac4c965731bb0881b8c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_line.c",
+      "sha256": "0555f0036c21e63a2c1d30d680292d0b4cfe3a560c8d2dc71185ee33cf60addf",
+      "upstream_sha256": "0555f0036c21e63a2c1d30d680292d0b4cfe3a560c8d2dc71185ee33cf60addf",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_line.h",
+      "sha256": "8ca57dd4afe43112da04ed915cb992abb49fdbc64218fdf7055d1b90e1e7171d",
+      "upstream_sha256": "8ca57dd4afe43112da04ed915cb992abb49fdbc64218fdf7055d1b90e1e7171d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_mask.c",
+      "sha256": "3899e11ec511a27bfe6a5accb5c1b38c904ac0f75343c52e45dfa678c46f98c9",
+      "upstream_sha256": "3899e11ec511a27bfe6a5accb5c1b38c904ac0f75343c52e45dfa678c46f98c9",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_mask.h",
+      "sha256": "d39d2b82e48e5cb04ad60f2fafb3389bfd3ea3617c166eef7304230c1ab8f364",
+      "upstream_sha256": "d39d2b82e48e5cb04ad60f2fafb3389bfd3ea3617c166eef7304230c1ab8f364",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_rect.c",
+      "sha256": "6bcb01c108b62424ad50fbcb8d8630050f03941b76a5f0b75b2e72d8d7181c66",
+      "upstream_sha256": "6bcb01c108b62424ad50fbcb8d8630050f03941b76a5f0b75b2e72d8d7181c66",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_rect.h",
+      "sha256": "582fc9dff735439adb2705b5f323d7104d65f2b63a7097617c4eeca84c39a8a5",
+      "upstream_sha256": "582fc9dff735439adb2705b5f323d7104d65f2b63a7097617c4eeca84c39a8a5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_transform.c",
+      "sha256": "bd70591780047c78b7d75af7259bab21f73ccf8960ffa502c512757b62530222",
+      "upstream_sha256": "bd70591780047c78b7d75af7259bab21f73ccf8960ffa502c512757b62530222",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_transform.h",
+      "sha256": "a2b61654d8f6ce4916317cd11689fdfcb726d632625eca4d87de008f9a8ebf07",
+      "upstream_sha256": "a2b61654d8f6ce4916317cd11689fdfcb726d632625eca4d87de008f9a8ebf07",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_triangle.c",
+      "sha256": "526b6c8a3ed0f16aa6169fbc8e34697e1f7670b553dfa4cdf89eaff6321991b8",
+      "upstream_sha256": "526b6c8a3ed0f16aa6169fbc8e34697e1f7670b553dfa4cdf89eaff6321991b8",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_draw_triangle.h",
+      "sha256": "8b15091f30b4ea62220dd08a60487a1ce688cd58573a51d07a353192f75cbe7c",
+      "upstream_sha256": "8b15091f30b4ea62220dd08a60487a1ce688cd58573a51d07a353192f75cbe7c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_img_buf.c",
+      "sha256": "bc4cab4c289d97bf578ac7aaf7ecb0a84d08bcdcf80a8a1327b5a0ef1e287c78",
+      "upstream_sha256": "bc4cab4c289d97bf578ac7aaf7ecb0a84d08bcdcf80a8a1327b5a0ef1e287c78",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_img_buf.h",
+      "sha256": "8c5ad9c669ed42604e2912a00cd0dfd2848fb1ba31dc0f2d9521fc3a9b0c6a68",
+      "upstream_sha256": "8c5ad9c669ed42604e2912a00cd0dfd2848fb1ba31dc0f2d9521fc3a9b0c6a68",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_img_cache.c",
+      "sha256": "da4c953ba6433401ba12f4518cb91cdac27ab8e76df03595f0a2d7a0a116f5e6",
+      "upstream_sha256": "da4c953ba6433401ba12f4518cb91cdac27ab8e76df03595f0a2d7a0a116f5e6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_img_cache.h",
+      "sha256": "62a6f7c9ca83e9150b9395f6e2a8462ba1fd82f4918f7b1eafe4e0f09bc28601",
+      "upstream_sha256": "62a6f7c9ca83e9150b9395f6e2a8462ba1fd82f4918f7b1eafe4e0f09bc28601",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_img_decoder.c",
+      "sha256": "087629fcae9af0daf03047f409898758fae38042f2f0334843339fd9056443ff",
+      "upstream_sha256": "087629fcae9af0daf03047f409898758fae38042f2f0334843339fd9056443ff",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/lv_img_decoder.h",
+      "sha256": "de286d66e79e0f5d5c1efc91d5d14819325f6d2a22e132ed1374b214b1cdd581",
+      "upstream_sha256": "de286d66e79e0f5d5c1efc91d5d14819325f6d2a22e132ed1374b214b1cdd581",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/lv_draw_nxp.mk",
+      "sha256": "824549fdabaad7c63dcceb97d10d4e3b8e19dc657d5cf64810e34f0bec93c9bf",
+      "upstream_sha256": "824549fdabaad7c63dcceb97d10d4e3b8e19dc657d5cf64810e34f0bec93c9bf",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_draw_nxp_pxp.mk",
+      "sha256": "e06b6830dec86dfec06f99fd2bceb5cfbb82fb489d34e89b0a047d02b9a0d3d0",
+      "upstream_sha256": "e06b6830dec86dfec06f99fd2bceb5cfbb82fb489d34e89b0a047d02b9a0d3d0",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_draw_pxp.c",
+      "sha256": "eb418004e1247b21b29e535897ccf70eb027fb5d001d40b3a7931c626a8c5538",
+      "upstream_sha256": "eb418004e1247b21b29e535897ccf70eb027fb5d001d40b3a7931c626a8c5538",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_draw_pxp.h",
+      "sha256": "caef182d78db2f3219197d386c33e9ce410ce0bf4a2c8f9d2447f178c76520c0",
+      "upstream_sha256": "caef182d78db2f3219197d386c33e9ce410ce0bf4a2c8f9d2447f178c76520c0",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_draw_pxp_blend.c",
+      "sha256": "bbafb88bfbf4730cb35fd833a8598b8fd8db03efe2621ce199fda9ac7d8df87d",
+      "upstream_sha256": "bbafb88bfbf4730cb35fd833a8598b8fd8db03efe2621ce199fda9ac7d8df87d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_draw_pxp_blend.h",
+      "sha256": "bde413bd13f5ffb9e3ff226e1b87f1e574b252bab9056dab215b599c2706b87c",
+      "upstream_sha256": "bde413bd13f5ffb9e3ff226e1b87f1e574b252bab9056dab215b599c2706b87c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_gpu_nxp_pxp.c",
+      "sha256": "157ed890201853ddbde8d611280293ed5d5f2b16010e8f728349e4750eb706cd",
+      "upstream_sha256": "157ed890201853ddbde8d611280293ed5d5f2b16010e8f728349e4750eb706cd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_gpu_nxp_pxp.h",
+      "sha256": "1d638aa07ab4dca33a8bfd0bdf7fbbd843174944a5349389a9b91d9a7a93c04c",
+      "upstream_sha256": "1d638aa07ab4dca33a8bfd0bdf7fbbd843174944a5349389a9b91d9a7a93c04c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_gpu_nxp_pxp_osa.c",
+      "sha256": "4ed51828655c801a098453c3de5f085a26d98eeda29a169eb4018e0a9f761efb",
+      "upstream_sha256": "4ed51828655c801a098453c3de5f085a26d98eeda29a169eb4018e0a9f761efb",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/pxp/lv_gpu_nxp_pxp_osa.h",
+      "sha256": "d493a8215852cc899ca7fbf26d0e4fc1384fa35d2eff9ac85713677d2c7bafe9",
+      "upstream_sha256": "d493a8215852cc899ca7fbf26d0e4fc1384fa35d2eff9ac85713677d2c7bafe9",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_nxp_vglite.mk",
+      "sha256": "589f252d5dd2b8e97b10195270ebe81da7d3b039b5bde660207ef6bceb29bc5f",
+      "upstream_sha256": "589f252d5dd2b8e97b10195270ebe81da7d3b039b5bde660207ef6bceb29bc5f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite.c",
+      "sha256": "c26ecfef1105ccf03eb9f69557455468377389ada90359bdc90836170bbddec5",
+      "upstream_sha256": "c26ecfef1105ccf03eb9f69557455468377389ada90359bdc90836170bbddec5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite.h",
+      "sha256": "fde2d0e0f7e83018cbe07e61a348864a32a65bd23d701740ef641a40b841168e",
+      "upstream_sha256": "fde2d0e0f7e83018cbe07e61a348864a32a65bd23d701740ef641a40b841168e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite_arc.c",
+      "sha256": "5c14bc721d48a5675548d7981064015a27ac0e641c1d0cdbd2a303b567bb9cb9",
+      "upstream_sha256": "5c14bc721d48a5675548d7981064015a27ac0e641c1d0cdbd2a303b567bb9cb9",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite_arc.h",
+      "sha256": "6ffea805e831e8b31dcca753b88f95849ac2e18c9e0079144e34cfc9de45bd4e",
+      "upstream_sha256": "6ffea805e831e8b31dcca753b88f95849ac2e18c9e0079144e34cfc9de45bd4e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite_blend.c",
+      "sha256": "753fbcacb9e2f19294a88959b37c5990df0c6205dc5cc81787bec23410045e01",
+      "upstream_sha256": "753fbcacb9e2f19294a88959b37c5990df0c6205dc5cc81787bec23410045e01",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite_blend.h",
+      "sha256": "8757114959fef3c6c47962d889ba69659c51f2ea7ca509109ba0e2fb1d73bd72",
+      "upstream_sha256": "8757114959fef3c6c47962d889ba69659c51f2ea7ca509109ba0e2fb1d73bd72",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite_line.c",
+      "sha256": "9c82647d4ee5557bcb45dac96ea3e193dfdde28700dfe222a47566869f171f62",
+      "upstream_sha256": "9c82647d4ee5557bcb45dac96ea3e193dfdde28700dfe222a47566869f171f62",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite_line.h",
+      "sha256": "c6c3f43efd17f8c00d9350af0eb78eaba16a5034b8b9e9ea3d2691c370616393",
+      "upstream_sha256": "c6c3f43efd17f8c00d9350af0eb78eaba16a5034b8b9e9ea3d2691c370616393",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite_rect.c",
+      "sha256": "2084afc5008e8821dcd8b328716b4975525e0fb5d88256cbb6258f6398f74723",
+      "upstream_sha256": "2084afc5008e8821dcd8b328716b4975525e0fb5d88256cbb6258f6398f74723",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_draw_vglite_rect.h",
+      "sha256": "70ec9222e213e6c3303d8a456d59f52bac127f961edf671a4f673616ab188c98",
+      "upstream_sha256": "70ec9222e213e6c3303d8a456d59f52bac127f961edf671a4f673616ab188c98",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_vglite_buf.c",
+      "sha256": "a172ea6652490c7d4cd8500c8f224b0e09dbc0ee8594d9cd4ad25dbd584f179b",
+      "upstream_sha256": "a172ea6652490c7d4cd8500c8f224b0e09dbc0ee8594d9cd4ad25dbd584f179b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_vglite_buf.h",
+      "sha256": "fc86e0009a477ba7af173c2ee5655bc2214930beb6adc35b29db392b1fd12281",
+      "upstream_sha256": "fc86e0009a477ba7af173c2ee5655bc2214930beb6adc35b29db392b1fd12281",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_vglite_utils.c",
+      "sha256": "0415846f33045d96bb1bb7346a9ac3c35370642483eaf1d98c32651a94a254d2",
+      "upstream_sha256": "0415846f33045d96bb1bb7346a9ac3c35370642483eaf1d98c32651a94a254d2",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/nxp/vglite/lv_vglite_utils.h",
+      "sha256": "c9757af0519527af57e924f717ffb2af4fcbcd3863b49dbae02fb67bff7e3ab2",
+      "upstream_sha256": "c9757af0519527af57e924f717ffb2af4fcbcd3863b49dbae02fb67bff7e3ab2",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/renesas/lv_draw_renesas.mk",
+      "sha256": "988d3dcc8b0391514bf4c60d3bd6d3e46df0b00d86c6ab330463e83c523bdfbd",
+      "upstream_sha256": "988d3dcc8b0391514bf4c60d3bd6d3e46df0b00d86c6ab330463e83c523bdfbd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/renesas/lv_gpu_d2_draw_label.c",
+      "sha256": "e478b9326ce307778215d4846135e2a1201249da1e1d5a9ed3ff537c6ef46073",
+      "upstream_sha256": "e478b9326ce307778215d4846135e2a1201249da1e1d5a9ed3ff537c6ef46073",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/renesas/lv_gpu_d2_ra6m3.c",
+      "sha256": "33c4a74e2698cfd1fc82e2517320a989d997645a2f03090fa4ef451cd8d28d66",
+      "upstream_sha256": "33c4a74e2698cfd1fc82e2517320a989d997645a2f03090fa4ef451cd8d28d66",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/renesas/lv_gpu_d2_ra6m3.h",
+      "sha256": "ccde417f7ec80b19029b4e86708fda5a1f6ebd4c68a86bfb175f8fe52e88a963",
+      "upstream_sha256": "ccde417f7ec80b19029b4e86708fda5a1f6ebd4c68a86bfb175f8fe52e88a963",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl.c",
+      "sha256": "c06595a02889829d71dfd0383dea0bc934ce3b612df3ef5da3a76613bab7faf1",
+      "upstream_sha256": "c06595a02889829d71dfd0383dea0bc934ce3b612df3ef5da3a76613bab7faf1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl.h",
+      "sha256": "cda99ef7e511dee4d56a2aa932f21542b5629fa54801ea5948b2ba8e419ad9eb",
+      "upstream_sha256": "cda99ef7e511dee4d56a2aa932f21542b5629fa54801ea5948b2ba8e419ad9eb",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl.mk",
+      "sha256": "f67fdd79df2e2af986b0fcfb207b56bd4f0028c7fc9a6d2063cd2559548ab764",
+      "upstream_sha256": "f67fdd79df2e2af986b0fcfb207b56bd4f0028c7fc9a6d2063cd2559548ab764",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_arc.c",
+      "sha256": "6bfb826e996f0e29ef4de370c23683cc92ed7760abf59476c43cdf529f23af84",
+      "upstream_sha256": "6bfb826e996f0e29ef4de370c23683cc92ed7760abf59476c43cdf529f23af84",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_bg.c",
+      "sha256": "7c209e0e25ee7b9dc9c9b4b15dc7c9ffc6e1b5140b07dd6791c48fc654d65233",
+      "upstream_sha256": "7c209e0e25ee7b9dc9c9b4b15dc7c9ffc6e1b5140b07dd6791c48fc654d65233",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_composite.c",
+      "sha256": "4b33ec3af09371d7283f226fbce6bd4b3f94b77822f867d73256ba1d93731b0a",
+      "upstream_sha256": "4b33ec3af09371d7283f226fbce6bd4b3f94b77822f867d73256ba1d93731b0a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_composite.h",
+      "sha256": "e9d1b425008fddadbcf22bf2def52be1a1a87eaae4ce4651ed88ea3d831997e3",
+      "upstream_sha256": "e9d1b425008fddadbcf22bf2def52be1a1a87eaae4ce4651ed88ea3d831997e3",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_img.c",
+      "sha256": "369e9fc1cbbfa4a9ca7588af2080ba6366bad24b2c61b506cad9faec1dff5765",
+      "upstream_sha256": "369e9fc1cbbfa4a9ca7588af2080ba6366bad24b2c61b506cad9faec1dff5765",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_img.h",
+      "sha256": "173d9c90516a79af985dd10f7f44c67405db7cf1b48b275c4dd6a165882895b3",
+      "upstream_sha256": "173d9c90516a79af985dd10f7f44c67405db7cf1b48b275c4dd6a165882895b3",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_label.c",
+      "sha256": "2bc642b4fc5f6ce8e4d14d2d9d526350af86c748747d7ca876ffe65dcf72c1a1",
+      "upstream_sha256": "2bc642b4fc5f6ce8e4d14d2d9d526350af86c748747d7ca876ffe65dcf72c1a1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_layer.c",
+      "sha256": "2500563005524688a233a017ab6ddb33f564dcd5e24ea0d226fb6170afd3907d",
+      "upstream_sha256": "2500563005524688a233a017ab6ddb33f564dcd5e24ea0d226fb6170afd3907d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_layer.h",
+      "sha256": "7f3bd4fe6ed337bbec597d771579d792bd1740d14b28cdd2a5067825e3ae2a6c",
+      "upstream_sha256": "7f3bd4fe6ed337bbec597d771579d792bd1740d14b28cdd2a5067825e3ae2a6c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_line.c",
+      "sha256": "3a3855045b758b717cfaf6578a26dc365ab45edfafd87a2c7da95109f23144bd",
+      "upstream_sha256": "3a3855045b758b717cfaf6578a26dc365ab45edfafd87a2c7da95109f23144bd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_mask.c",
+      "sha256": "506d2c0eaf5dd3ff2405bf9bcf3f4388f71b47d66f1441395040ec33aa6330f1",
+      "upstream_sha256": "506d2c0eaf5dd3ff2405bf9bcf3f4388f71b47d66f1441395040ec33aa6330f1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_mask.h",
+      "sha256": "9f8b35c39bd20328e76e7d139f4de7c6df957164464a2eace63068fdbf3fc3d2",
+      "upstream_sha256": "9f8b35c39bd20328e76e7d139f4de7c6df957164464a2eace63068fdbf3fc3d2",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_polygon.c",
+      "sha256": "96e743fb63c24664245e076abf04be8c3cc7e7b91f066f6df73ec7ce28caf318",
+      "upstream_sha256": "96e743fb63c24664245e076abf04be8c3cc7e7b91f066f6df73ec7ce28caf318",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_priv.h",
+      "sha256": "c7098e0462b62002ac807324ce7e4c969b0e5c1bdab3a5eda06b3145aaa00084",
+      "upstream_sha256": "c7098e0462b62002ac807324ce7e4c969b0e5c1bdab3a5eda06b3145aaa00084",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_rect.c",
+      "sha256": "8a6b15cffd554d73c8616ba41cc942002f88606daa85325fbeeb1bf08a48f1f8",
+      "upstream_sha256": "8a6b15cffd554d73c8616ba41cc942002f88606daa85325fbeeb1bf08a48f1f8",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_rect.h",
+      "sha256": "43575c29be3c48f52f885e07a2e8f8fb621786d3283d592f356fc888af534315",
+      "upstream_sha256": "43575c29be3c48f52f885e07a2e8f8fb621786d3283d592f356fc888af534315",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_stack_blur.c",
+      "sha256": "2a865efd7ff84e79a4e49162a9f6deab4f27faab385a16db77a2f5d25236cecd",
+      "upstream_sha256": "2a865efd7ff84e79a4e49162a9f6deab4f27faab385a16db77a2f5d25236cecd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_stack_blur.h",
+      "sha256": "75cf293a98eb520407a6d99286a54c2e6e7511dba4666a92705f9d4a3f4874e9",
+      "upstream_sha256": "75cf293a98eb520407a6d99286a54c2e6e7511dba4666a92705f9d4a3f4874e9",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_texture_cache.c",
+      "sha256": "49dd3a2de85ca3fb03a8d497cb6b2c4d87518bf8d1036c548c2c1811db12b30f",
+      "upstream_sha256": "49dd3a2de85ca3fb03a8d497cb6b2c4d87518bf8d1036c548c2c1811db12b30f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_texture_cache.h",
+      "sha256": "97c0d1837dd645aee9b923dcd1809574720221230afe7a41547d462469e33bf6",
+      "upstream_sha256": "97c0d1837dd645aee9b923dcd1809574720221230afe7a41547d462469e33bf6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_utils.c",
+      "sha256": "346a34d5ab88d28e0c01635e727f317d0640307cb090f2b3c472e2e1c45c6190",
+      "upstream_sha256": "346a34d5ab88d28e0c01635e727f317d0640307cb090f2b3c472e2e1c45c6190",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/lv_draw_sdl_utils.h",
+      "sha256": "d6db836508504bec734855ec540ff40d4f7f0e8b20accc3ddfba76b3b3fd3512",
+      "upstream_sha256": "d6db836508504bec734855ec540ff40d4f7f0e8b20accc3ddfba76b3b3fd3512",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sdl/README.md",
+      "sha256": "6c93e541d5ebebf572ae9c5098d53a84573b84393e583b2096d391d6311da2f5",
+      "upstream_sha256": "6c93e541d5ebebf572ae9c5098d53a84573b84393e583b2096d391d6311da2f5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/stm32_dma2d/lv_draw_stm32_dma2d.mk",
+      "sha256": "71fd7b90bd1aaa27e3fe709f8c279e5a0011f94a0d9ebd70a8b472c9734aed05",
+      "upstream_sha256": "71fd7b90bd1aaa27e3fe709f8c279e5a0011f94a0d9ebd70a8b472c9734aed05",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/stm32_dma2d/lv_gpu_stm32_dma2d.c",
+      "sha256": "b2a7d551863831c6cc0cdbe3348b2fdb10a506abe352913ca8e7e692eeb7f174",
+      "upstream_sha256": "b2a7d551863831c6cc0cdbe3348b2fdb10a506abe352913ca8e7e692eeb7f174",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/stm32_dma2d/lv_gpu_stm32_dma2d.h",
+      "sha256": "06ff991cdd2858639124a56889345c2bae405c65c998cf5e7d779094b721b3a9",
+      "upstream_sha256": "06ff991cdd2858639124a56889345c2bae405c65c998cf5e7d779094b721b3a9",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw.c",
+      "sha256": "0b01c44ecde76b2666c58031ebe7608c52deb8ee479e908fd601491d086227e5",
+      "upstream_sha256": "0b01c44ecde76b2666c58031ebe7608c52deb8ee479e908fd601491d086227e5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw.h",
+      "sha256": "901dc548560ba4b9cc1863af72047f60589f1b49db28401e13e5fc637c049b93",
+      "upstream_sha256": "901dc548560ba4b9cc1863af72047f60589f1b49db28401e13e5fc637c049b93",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw.mk",
+      "sha256": "e48edb802420ea352ded29e9aaaaa2fa5d8d4e02c5bacd024902551b711e2708",
+      "upstream_sha256": "e48edb802420ea352ded29e9aaaaa2fa5d8d4e02c5bacd024902551b711e2708",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_arc.c",
+      "sha256": "a7c089db1ba7be5a79953cfb9b4ef7964ef8e4165ca378a77d547d0da247bc74",
+      "upstream_sha256": "a7c089db1ba7be5a79953cfb9b4ef7964ef8e4165ca378a77d547d0da247bc74",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_blend.c",
+      "sha256": "6630ad12948872c59fab86d98a391fefa04365c3e9675ebbf0caf15ffd3d5aa0",
+      "upstream_sha256": "6630ad12948872c59fab86d98a391fefa04365c3e9675ebbf0caf15ffd3d5aa0",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_blend.h",
+      "sha256": "e6a2b8d2d4d34f71f0f20490169b17bb10c70769ac2e503402b2dcf29b1c037c",
+      "upstream_sha256": "e6a2b8d2d4d34f71f0f20490169b17bb10c70769ac2e503402b2dcf29b1c037c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_dither.c",
+      "sha256": "453689745ec5e2f4b6cd0ecb936f2dda443a11f512612df73882982f2d91575b",
+      "upstream_sha256": "453689745ec5e2f4b6cd0ecb936f2dda443a11f512612df73882982f2d91575b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_dither.h",
+      "sha256": "a2be96cb54779722213cb8d4db541adf1ef3fa2219e9f3c0a83db038dc6ed6de",
+      "upstream_sha256": "a2be96cb54779722213cb8d4db541adf1ef3fa2219e9f3c0a83db038dc6ed6de",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_gradient.c",
+      "sha256": "a506df24438293755394a0b397c0fc52b3a37ae376dbb5e405b8a788e3289764",
+      "upstream_sha256": "a506df24438293755394a0b397c0fc52b3a37ae376dbb5e405b8a788e3289764",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_gradient.h",
+      "sha256": "b56c4c25009727d76a4b6dff6d8225cd4d6a8e201501471e7b636234b4a9c51c",
+      "upstream_sha256": "b56c4c25009727d76a4b6dff6d8225cd4d6a8e201501471e7b636234b4a9c51c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_img.c",
+      "sha256": "9051e64b0712db151d468f582b52f26096c943adff5c51846c7ca844ab1fb460",
+      "upstream_sha256": "9051e64b0712db151d468f582b52f26096c943adff5c51846c7ca844ab1fb460",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_layer.c",
+      "sha256": "b84134d097aab0a5d48c4b2b3a07529ec00d69e54ccace072b20725e81116873",
+      "upstream_sha256": "b84134d097aab0a5d48c4b2b3a07529ec00d69e54ccace072b20725e81116873",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_letter.c",
+      "sha256": "cfbce658c8e656615725b3398a14986da1f4cd8d894ee1fc5eb186b11dcc240d",
+      "upstream_sha256": "cfbce658c8e656615725b3398a14986da1f4cd8d894ee1fc5eb186b11dcc240d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_line.c",
+      "sha256": "c4e149084abe7d313e19c53f639f9b6055d75c12cfaacfb4a0064a970a41f269",
+      "upstream_sha256": "c4e149084abe7d313e19c53f639f9b6055d75c12cfaacfb4a0064a970a41f269",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_polygon.c",
+      "sha256": "d5f82e860983c33fd1fa85f8fc5748f3dd860170cee105a57e1e28360e84600f",
+      "upstream_sha256": "d5f82e860983c33fd1fa85f8fc5748f3dd860170cee105a57e1e28360e84600f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_rect.c",
+      "sha256": "68d4b15a204bd1728fdb7db80b438d893dce5a0635d94845fbf6b0aa292d5a11",
+      "upstream_sha256": "68d4b15a204bd1728fdb7db80b438d893dce5a0635d94845fbf6b0aa292d5a11",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/sw/lv_draw_sw_transform.c",
+      "sha256": "50ebe91083f174e751890e2633d321a8dc2fce8ff5fbebdee5140f26b747bdda",
+      "upstream_sha256": "50ebe91083f174e751890e2633d321a8dc2fce8ff5fbebdee5140f26b747bdda",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/swm341_dma2d/lv_draw_swm341_dma2d.mk",
+      "sha256": "331ff1ff6500ed0f9c0df14a6574504d7585146327a601269a65e4f28e0ce832",
+      "upstream_sha256": "331ff1ff6500ed0f9c0df14a6574504d7585146327a601269a65e4f28e0ce832",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/swm341_dma2d/lv_gpu_swm341_dma2d.c",
+      "sha256": "cfe9306e76e11bd74edf189c9422c5bf71c5ff90d8216acff669070d11ceb00d",
+      "upstream_sha256": "cfe9306e76e11bd74edf189c9422c5bf71c5ff90d8216acff669070d11ceb00d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/draw/swm341_dma2d/lv_gpu_swm341_dma2d.h",
+      "sha256": "19c718c6c3fc9efa2d445976a76dbecffd8867fbe126298c7d3f150c5d098177",
+      "upstream_sha256": "19c718c6c3fc9efa2d445976a76dbecffd8867fbe126298c7d3f150c5d098177",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/layouts/flex/lv_flex.c",
+      "sha256": "11bd327e13597d97f1af31f1b105100e925a9fcfaeb33e512ed2c75a6fab308b",
+      "upstream_sha256": "11bd327e13597d97f1af31f1b105100e925a9fcfaeb33e512ed2c75a6fab308b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/layouts/flex/lv_flex.h",
+      "sha256": "defd8f8803a7817942ad59b83dca2371d659316e275cf0b6c5fc31df6ae72db6",
+      "upstream_sha256": "defd8f8803a7817942ad59b83dca2371d659316e275cf0b6c5fc31df6ae72db6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/layouts/grid/lv_grid.c",
+      "sha256": "f8c1e2d467e3bb77f5e15b9329c8814162d6d89787d9c0ee3babf2c87025a871",
+      "upstream_sha256": "f8c1e2d467e3bb77f5e15b9329c8814162d6d89787d9c0ee3babf2c87025a871",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/layouts/grid/lv_grid.h",
+      "sha256": "1ed694b99f753795e9a590b6446440ececbc7b04a69f9513b8eedccbd1ad8428",
+      "upstream_sha256": "1ed694b99f753795e9a590b6446440ececbc7b04a69f9513b8eedccbd1ad8428",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/layouts/lv_layouts.h",
+      "sha256": "40ddc25a10a4bed4109f56135b56b68feccc177a78342bf7f8fee0aaa5b3c804",
+      "upstream_sha256": "40ddc25a10a4bed4109f56135b56b68feccc177a78342bf7f8fee0aaa5b3c804",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/bmp/lv_bmp.c",
+      "sha256": "bfbb967b8ff661dcdd27251f6d42943bd02475a29663e99bcc74a6be21fc04e6",
+      "upstream_sha256": "bfbb967b8ff661dcdd27251f6d42943bd02475a29663e99bcc74a6be21fc04e6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/bmp/lv_bmp.h",
+      "sha256": "8356654bae055bea9ab4b8ef0408aa93bcae4423fc585029dd2ff50a887e2154",
+      "upstream_sha256": "8356654bae055bea9ab4b8ef0408aa93bcae4423fc585029dd2ff50a887e2154",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/ffmpeg/lv_ffmpeg.c",
+      "sha256": "41be65484d85f87053c0c31e51082973e99e51dc39b210637547b66377a05d26",
+      "upstream_sha256": "41be65484d85f87053c0c31e51082973e99e51dc39b210637547b66377a05d26",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/ffmpeg/lv_ffmpeg.h",
+      "sha256": "a0e6972d63deefb35ff309dbfebc27a6a12c3329c19c9f5f9f4968f78bf7d149",
+      "upstream_sha256": "a0e6972d63deefb35ff309dbfebc27a6a12c3329c19c9f5f9f4968f78bf7d149",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/freetype/arial.ttf",
+      "sha256": "82afb35eda3a52edb10106bcc04af93646384421ded538d38792c1444d816022",
+      "upstream_sha256": "82afb35eda3a52edb10106bcc04af93646384421ded538d38792c1444d816022",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/freetype/lv_freetype.c",
+      "sha256": "d6787432256d425bd2d2db12ab64b364deaa37d965bb89026435ecb07abea971",
+      "upstream_sha256": "d6787432256d425bd2d2db12ab64b364deaa37d965bb89026435ecb07abea971",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/freetype/lv_freetype.h",
+      "sha256": "b3426c118996f1567abc652c1f2ce4d9ac225415c6dbc2eab0115afd8a6386e8",
+      "upstream_sha256": "b3426c118996f1567abc652c1f2ce4d9ac225415c6dbc2eab0115afd8a6386e8",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/fsdrv/lv_fs_fatfs.c",
+      "sha256": "b9ce0ee2c0ff22c8dec159c805d44a44929b42ab251eba30ad429719780134bf",
+      "upstream_sha256": "b9ce0ee2c0ff22c8dec159c805d44a44929b42ab251eba30ad429719780134bf",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/fsdrv/lv_fs_littlefs.c",
+      "sha256": "e414048fd02add6714a5f7872de3d2c0c94db2bb5a9f152960c558fbc2546a18",
+      "upstream_sha256": "e414048fd02add6714a5f7872de3d2c0c94db2bb5a9f152960c558fbc2546a18",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/fsdrv/lv_fs_posix.c",
+      "sha256": "07824f65131541bb04e6a0a2b9e37824ac3f515b7db873be2b31fd38661e9e6e",
+      "upstream_sha256": "07824f65131541bb04e6a0a2b9e37824ac3f515b7db873be2b31fd38661e9e6e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/fsdrv/lv_fs_stdio.c",
+      "sha256": "ecd2347a73650b3bc144734dabc8e3d037cf80134853b14bd0f70c472343b8ea",
+      "upstream_sha256": "ecd2347a73650b3bc144734dabc8e3d037cf80134853b14bd0f70c472343b8ea",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/fsdrv/lv_fs_win32.c",
+      "sha256": "c9d088f495841cd52861ad563867723761b8375986e1ffbf192a274c6587d321",
+      "upstream_sha256": "c9d088f495841cd52861ad563867723761b8375986e1ffbf192a274c6587d321",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/fsdrv/lv_fsdrv.h",
+      "sha256": "7cb90afe7cfceb610c6579faffa3f49ab7353b8975e5a181af894deb50fd879f",
+      "upstream_sha256": "7cb90afe7cfceb610c6579faffa3f49ab7353b8975e5a181af894deb50fd879f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/gif/gifdec.c",
+      "sha256": "79a6e6db19855b86394b5d44a98208f834aa8713b0ea7f3a1cc89c88936a54e6",
+      "upstream_sha256": "79a6e6db19855b86394b5d44a98208f834aa8713b0ea7f3a1cc89c88936a54e6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/gif/gifdec.h",
+      "sha256": "3cea320ff7ef0a2d3f4c380e2bf3d2457b27aac00d6f28b7446ba5e42da26311",
+      "upstream_sha256": "3cea320ff7ef0a2d3f4c380e2bf3d2457b27aac00d6f28b7446ba5e42da26311",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/gif/lv_gif.c",
+      "sha256": "42e40dd959546bd6ffc0a626e14b3e84fc373f1f8bc9adecc90896fd24f52c27",
+      "upstream_sha256": "42e40dd959546bd6ffc0a626e14b3e84fc373f1f8bc9adecc90896fd24f52c27",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/gif/lv_gif.h",
+      "sha256": "3a03cc3b17e8874b7cc76054e8bc7d6d7f6ac89df02ee85db800cd6dc9463a91",
+      "upstream_sha256": "3a03cc3b17e8874b7cc76054e8bc7d6d7f6ac89df02ee85db800cd6dc9463a91",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/lv_libs.h",
+      "sha256": "4659754ae011ea460e2198fc3a5d1245a082e12450da170916a466953d240c8e",
+      "upstream_sha256": "4659754ae011ea460e2198fc3a5d1245a082e12450da170916a466953d240c8e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/png/lodepng.c",
+      "sha256": "30e81965693f904bf02ffc8a4f000632d8d59bffec0c88e52090ad85534daf2f",
+      "upstream_sha256": "30e81965693f904bf02ffc8a4f000632d8d59bffec0c88e52090ad85534daf2f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/png/lodepng.h",
+      "sha256": "35d980fde4725566bda493e9e358588b96e27ad17b768b2b4f8c3345c0e2dd24",
+      "upstream_sha256": "35d980fde4725566bda493e9e358588b96e27ad17b768b2b4f8c3345c0e2dd24",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/png/lv_png.c",
+      "sha256": "9526fde96d995d4748ba67119c947a97173b6c086ef83049e9438f38fc80deca",
+      "upstream_sha256": "9526fde96d995d4748ba67119c947a97173b6c086ef83049e9438f38fc80deca",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/png/lv_png.h",
+      "sha256": "b1462d8d3733e56f6a5563fbad4bec3eeedd2fec8c8307361cb1b79a32d1245e",
+      "upstream_sha256": "b1462d8d3733e56f6a5563fbad4bec3eeedd2fec8c8307361cb1b79a32d1245e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/qrcode/lv_qrcode.c",
+      "sha256": "0072fc8659d08b305621c41eafdb619cf3ebedb741a61826e8720fc61f091e71",
+      "upstream_sha256": "0072fc8659d08b305621c41eafdb619cf3ebedb741a61826e8720fc61f091e71",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/qrcode/lv_qrcode.h",
+      "sha256": "0691418fc476fd815dac61f2194d6a9cce9db95b6fa0d57828e4319884d263a5",
+      "upstream_sha256": "0691418fc476fd815dac61f2194d6a9cce9db95b6fa0d57828e4319884d263a5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/qrcode/qrcodegen.c",
+      "sha256": "9f1f23b8f800784740da16b9fff08ad0b75072dedb00caed2ae0d4475419cd34",
+      "upstream_sha256": "9f1f23b8f800784740da16b9fff08ad0b75072dedb00caed2ae0d4475419cd34",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/qrcode/qrcodegen.h",
+      "sha256": "aae0f724eda6c4dec74804b66f35d03d256f25e19cdb1411db94398754dd466c",
+      "upstream_sha256": "aae0f724eda6c4dec74804b66f35d03d256f25e19cdb1411db94398754dd466c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/rlottie/lv_rlottie.c",
+      "sha256": "f222fd9c248699d8fa3a1a5147b50650482c7369af14ead7190cbdc836d393ab",
+      "upstream_sha256": "f222fd9c248699d8fa3a1a5147b50650482c7369af14ead7190cbdc836d393ab",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/rlottie/lv_rlottie.h",
+      "sha256": "97411dd1108d2cd293d024338497ea8fb48841131ddcfb56ec16d424831ecfe6",
+      "upstream_sha256": "97411dd1108d2cd293d024338497ea8fb48841131ddcfb56ec16d424831ecfe6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/sjpg/lv_sjpg.c",
+      "sha256": "38ac78e34755c284a540b41874bfdb320adab84bcadd2683b390443e2f02fefa",
+      "upstream_sha256": "38ac78e34755c284a540b41874bfdb320adab84bcadd2683b390443e2f02fefa",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/sjpg/lv_sjpg.h",
+      "sha256": "b0806c7f350bca0a313f40b23ef48557086ab634ae4ec68b487f013f23c5da49",
+      "upstream_sha256": "b0806c7f350bca0a313f40b23ef48557086ab634ae4ec68b487f013f23c5da49",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/sjpg/tjpgd.c",
+      "sha256": "a7f81e1292919d2055afad873afd878a6114fc73ee54feafbea2498045cbe30a",
+      "upstream_sha256": "a7f81e1292919d2055afad873afd878a6114fc73ee54feafbea2498045cbe30a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/sjpg/tjpgd.h",
+      "sha256": "4ca94b17864633b93cf21b1ab7585b484f5979ba4a6299cff7fa64f7322e9a77",
+      "upstream_sha256": "4ca94b17864633b93cf21b1ab7585b484f5979ba4a6299cff7fa64f7322e9a77",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/sjpg/tjpgdcnf.h",
+      "sha256": "59d5a581fd37b195eef562cc0599ee2d253b146dbef0b3cbccf897b7c560775b",
+      "upstream_sha256": "59d5a581fd37b195eef562cc0599ee2d253b146dbef0b3cbccf897b7c560775b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/tiny_ttf/lv_tiny_ttf.c",
+      "sha256": "71eebe2086b00575e1a69df44860e50665d02c6ef61baffcc7f4f5b511920f30",
+      "upstream_sha256": "71eebe2086b00575e1a69df44860e50665d02c6ef61baffcc7f4f5b511920f30",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/tiny_ttf/lv_tiny_ttf.h",
+      "sha256": "ea35337ac50f6d4d818f1975e7ada8c13f76eb1d9003ea748dffb7d9406db8f4",
+      "upstream_sha256": "ea35337ac50f6d4d818f1975e7ada8c13f76eb1d9003ea748dffb7d9406db8f4",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/tiny_ttf/stb_rect_pack.h",
+      "sha256": "98c2f56eb77cb7c730454c911921c8fc9e55134774c6170ea6e9673263fa2184",
+      "upstream_sha256": "98c2f56eb77cb7c730454c911921c8fc9e55134774c6170ea6e9673263fa2184",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/libs/tiny_ttf/stb_truetype_htcw.h",
+      "sha256": "cf830b1a82af430b2ba780640615ff57eb0763e6a43332925bc961147a0c6735",
+      "upstream_sha256": "cf830b1a82af430b2ba780640615ff57eb0763e6a43332925bc961147a0c6735",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/lv_extra.c",
+      "sha256": "63a0105ee636b067024c6e087d32775afc8f25422ae2a5a52b92387f7c7ae29a",
+      "upstream_sha256": "63a0105ee636b067024c6e087d32775afc8f25422ae2a5a52b92387f7c7ae29a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/lv_extra.h",
+      "sha256": "080683f4a3a538f42f61d4cb8725f4d9515ed08a7d1314c3be63dbad355dede4",
+      "upstream_sha256": "080683f4a3a538f42f61d4cb8725f4d9515ed08a7d1314c3be63dbad355dede4",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/lv_extra.mk",
+      "sha256": "3dcaa09e7af31a8214f6a13158bf3d6f6169beaf32478d021598d4ecb9cc8876",
+      "upstream_sha256": "3dcaa09e7af31a8214f6a13158bf3d6f6169beaf32478d021598d4ecb9cc8876",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/fragment/lv_fragment.c",
+      "sha256": "74122af380487b3010bae82057e191324b379ad87372ecb594e228e57801967a",
+      "upstream_sha256": "74122af380487b3010bae82057e191324b379ad87372ecb594e228e57801967a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/fragment/lv_fragment.h",
+      "sha256": "71d03ad89f4b244ee23ec9eb46428b6711c52b142ef7dbd1419869d19a47951a",
+      "upstream_sha256": "71d03ad89f4b244ee23ec9eb46428b6711c52b142ef7dbd1419869d19a47951a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/fragment/lv_fragment_manager.c",
+      "sha256": "e95d08e3e0a9433153d22d959d8f66bc8fa9e48cb438af1ea0ca980412608fd3",
+      "upstream_sha256": "e95d08e3e0a9433153d22d959d8f66bc8fa9e48cb438af1ea0ca980412608fd3",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/fragment/README.md",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/gridnav/lv_gridnav.c",
+      "sha256": "eeff92c5f0f79263954ac5397a67521f66372369e431981b16c874c15e6433a1",
+      "upstream_sha256": "eeff92c5f0f79263954ac5397a67521f66372369e431981b16c874c15e6433a1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/gridnav/lv_gridnav.h",
+      "sha256": "02b71a9d23ee3b01382b879310fbfff4bdfa8db27fb97548b7eaa7acbae14a26",
+      "upstream_sha256": "02b71a9d23ee3b01382b879310fbfff4bdfa8db27fb97548b7eaa7acbae14a26",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/ime/lv_ime_pinyin.c",
+      "sha256": "e8a000364115c79450b315d24d5b89dd95383ec2420cb132f2d2d39a4be96985",
+      "upstream_sha256": "e8a000364115c79450b315d24d5b89dd95383ec2420cb132f2d2d39a4be96985",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/ime/lv_ime_pinyin.h",
+      "sha256": "3f80e68a3485b08fdd66b779c988767d2810992d0b618556a6529df5d67ec294",
+      "upstream_sha256": "3f80e68a3485b08fdd66b779c988767d2810992d0b618556a6529df5d67ec294",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/imgfont/lv_imgfont.c",
+      "sha256": "5aa882a7043fbe4e3415bffbd1ccf284544eb76aee16381d03308bd52223180c",
+      "upstream_sha256": "5aa882a7043fbe4e3415bffbd1ccf284544eb76aee16381d03308bd52223180c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/imgfont/lv_imgfont.h",
+      "sha256": "902b04d0fad3a2caa8b0b60bf4827afa1ae3712273f38b696fbc3384318601d6",
+      "upstream_sha256": "902b04d0fad3a2caa8b0b60bf4827afa1ae3712273f38b696fbc3384318601d6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/lv_others.h",
+      "sha256": "c522dadef814b8b6ce02f36bd8bd0a4bbeff54dc2b5f88f7ed4700289a4a7e9f",
+      "upstream_sha256": "c522dadef814b8b6ce02f36bd8bd0a4bbeff54dc2b5f88f7ed4700289a4a7e9f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/monkey/lv_monkey.c",
+      "sha256": "33ba8f015b70d65d9220b2bde913870567b097077cd34c14801d3e6429c48308",
+      "upstream_sha256": "33ba8f015b70d65d9220b2bde913870567b097077cd34c14801d3e6429c48308",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/monkey/lv_monkey.h",
+      "sha256": "9d43c46ed15f4d867da5ba4b1896a245e33701d3190aa801d673ee7c077dedea",
+      "upstream_sha256": "9d43c46ed15f4d867da5ba4b1896a245e33701d3190aa801d673ee7c077dedea",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/msg/lv_msg.c",
+      "sha256": "e0ba67531a7b62b093f2f7a7921301b89ba59086aef9a89b6ada05bc0b2352b7",
+      "upstream_sha256": "e0ba67531a7b62b093f2f7a7921301b89ba59086aef9a89b6ada05bc0b2352b7",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/msg/lv_msg.h",
+      "sha256": "3c227d6004650ef7effe436073294dbc9df3c3db9a2c460c2b1d7f3e3af7ea6d",
+      "upstream_sha256": "3c227d6004650ef7effe436073294dbc9df3c3db9a2c460c2b1d7f3e3af7ea6d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/snapshot/lv_snapshot.c",
+      "sha256": "4707d03e7bd78d58134143b1183ab0efd51712698b48e211bf9e00e4d291da28",
+      "upstream_sha256": "4707d03e7bd78d58134143b1183ab0efd51712698b48e211bf9e00e4d291da28",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/others/snapshot/lv_snapshot.h",
+      "sha256": "baf03068e2eb3016b41d2e6e1f87750865473553d19c8e9f293b3d3bda56c998",
+      "upstream_sha256": "baf03068e2eb3016b41d2e6e1f87750865473553d19c8e9f293b3d3bda56c998",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/README.md",
+      "sha256": "4a401c00ee7950ceca84a781799cbc3d31a79cf4646c7bdf03e8d389f1ac52ff",
+      "upstream_sha256": "4a401c00ee7950ceca84a781799cbc3d31a79cf4646c7bdf03e8d389f1ac52ff",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/themes/basic/lv_theme_basic.c",
+      "sha256": "d32abf10a164c13f9e3610f26024d9b7cbbeb73468726f3855e0c7b3ddd94d76",
+      "upstream_sha256": "d32abf10a164c13f9e3610f26024d9b7cbbeb73468726f3855e0c7b3ddd94d76",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/themes/basic/lv_theme_basic.h",
+      "sha256": "22324fd976d2f7cdce7eaf013d6aecd3b64411880d3fec06de5141fac9156ab2",
+      "upstream_sha256": "22324fd976d2f7cdce7eaf013d6aecd3b64411880d3fec06de5141fac9156ab2",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/themes/default/lv_theme_default.c",
+      "sha256": "615e6c961814a7aa93fd45333a9c1eac9d921e3eff3a73344755495d2fdc8d50",
+      "upstream_sha256": "615e6c961814a7aa93fd45333a9c1eac9d921e3eff3a73344755495d2fdc8d50",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/themes/default/lv_theme_default.h",
+      "sha256": "0a37f03ce292fb41a6d9494ac08533fe96c92d896990bb5d924b1f1fae645a76",
+      "upstream_sha256": "0a37f03ce292fb41a6d9494ac08533fe96c92d896990bb5d924b1f1fae645a76",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/themes/lv_themes.h",
+      "sha256": "816cc45e064bc5b828b1f97a2be8b04558c7b2fd44bd243b6b9a29cc74bc3ec3",
+      "upstream_sha256": "816cc45e064bc5b828b1f97a2be8b04558c7b2fd44bd243b6b9a29cc74bc3ec3",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/themes/mono/lv_theme_mono.c",
+      "sha256": "a0346d163a48f28e66be72e118c05fe9cd9f692ec01190740005443e4882d24e",
+      "upstream_sha256": "a0346d163a48f28e66be72e118c05fe9cd9f692ec01190740005443e4882d24e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/themes/mono/lv_theme_mono.h",
+      "sha256": "a60ad7fe77b385c303c97b99a2b88c54624cac82e73bf59ad337a3a3f0f730bc",
+      "upstream_sha256": "a60ad7fe77b385c303c97b99a2b88c54624cac82e73bf59ad337a3a3f0f730bc",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/animimg/lv_animimg.c",
+      "sha256": "1868187f621163969c5c508d5b08a92f17cacaf25460208d29540ceaad39be98",
+      "upstream_sha256": "1868187f621163969c5c508d5b08a92f17cacaf25460208d29540ceaad39be98",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/animimg/lv_animimg.h",
+      "sha256": "f41fd2d0913bb7843b8b0d1cdf640257b2a54f7d4dd593e8fa0a551d3efbb32d",
+      "upstream_sha256": "f41fd2d0913bb7843b8b0d1cdf640257b2a54f7d4dd593e8fa0a551d3efbb32d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/calendar/lv_calendar.c",
+      "sha256": "3c5a838d4a2dcfe5050e87ce5d3c01378768d833cd6f8c74d77c6ef4bfafa99d",
+      "upstream_sha256": "3c5a838d4a2dcfe5050e87ce5d3c01378768d833cd6f8c74d77c6ef4bfafa99d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/calendar/lv_calendar.h",
+      "sha256": "3712e3e3cbf79775d7bde60c68221f1be529c943ecf70a35f7108d0504735a18",
+      "upstream_sha256": "3712e3e3cbf79775d7bde60c68221f1be529c943ecf70a35f7108d0504735a18",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/calendar/lv_calendar_header_arrow.c",
+      "sha256": "44f67da3a84e8521d893768c853cb8ccd02ccd32893171bdd50f0c74d66451d1",
+      "upstream_sha256": "44f67da3a84e8521d893768c853cb8ccd02ccd32893171bdd50f0c74d66451d1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/calendar/lv_calendar_header_arrow.h",
+      "sha256": "bd131ba8a4660c2a07b87342625beb09c183f3f8e5956dea849ccc60113cf0dd",
+      "upstream_sha256": "bd131ba8a4660c2a07b87342625beb09c183f3f8e5956dea849ccc60113cf0dd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/calendar/lv_calendar_header_dropdown.c",
+      "sha256": "fdeb86557a32d0cd02542932c012e28d613c7ed7a731e5870e9aa8a3c59bfd27",
+      "upstream_sha256": "fdeb86557a32d0cd02542932c012e28d613c7ed7a731e5870e9aa8a3c59bfd27",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/calendar/lv_calendar_header_dropdown.h",
+      "sha256": "ec7826b7a5b32e14bc88d7f5a73d7f0860b883f5fcf6c9bd40fd4816aefdf3cf",
+      "upstream_sha256": "ec7826b7a5b32e14bc88d7f5a73d7f0860b883f5fcf6c9bd40fd4816aefdf3cf",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/chart/lv_chart.c",
+      "sha256": "fa5ae5065bd7ccc2244367e7c4e4e7b7b9ee1b9f57c4409b2cf32dd2aaacc80b",
+      "upstream_sha256": "fa5ae5065bd7ccc2244367e7c4e4e7b7b9ee1b9f57c4409b2cf32dd2aaacc80b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/chart/lv_chart.h",
+      "sha256": "01487ccc4fc96558cfff24efaf3c3eae422e94af6f1e9265e16f5d9d5351734d",
+      "upstream_sha256": "01487ccc4fc96558cfff24efaf3c3eae422e94af6f1e9265e16f5d9d5351734d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/colorwheel/lv_colorwheel.c",
+      "sha256": "800951c7e0f9bab7b5eae92287c665dca42a7905e5f62bd7a150a9586f3d8916",
+      "upstream_sha256": "800951c7e0f9bab7b5eae92287c665dca42a7905e5f62bd7a150a9586f3d8916",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/colorwheel/lv_colorwheel.h",
+      "sha256": "8c4903901d0fe2231ad3bbdb6785d87eef9e84826a1d6bddeff7d5cb9d0fcb26",
+      "upstream_sha256": "8c4903901d0fe2231ad3bbdb6785d87eef9e84826a1d6bddeff7d5cb9d0fcb26",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/imgbtn/lv_imgbtn.c",
+      "sha256": "2fa356719a71861cadc5434b59650566cc85c3eeca3aa2cd06d935639da5c8dc",
+      "upstream_sha256": "2fa356719a71861cadc5434b59650566cc85c3eeca3aa2cd06d935639da5c8dc",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/imgbtn/lv_imgbtn.h",
+      "sha256": "96a59a07e7e1f194f96c4f8ea1fe0d93ccb2636311612e3977445e9b05c4d2c1",
+      "upstream_sha256": "96a59a07e7e1f194f96c4f8ea1fe0d93ccb2636311612e3977445e9b05c4d2c1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/keyboard/lv_keyboard.c",
+      "sha256": "8b49b3c48aec70ea4d5de05921b8acaaea3a57327a32d1174fde919647bbf121",
+      "upstream_sha256": "8b49b3c48aec70ea4d5de05921b8acaaea3a57327a32d1174fde919647bbf121",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/keyboard/lv_keyboard.h",
+      "sha256": "fc63985a37a611065d51fc523b688aafe5a725acddaf195c7980fb53108e7947",
+      "upstream_sha256": "fc63985a37a611065d51fc523b688aafe5a725acddaf195c7980fb53108e7947",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/led/lv_led.c",
+      "sha256": "7a7c2ce1a47f647e844525507e911f833715c54e46188d77b4d54fda862745ec",
+      "upstream_sha256": "7a7c2ce1a47f647e844525507e911f833715c54e46188d77b4d54fda862745ec",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/led/lv_led.h",
+      "sha256": "d4394e6cdca8ad884fa6e965969482bb5954977ce92657a0e79f31dfd13b2640",
+      "upstream_sha256": "d4394e6cdca8ad884fa6e965969482bb5954977ce92657a0e79f31dfd13b2640",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/list/lv_list.c",
+      "sha256": "88f6a9ba599a29e8b4ae854876f307974059769b40508679825d0b1278d0a144",
+      "upstream_sha256": "88f6a9ba599a29e8b4ae854876f307974059769b40508679825d0b1278d0a144",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/list/lv_list.h",
+      "sha256": "bc4d9ab84c9b1326775461e68ce575c1a4c1199ec4eed2e44ff5d25d228d696a",
+      "upstream_sha256": "bc4d9ab84c9b1326775461e68ce575c1a4c1199ec4eed2e44ff5d25d228d696a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/lv_widgets.h",
+      "sha256": "c43f5f1e085f572b7c11f2f9a061e5fc1a19614e82f7999469d7b4f1e5005634",
+      "upstream_sha256": "c43f5f1e085f572b7c11f2f9a061e5fc1a19614e82f7999469d7b4f1e5005634",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/menu/lv_menu.c",
+      "sha256": "1d9bdf9be01093315a9efd19e79fb7f6f695b3c32d0d63a9083f8044bac3ff88",
+      "upstream_sha256": "1d9bdf9be01093315a9efd19e79fb7f6f695b3c32d0d63a9083f8044bac3ff88",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/menu/lv_menu.h",
+      "sha256": "4a54f55e99ddd59ff5e22a0c997cc30723f0fe2911d2f538450eb72b49f7c94f",
+      "upstream_sha256": "4a54f55e99ddd59ff5e22a0c997cc30723f0fe2911d2f538450eb72b49f7c94f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/meter/lv_meter.c",
+      "sha256": "c1e493542fa922b6fdeed2995f94ea5a937427d03bba66e7ab3c909a9f3dc0d1",
+      "upstream_sha256": "c1e493542fa922b6fdeed2995f94ea5a937427d03bba66e7ab3c909a9f3dc0d1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/meter/lv_meter.h",
+      "sha256": "9213d18a94094fec00183c1df3d2a5a0145d333b1f28a5ac19313c2d3c69af41",
+      "upstream_sha256": "9213d18a94094fec00183c1df3d2a5a0145d333b1f28a5ac19313c2d3c69af41",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/msgbox/lv_msgbox.c",
+      "sha256": "be0737bf57c68f41419faa313b2eb0e4ca26fe9256aeb3ca20d82d292445e64e",
+      "upstream_sha256": "be0737bf57c68f41419faa313b2eb0e4ca26fe9256aeb3ca20d82d292445e64e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/msgbox/lv_msgbox.h",
+      "sha256": "a50dda137cbcd84b7a34d86fa00a84c0a9b85afc17c553cf6472dc2310715528",
+      "upstream_sha256": "a50dda137cbcd84b7a34d86fa00a84c0a9b85afc17c553cf6472dc2310715528",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/span/lv_span.c",
+      "sha256": "4fc9da9c70c9bde0350c9f4ce6328958b8726815e789d80db5f82aafcb549716",
+      "upstream_sha256": "4fc9da9c70c9bde0350c9f4ce6328958b8726815e789d80db5f82aafcb549716",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/span/lv_span.h",
+      "sha256": "b487760c1d7f03817dc3195a8e075b74cacd70362d43e5d625b6cae6ab8b18d8",
+      "upstream_sha256": "b487760c1d7f03817dc3195a8e075b74cacd70362d43e5d625b6cae6ab8b18d8",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/spinbox/lv_spinbox.c",
+      "sha256": "0109c88f9f53467d7364eb3fa4c903690ed345438aa527fc3acdd5e810b9b0c4",
+      "upstream_sha256": "0109c88f9f53467d7364eb3fa4c903690ed345438aa527fc3acdd5e810b9b0c4",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/spinbox/lv_spinbox.h",
+      "sha256": "803320448674253779bfb5930f81f9289bfbe41d00572e0724ca8054ceb7c659",
+      "upstream_sha256": "803320448674253779bfb5930f81f9289bfbe41d00572e0724ca8054ceb7c659",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/spinner/lv_spinner.c",
+      "sha256": "b8942ce40323417b972b6c2413eae4395144b115d79efff3f30df14257f4c40e",
+      "upstream_sha256": "b8942ce40323417b972b6c2413eae4395144b115d79efff3f30df14257f4c40e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/spinner/lv_spinner.h",
+      "sha256": "978fa12fa473abc96456de30bcf3564adf9fad691fea1d86a8ec0d044c9a1930",
+      "upstream_sha256": "978fa12fa473abc96456de30bcf3564adf9fad691fea1d86a8ec0d044c9a1930",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/tabview/lv_tabview.c",
+      "sha256": "7ba4b4cc25b074d35240693c3926e701ecf299d0a8045176d5e23d841188e6bd",
+      "upstream_sha256": "7ba4b4cc25b074d35240693c3926e701ecf299d0a8045176d5e23d841188e6bd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/tabview/lv_tabview.h",
+      "sha256": "aeb30ab101f0fd0bdbb48472054d1cd4c7fbfbfa6bbf83d5c3066348fc708919",
+      "upstream_sha256": "aeb30ab101f0fd0bdbb48472054d1cd4c7fbfbfa6bbf83d5c3066348fc708919",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/tileview/lv_tileview.c",
+      "sha256": "4308638c69852ab22f7a5e18537e79014add33ae905c941039e9649f067ac47d",
+      "upstream_sha256": "4308638c69852ab22f7a5e18537e79014add33ae905c941039e9649f067ac47d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/tileview/lv_tileview.h",
+      "sha256": "d8d5a711989a89b0faa07f574f45180b3f9dfe0460b9ceafe6ece66f86cb3554",
+      "upstream_sha256": "d8d5a711989a89b0faa07f574f45180b3f9dfe0460b9ceafe6ece66f86cb3554",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/win/lv_win.c",
+      "sha256": "9c4225fdc7d1a9e3d79381f36438e6777722bedcd6859be00bd55d45f0ca6a22",
+      "upstream_sha256": "9c4225fdc7d1a9e3d79381f36438e6777722bedcd6859be00bd55d45f0ca6a22",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/extra/widgets/win/lv_win.h",
+      "sha256": "142ec2ade120cf74cd3acb39cc7d7f3136b31845282f88bb8e23a793ca75cccb",
+      "upstream_sha256": "142ec2ade120cf74cd3acb39cc7d7f3136b31845282f88bb8e23a793ca75cccb",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/korean.ttf",
+      "sha256": "bc842cc04c1718ef4e7da648c43efbed53b95ec4952c4b43b8146c7b1ea7cecf",
+      "upstream_sha256": "bc842cc04c1718ef4e7da648c43efbed53b95ec4952c4b43b8146c7b1ea7cecf",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font.c",
+      "sha256": "5289eb2923c4f7a947b2d8a9fb7a7398f9acd01ebbd2297e048cb1dd39d2a20e",
+      "upstream_sha256": "5289eb2923c4f7a947b2d8a9fb7a7398f9acd01ebbd2297e048cb1dd39d2a20e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font.h",
+      "sha256": "1c29529613fc27d8b72d21016b1298ff828ea098069319beb60cb3c6ed90a982",
+      "upstream_sha256": "1c29529613fc27d8b72d21016b1298ff828ea098069319beb60cb3c6ed90a982",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font.mk",
+      "sha256": "350ff0e74e814cc6a12759f94741fa8aad50629e72ad8d9707c156f4d67acfd1",
+      "upstream_sha256": "350ff0e74e814cc6a12759f94741fa8aad50629e72ad8d9707c156f4d67acfd1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font_fmt_txt.c",
+      "sha256": "2f99265734a3e05193ee912759e0c1867c5660905d265551b7041e0fccfe1132",
+      "upstream_sha256": "310ec9757ce6e5196a9246b4aa7d8e6a0209c89dc8c07c34f6209efdc7443a72",
+      "upstream_equal": false
+    },
+    {
+      "path": "src/font/lv_font_fmt_txt.h",
+      "sha256": "da8a92d80c1aec21330efb5cbc8b2ca7576436fb7bb5c139ce6d3bbe8879d4e5",
+      "upstream_sha256": "da8a92d80c1aec21330efb5cbc8b2ca7576436fb7bb5c139ce6d3bbe8879d4e5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font_loader.c",
+      "sha256": "6d4f12094fa8cf93971e58f69ce4d11e90071c45cd5293c127e3bcbbbd222b09",
+      "upstream_sha256": "6d4f12094fa8cf93971e58f69ce4d11e90071c45cd5293c127e3bcbbbd222b09",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font_loader.h",
+      "sha256": "96fa281420d31e2ffcf04218311716cb1139e41b0bf75c3c930e183fb93f4362",
+      "upstream_sha256": "96fa281420d31e2ffcf04218311716cb1139e41b0bf75c3c930e183fb93f4362",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font_montserrat_16.c",
+      "sha256": "ff16a58b4a20150ed4b606b84e2a17aa7c1e5b2717e811cd616ce416de9fa858",
+      "upstream_sha256": "ff16a58b4a20150ed4b606b84e2a17aa7c1e5b2717e811cd616ce416de9fa858",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font_montserrat_20.c",
+      "sha256": "1bc2011c66d2c4e1bdff90e5d1489f7155e2b8eaaf47a7578f53ea854e8afeac",
+      "upstream_sha256": "1bc2011c66d2c4e1bdff90e5d1489f7155e2b8eaaf47a7578f53ea854e8afeac",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_font_simsun_16_cjk.c",
+      "sha256": "3201cd38346858e018546b800f80219f7d3b3c7baed0c1f119c6d0ff129f9dde",
+      "upstream_sha256": "3201cd38346858e018546b800f80219f7d3b3c7baed0c1f119c6d0ff129f9dde",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/font/lv_symbol_def.h",
+      "sha256": "d10acb9c207210e0a08ecac816f77b8d55ab43ea9a0c5e3f08a15a93b969a204",
+      "upstream_sha256": "d10acb9c207210e0a08ecac816f77b8d55ab43ea9a0c5e3f08a15a93b969a204",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/hal/lv_hal.h",
+      "sha256": "231945a3c4ba8a6b94960d993a50912f39efe5ae6e892bfe2671f180fc021462",
+      "upstream_sha256": "231945a3c4ba8a6b94960d993a50912f39efe5ae6e892bfe2671f180fc021462",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/hal/lv_hal.mk",
+      "sha256": "eff6f3bf7bea05c20deace70258cd579752961353d6456ff2aa18f61b1268e50",
+      "upstream_sha256": "eff6f3bf7bea05c20deace70258cd579752961353d6456ff2aa18f61b1268e50",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/hal/lv_hal_disp.c",
+      "sha256": "f6469dcf2d02226bdd3b3f8587c861c66fd2670643dd835b3e6a6f0a15f6be07",
+      "upstream_sha256": "042607aab514f55fc69e54bb6c02187ead284cd8bb13e686fe11635c7b14c0d5",
+      "upstream_equal": false
+    },
+    {
+      "path": "src/hal/lv_hal_disp.h",
+      "sha256": "b7bb5a3906a0a9c35a96f146d6dc58291c91d70876e1f575e5259eaa5545c2b5",
+      "upstream_sha256": "b7bb5a3906a0a9c35a96f146d6dc58291c91d70876e1f575e5259eaa5545c2b5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/hal/lv_hal_indev.c",
+      "sha256": "1cacaaf4933e0777ef8ef71578dc6680b4f7bea129cd3823224da99d609ac99d",
+      "upstream_sha256": "1cacaaf4933e0777ef8ef71578dc6680b4f7bea129cd3823224da99d609ac99d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/hal/lv_hal_indev.h",
+      "sha256": "5a36aaef7b6be5f8f4f70fd8ccfcd47334780e5f122c320bb938cb81e1b7eedc",
+      "upstream_sha256": "5a36aaef7b6be5f8f4f70fd8ccfcd47334780e5f122c320bb938cb81e1b7eedc",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/hal/lv_hal_tick.c",
+      "sha256": "45dc1fc8486561994d4e7e09a06faeede0edb576788bc32b8908ae0dcd6daec3",
+      "upstream_sha256": "45dc1fc8486561994d4e7e09a06faeede0edb576788bc32b8908ae0dcd6daec3",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/hal/lv_hal_tick.h",
+      "sha256": "9b8de58e1af3899a34745d986da35805501e6e3790deeafef0a2f02bd234ebbc",
+      "upstream_sha256": "9b8de58e1af3899a34745d986da35805501e6e3790deeafef0a2f02bd234ebbc",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/lv_api_map.h",
+      "sha256": "86e47b572ccdaa61fa01c1dba4366caedcf11f85244ca946055b90f56ddc22a8",
+      "upstream_sha256": "86e47b572ccdaa61fa01c1dba4366caedcf11f85244ca946055b90f56ddc22a8",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/lv_conf_internal.h",
+      "sha256": "87bd94e9f27939b1feee45b2a5f022654f96b9394d53cd1833f2f3d438e7ca5f",
+      "upstream_sha256": "87bd94e9f27939b1feee45b2a5f022654f96b9394d53cd1833f2f3d438e7ca5f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/lv_conf_kconfig.h",
+      "sha256": "d7419d46f8a45156f7cc3fc3bf3bf7c399de98e3b78003e84d49443913b7c15c",
+      "upstream_sha256": "d7419d46f8a45156f7cc3fc3bf3bf7c399de98e3b78003e84d49443913b7c15c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/lvgl.h",
+      "sha256": "68f18aa6f024c7aa88d32061fee5e620dbcee527e251454db34acd9438517465",
+      "upstream_sha256": "68f18aa6f024c7aa88d32061fee5e620dbcee527e251454db34acd9438517465",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_anim.c",
+      "sha256": "55e18ea1f25429cd178cd7a8366cc860d871440d515892da58f6ce72a2c67bf2",
+      "upstream_sha256": "55e18ea1f25429cd178cd7a8366cc860d871440d515892da58f6ce72a2c67bf2",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_anim.h",
+      "sha256": "7335cc0563f191bcf07f6a5211c4ed65cf6102c6062e1d175088fe1453e87b4d",
+      "upstream_sha256": "7335cc0563f191bcf07f6a5211c4ed65cf6102c6062e1d175088fe1453e87b4d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_anim_timeline.c",
+      "sha256": "b32a4817ed58834373d8b1f4da6710d8156702e95b6a3121e2b793074d93fbc5",
+      "upstream_sha256": "b32a4817ed58834373d8b1f4da6710d8156702e95b6a3121e2b793074d93fbc5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_anim_timeline.h",
+      "sha256": "4efd064cc64bd1b49a697719e6804250b93f22f45b2f8afb0e9ca76b7176a5f6",
+      "upstream_sha256": "4efd064cc64bd1b49a697719e6804250b93f22f45b2f8afb0e9ca76b7176a5f6",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_area.c",
+      "sha256": "0bd17180b88ef4eb4645fc024f80492d7439490841f6ab32bb206d984c1e7949",
+      "upstream_sha256": "0bd17180b88ef4eb4645fc024f80492d7439490841f6ab32bb206d984c1e7949",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_area.h",
+      "sha256": "19c72dba56ea8665c1d357913073f3f1052b455ff0a493f76cc45c9a7fdc36e8",
+      "upstream_sha256": "19c72dba56ea8665c1d357913073f3f1052b455ff0a493f76cc45c9a7fdc36e8",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_assert.h",
+      "sha256": "db8794dc8de027f256895d25b900cc920e92552d5f073b47111aadcac2015e52",
+      "upstream_sha256": "db8794dc8de027f256895d25b900cc920e92552d5f073b47111aadcac2015e52",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_async.c",
+      "sha256": "7d10fbeb87cb8918a6db488675f5ececb570794ee8dfc7e1bdc2e0e91aecf552",
+      "upstream_sha256": "7d10fbeb87cb8918a6db488675f5ececb570794ee8dfc7e1bdc2e0e91aecf552",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_async.h",
+      "sha256": "fd2de00ca9b113d487ba291fa0870c2f9cc09017c0c5431e7f99c70664b0883f",
+      "upstream_sha256": "fd2de00ca9b113d487ba291fa0870c2f9cc09017c0c5431e7f99c70664b0883f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_bidi.c",
+      "sha256": "a6f2dceda498358fe9cb797d4647b41b80d9ab0162113e656f822f029487d7ca",
+      "upstream_sha256": "a6f2dceda498358fe9cb797d4647b41b80d9ab0162113e656f822f029487d7ca",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_bidi.h",
+      "sha256": "c128be75cf39087136a65e6fc8ac64b0fc599e095460c47b8dc63d6fe25fb439",
+      "upstream_sha256": "c128be75cf39087136a65e6fc8ac64b0fc599e095460c47b8dc63d6fe25fb439",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_color.c",
+      "sha256": "e49eeebc2e3e85d5b48e44772a5c9adcdf4f69472ae0014b207cb614775c55ec",
+      "upstream_sha256": "e49eeebc2e3e85d5b48e44772a5c9adcdf4f69472ae0014b207cb614775c55ec",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_color.h",
+      "sha256": "c7604889ffb54c8b08ba73dd4275d532d2d68710af4f4e73facbf282ed5cfb3d",
+      "upstream_sha256": "c7604889ffb54c8b08ba73dd4275d532d2d68710af4f4e73facbf282ed5cfb3d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_fs.c",
+      "sha256": "d6df7c889ce372f8396b601eb919cf372973e1a508f71ddbd5d812c9f10caba9",
+      "upstream_sha256": "d6df7c889ce372f8396b601eb919cf372973e1a508f71ddbd5d812c9f10caba9",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_fs.h",
+      "sha256": "8bfd04a93f2f360adb50702588931555006ac78095d5c74c32bd865ab0709d07",
+      "upstream_sha256": "8bfd04a93f2f360adb50702588931555006ac78095d5c74c32bd865ab0709d07",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_gc.c",
+      "sha256": "61f35daaec0a2770c978e8dd35028f040693b569c6d3418b8cefa4a2716fa82d",
+      "upstream_sha256": "61f35daaec0a2770c978e8dd35028f040693b569c6d3418b8cefa4a2716fa82d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_gc.h",
+      "sha256": "f1b5419a1fac85d533f44c85de7a87ed1bdcd5df4223f2d4c2f04dae6a6a8879",
+      "upstream_sha256": "f1b5419a1fac85d533f44c85de7a87ed1bdcd5df4223f2d4c2f04dae6a6a8879",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_ll.c",
+      "sha256": "0b958b85b44e176075ebb164e22546a61003ef5f3587cea20face78a563b37fe",
+      "upstream_sha256": "0b958b85b44e176075ebb164e22546a61003ef5f3587cea20face78a563b37fe",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_ll.h",
+      "sha256": "22465ed3ceb42a354278c576cc22162232ef93448efbf5f22542284b1e77d135",
+      "upstream_sha256": "22465ed3ceb42a354278c576cc22162232ef93448efbf5f22542284b1e77d135",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_log.c",
+      "sha256": "e2ff38631c20cb63a05353d8e254bfc2ab273dd921c392f00cdaa7fb06935c5b",
+      "upstream_sha256": "e2ff38631c20cb63a05353d8e254bfc2ab273dd921c392f00cdaa7fb06935c5b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_log.h",
+      "sha256": "db295695e48285757a18ce9ec8c96b84ec022a9e85ab9121f7fb1a19f2f836ae",
+      "upstream_sha256": "db295695e48285757a18ce9ec8c96b84ec022a9e85ab9121f7fb1a19f2f836ae",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_lru.c",
+      "sha256": "abeca26f2878a913183b3b48b6af8d18f4837332da64418dc29c3d32188823cc",
+      "upstream_sha256": "abeca26f2878a913183b3b48b6af8d18f4837332da64418dc29c3d32188823cc",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_lru.h",
+      "sha256": "126ae1ce3c2784f948bc1126a1705bfac16e875cd9642d68a8039b8108b3d7fc",
+      "upstream_sha256": "126ae1ce3c2784f948bc1126a1705bfac16e875cd9642d68a8039b8108b3d7fc",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_math.c",
+      "sha256": "73c06546e127e3340de267334f81f02980f6c3ca81d78d2a42786009c35bd879",
+      "upstream_sha256": "73c06546e127e3340de267334f81f02980f6c3ca81d78d2a42786009c35bd879",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_math.h",
+      "sha256": "309870dacdd2761f8aea36b521a3cab829a80db4cb2c49aae15ba3fa8a645362",
+      "upstream_sha256": "309870dacdd2761f8aea36b521a3cab829a80db4cb2c49aae15ba3fa8a645362",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_mem.c",
+      "sha256": "86230be9ab8aca7097cd818f5f9617d94ca853fa0794da8b71be8d9c2239c377",
+      "upstream_sha256": "29b6d6405315b0d1f04ade465cbc535f4859ef75e8a585d0435e45efc9c26e16",
+      "upstream_equal": false
+    },
+    {
+      "path": "src/misc/lv_mem.h",
+      "sha256": "6df61307e0420cc075cc524c116526b040d079bebf24f0a81777706972463d41",
+      "upstream_sha256": "6df61307e0420cc075cc524c116526b040d079bebf24f0a81777706972463d41",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_misc.mk",
+      "sha256": "e0243baba11ab40a1bbd4446751d469b8668a7018eae41a24ef00713c553906b",
+      "upstream_sha256": "e0243baba11ab40a1bbd4446751d469b8668a7018eae41a24ef00713c553906b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_printf.c",
+      "sha256": "9c282c81e9fcee59d90a3a7fee3381a08b251ca95f42d3c77e6f01612ffd8ad1",
+      "upstream_sha256": "9c282c81e9fcee59d90a3a7fee3381a08b251ca95f42d3c77e6f01612ffd8ad1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_printf.h",
+      "sha256": "639b6dc6903230106561819099e4dd064a405768ff92fb6ecc9d3837c1596d36",
+      "upstream_sha256": "639b6dc6903230106561819099e4dd064a405768ff92fb6ecc9d3837c1596d36",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_style.c",
+      "sha256": "a1bf875208def234985a8a7eedbe286e92579f1858ee4ed62a2582066f5aa34f",
+      "upstream_sha256": "e6f0ab02ef84d1429cb9d74396a9a57ade168f0740b2075bbffdd48e0898392f",
+      "upstream_equal": false
+    },
+    {
+      "path": "src/misc/lv_style.h",
+      "sha256": "7ac2200f5e5580adac724e55e58cb266f15ade5bc2cea9f3ab7d744765e970dd",
+      "upstream_sha256": "7ac2200f5e5580adac724e55e58cb266f15ade5bc2cea9f3ab7d744765e970dd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_style_gen.c",
+      "sha256": "337d987f4287c99fda6b24b50eba6e7461933b6597da699b230b14fa11b13e18",
+      "upstream_sha256": "337d987f4287c99fda6b24b50eba6e7461933b6597da699b230b14fa11b13e18",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_style_gen.h",
+      "sha256": "7af1f66cac668af2c55affec59bbe2b85baef2f295b41b00e724d3afd51df6ab",
+      "upstream_sha256": "7af1f66cac668af2c55affec59bbe2b85baef2f295b41b00e724d3afd51df6ab",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_templ.c",
+      "sha256": "40d1b3dab81753f66ebca0b6d0b3065bc92d317c3c54e1809628d666dbeff767",
+      "upstream_sha256": "40d1b3dab81753f66ebca0b6d0b3065bc92d317c3c54e1809628d666dbeff767",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_templ.h",
+      "sha256": "7cc6e2a787852952c13d4d42b1e9b3967bcac6c27341390a58cf470e868c30a4",
+      "upstream_sha256": "7cc6e2a787852952c13d4d42b1e9b3967bcac6c27341390a58cf470e868c30a4",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_timer.c",
+      "sha256": "06ff14356e1a74fc8bd5e542de142038040fe32f45eef16d01ad9f3d16e86be4",
+      "upstream_sha256": "06ff14356e1a74fc8bd5e542de142038040fe32f45eef16d01ad9f3d16e86be4",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_timer.h",
+      "sha256": "0d9d672b4d13580dd2dc125243cc1f00ca50ef29bfefe72b2a7c8684a561091f",
+      "upstream_sha256": "0d9d672b4d13580dd2dc125243cc1f00ca50ef29bfefe72b2a7c8684a561091f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_tlsf.c",
+      "sha256": "9d068803116b2db6e1065b484f7cc6435a1385e2097cadbbdb296e3868088ccf",
+      "upstream_sha256": "4b72857304ac14686234d89c656b4eac5333094f327c618782c62f73dee4857e",
+      "upstream_equal": false
+    },
+    {
+      "path": "src/misc/lv_tlsf.h",
+      "sha256": "e59c01b34c9d02ceb74c86b37239f8bf98d0ec62695f290513f0164502dc1202",
+      "upstream_sha256": "e59c01b34c9d02ceb74c86b37239f8bf98d0ec62695f290513f0164502dc1202",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_txt.c",
+      "sha256": "54188ad584a8d3e6ebf00e256849b765696f40641ab3b071764435f903e2b4d5",
+      "upstream_sha256": "54188ad584a8d3e6ebf00e256849b765696f40641ab3b071764435f903e2b4d5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_txt.h",
+      "sha256": "367f1bc02e662c011a56b7d0dc524b98a37ec2badb0d44c01a02a8f86a05d295",
+      "upstream_sha256": "367f1bc02e662c011a56b7d0dc524b98a37ec2badb0d44c01a02a8f86a05d295",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_txt_ap.c",
+      "sha256": "d43b6d8d47f5ad8240e87045ecc12317542eb4014259ccddd06463d19dd8b268",
+      "upstream_sha256": "d43b6d8d47f5ad8240e87045ecc12317542eb4014259ccddd06463d19dd8b268",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_txt_ap.h",
+      "sha256": "2e90f30ddbaba0aa765b456873671044714590518fbfcce373ce672f4cdf147c",
+      "upstream_sha256": "2e90f30ddbaba0aa765b456873671044714590518fbfcce373ce672f4cdf147c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_types.h",
+      "sha256": "0fd14eb21df4be282371536348d559a1fc3d3586775fba807d9aa66798a96b20",
+      "upstream_sha256": "0fd14eb21df4be282371536348d559a1fc3d3586775fba807d9aa66798a96b20",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_utils.c",
+      "sha256": "bf0bcebe789d0fea9107705ea1a346329d676c8bb232c4161654e529dc03285a",
+      "upstream_sha256": "bf0bcebe789d0fea9107705ea1a346329d676c8bb232c4161654e529dc03285a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/misc/lv_utils.h",
+      "sha256": "92024a8c5825d28ff315bd23e8a7c3a28fafb229a869e28578756c0915a22b9b",
+      "upstream_sha256": "92024a8c5825d28ff315bd23e8a7c3a28fafb229a869e28578756c0915a22b9b",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_arc.c",
+      "sha256": "8887bbf1b4eadb5ba1b5c53d74a2562ddcba950240832cdb7194b1c4bab50824",
+      "upstream_sha256": "8887bbf1b4eadb5ba1b5c53d74a2562ddcba950240832cdb7194b1c4bab50824",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_arc.h",
+      "sha256": "05415a87787fa95d89ef7b631e3c18f168d4689a387d57be627efe2ca369e74a",
+      "upstream_sha256": "05415a87787fa95d89ef7b631e3c18f168d4689a387d57be627efe2ca369e74a",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_bar.c",
+      "sha256": "5a90a4d350d3f1cfcb52a7e61f61c71e7b879329d5f32d19391efa464f982c2f",
+      "upstream_sha256": "5a90a4d350d3f1cfcb52a7e61f61c71e7b879329d5f32d19391efa464f982c2f",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_bar.h",
+      "sha256": "3297f04da3682d3d4577dbcb2ea1bca3b699542e76bbc73e1e1965faee730a05",
+      "upstream_sha256": "3297f04da3682d3d4577dbcb2ea1bca3b699542e76bbc73e1e1965faee730a05",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_btn.c",
+      "sha256": "3d805612ef083f4733bf3fc9bc40afea6c10673c5ada10352c040173c26033f0",
+      "upstream_sha256": "3d805612ef083f4733bf3fc9bc40afea6c10673c5ada10352c040173c26033f0",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_btn.h",
+      "sha256": "b6a3563dd46ad6d8ba81bf2c00dccee7693dd18f0e62811e19bbff04f1566e9c",
+      "upstream_sha256": "b6a3563dd46ad6d8ba81bf2c00dccee7693dd18f0e62811e19bbff04f1566e9c",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_btnmatrix.c",
+      "sha256": "6b3ea957dda95f811524f03b3011e5972518dff713000fc5a87eb286b01bc2f8",
+      "upstream_sha256": "6b3ea957dda95f811524f03b3011e5972518dff713000fc5a87eb286b01bc2f8",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_btnmatrix.h",
+      "sha256": "1437ae0a18ead188456b6511347a4410d0eb3621e4cb5497fc6de1fc69242c61",
+      "upstream_sha256": "1437ae0a18ead188456b6511347a4410d0eb3621e4cb5497fc6de1fc69242c61",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_canvas.c",
+      "sha256": "e2574e348c3667d1b542bfc291c360779aaeeb5f54771d64a48e7463dc93550d",
+      "upstream_sha256": "e2574e348c3667d1b542bfc291c360779aaeeb5f54771d64a48e7463dc93550d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_canvas.h",
+      "sha256": "108cb03178696b2a83b942db07bc4a25f743e26b45a1253134e52089d7032624",
+      "upstream_sha256": "108cb03178696b2a83b942db07bc4a25f743e26b45a1253134e52089d7032624",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_checkbox.c",
+      "sha256": "cd6b1c5108810673527d675bbd1f757d1e925d965b2c53d2933dc116c40c688e",
+      "upstream_sha256": "cd6b1c5108810673527d675bbd1f757d1e925d965b2c53d2933dc116c40c688e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_checkbox.h",
+      "sha256": "fc9003bdaa0ad8da8d6fc4bbe44df2f797bf5b3176b5c002b11fd44af4b596a4",
+      "upstream_sha256": "fc9003bdaa0ad8da8d6fc4bbe44df2f797bf5b3176b5c002b11fd44af4b596a4",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_dropdown.c",
+      "sha256": "6848bf076c57c612cd48219c86ff3718d3b16e14c54a9008d88e5ee226cfd79d",
+      "upstream_sha256": "6848bf076c57c612cd48219c86ff3718d3b16e14c54a9008d88e5ee226cfd79d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_dropdown.h",
+      "sha256": "627f7d9d24b18190689145224c3f88e835cc26312f93bc5511e332b4c7a48bbe",
+      "upstream_sha256": "627f7d9d24b18190689145224c3f88e835cc26312f93bc5511e332b4c7a48bbe",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_img.c",
+      "sha256": "d751dbcccf152f37641ba0c8bec4acb0ce4e42ae51d49ab723176b0b661c63e3",
+      "upstream_sha256": "d751dbcccf152f37641ba0c8bec4acb0ce4e42ae51d49ab723176b0b661c63e3",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_img.h",
+      "sha256": "433d6306c794a887d20d6b417a747fb4e1b48d4725b7664903cdfef4c97a3a0d",
+      "upstream_sha256": "433d6306c794a887d20d6b417a747fb4e1b48d4725b7664903cdfef4c97a3a0d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_label.c",
+      "sha256": "4c20b087af77eafd1c05015d15682c75cbc4d9f087eafe1cc3585c28e953c76e",
+      "upstream_sha256": "4c20b087af77eafd1c05015d15682c75cbc4d9f087eafe1cc3585c28e953c76e",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_label.h",
+      "sha256": "d1b9f7de0aab644a9094ef3ee79b337c4d5a1c1955cf34bdfa48e36368d07771",
+      "upstream_sha256": "d1b9f7de0aab644a9094ef3ee79b337c4d5a1c1955cf34bdfa48e36368d07771",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_line.c",
+      "sha256": "6ddf85a82dbbbdf972d906aa030b4e4ba6975166c756cb267cf00205e822e4c9",
+      "upstream_sha256": "6ddf85a82dbbbdf972d906aa030b4e4ba6975166c756cb267cf00205e822e4c9",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_line.h",
+      "sha256": "3fc369690b2427aa322641827316d430e6e8518ac19a24a1bb3d4f184ea5c593",
+      "upstream_sha256": "3fc369690b2427aa322641827316d430e6e8518ac19a24a1bb3d4f184ea5c593",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_objx_templ.c",
+      "sha256": "5fa7e5a2f45ea7234a2307110cd7a556e64231dce953326895e8256adc32f719",
+      "upstream_sha256": "5fa7e5a2f45ea7234a2307110cd7a556e64231dce953326895e8256adc32f719",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_objx_templ.h",
+      "sha256": "11bf2ea2a0d45890eb19efb6d88704454b2c7d8d8219e56e491dabdad1883354",
+      "upstream_sha256": "11bf2ea2a0d45890eb19efb6d88704454b2c7d8d8219e56e491dabdad1883354",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_roller.c",
+      "sha256": "434bf3b231c234a83032cb9ee1f37fc178b8ba923a5512e9c394799f343c2742",
+      "upstream_sha256": "434bf3b231c234a83032cb9ee1f37fc178b8ba923a5512e9c394799f343c2742",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_roller.h",
+      "sha256": "de2d909381bdccdf36c19bfb6751683e038c7500afd01e5bd074c53f25400b06",
+      "upstream_sha256": "de2d909381bdccdf36c19bfb6751683e038c7500afd01e5bd074c53f25400b06",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_slider.c",
+      "sha256": "715ffe14f71800b5413b44d987b2bebbffd41bce7bba8d7dd114512b63860cdd",
+      "upstream_sha256": "715ffe14f71800b5413b44d987b2bebbffd41bce7bba8d7dd114512b63860cdd",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_slider.h",
+      "sha256": "3a53be57428dd579f7442f4b64c333d508f3a38bbe0cdc9496c35ca11820fd98",
+      "upstream_sha256": "3a53be57428dd579f7442f4b64c333d508f3a38bbe0cdc9496c35ca11820fd98",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_switch.c",
+      "sha256": "cd65c2709aaeab4bbf205efe6ecab02cdea07b230dd9d580776c6c8081f8c8e1",
+      "upstream_sha256": "cd65c2709aaeab4bbf205efe6ecab02cdea07b230dd9d580776c6c8081f8c8e1",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_switch.h",
+      "sha256": "e22ce149f0134f1320d1b5c6ff56ddeb9d36fd403b9555b4ba22586535ff03a3",
+      "upstream_sha256": "e22ce149f0134f1320d1b5c6ff56ddeb9d36fd403b9555b4ba22586535ff03a3",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_table.c",
+      "sha256": "77dfe77571178748bee5a5d480295d10355ae905fafc7d1d294f8f3fd925dad5",
+      "upstream_sha256": "77dfe77571178748bee5a5d480295d10355ae905fafc7d1d294f8f3fd925dad5",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_table.h",
+      "sha256": "3a0009894e242107b3af894cc9fba1fcaa4814e2fe3371d43d337854d0e0304d",
+      "upstream_sha256": "3a0009894e242107b3af894cc9fba1fcaa4814e2fe3371d43d337854d0e0304d",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_textarea.c",
+      "sha256": "f7a22e88e3d4b2154493277423f8c223039889677923541b930b04235af22972",
+      "upstream_sha256": "f7a22e88e3d4b2154493277423f8c223039889677923541b930b04235af22972",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_textarea.h",
+      "sha256": "03b4cb7ee8afffadf2428c80939a14dae834ccaa80d5d8bb641d456220962b94",
+      "upstream_sha256": "03b4cb7ee8afffadf2428c80939a14dae834ccaa80d5d8bb641d456220962b94",
+      "upstream_equal": true
+    },
+    {
+      "path": "src/widgets/lv_widgets.mk",
+      "sha256": "fa85ec38fbaf3211726c150ddcc0f997781fe555f16209a0f4a66a2736365af5",
+      "upstream_sha256": "fa85ec38fbaf3211726c150ddcc0f997781fe555f16209a0f4a66a2736365af5",
+      "upstream_equal": true
+    }
+  ]
+}

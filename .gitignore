@@ -17,3 +17,18 @@
 __pycache__/
 *.pyc
 .worktrees/
+# LCD implementation: retain maintained layout, ignore reproducible build outputs.
+!MDK-ARM/aethor_memory.sct
+Tests/host/build/
+Tests/ui/build/
+MDK-ARM/LCD-ReadOnly/
+MDK-ARM/LCD-POS/
+MDK-ARM/LCD-MIT/
+MDK-ARM/RTE/_LCD-*/
+MDK-ARM/DebugConfig/LCD-*.dbgconf
+output/
+# Reproducible host binaries and unused upstream font samples.
+Tests/host/lcd_fakes/build/
+Tests/ui/artifacts/*.ppm
+Middlewares/Third_Party/LVGL/src/extra/libs/freetype/arial.ttf
+Middlewares/Third_Party/LVGL/src/font/korean.ttf

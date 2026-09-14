@@ -77,6 +77,11 @@ static const char *process_text_request(ProtocolEngine *engine,
         timestamp_us,
         output_batch);
 
+    if (status != expected_status)
+    {
+        fprintf(stderr, "Unexpected status %d for %s response=%s\n", (int)status, request,
+            output_batch->count ? output_batch->messages[0].data : "<empty>");
+    }
     assert(status == expected_status);
     assert(output_batch->count == 1U);
     assert(output_batch->messages[0].length ==
@@ -1818,7 +1823,7 @@ static void test_text_help(void)
                                &output_batch);
     assert(strcmp(output_batch.messages[0].data,
                   "ok 0 help topics=show,stream,arm,bench "
-                  "examples=show_state,arm_move,bench_jog\n") == 0);
+                  "examples=show_state,arm_move,bench_mit\n") == 0);
 
     (void)process_text_request(&engine,
                                "help bench\n",
@@ -1826,16 +1831,199 @@ static void test_text_help(void)
                                PROTOCOL_ENGINE_STATUS_OK,
                                &output_batch);
     assert(strcmp(output_batch.messages[0].data,
-                  "ok 0 help bench commands=init,enable,jog,move,stop,disable,clear\n") == 0);
+                  "ok 0 help bench commands=init,mode,mit,enable,jog,move,stop,disable,clear\n") == 0);
     assert(output_batch.messages[0].length <
            TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH);
     assert(output_batch.messages[0].data[
                output_batch.messages[0].length - 1U] == '\n');
 }
 
+/** @brief Verifies public bench mode switching and single-motor MIT actions. */
+static void test_text_bench_mode_and_mit_commands(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    ProtocolCommand command;
+    const char *response;
+
+    protocol_engine_init(&engine, 9568U);
+
+    response = process_text_request(&engine,
+                                    "90 bench mode 1,3 mode=mit\n",
+                                    1000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 90 bench mode accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_SET_MODE);
+    assert(command.motor_mask == 0x05U);
+    assert(command.control_mode == ARM_CONTROL_MODE_MIT);
+    assert(command.bench_relative_scope == 1U);
+    complete_parser_one_shot(&engine, &command, 1500U);
+
+    response = process_text_request(&engine,
+                                    "91 bench mode 1 mode=pos_vel\n",
+                                    2000U,
+                                    PROTOCOL_ENGINE_STATUS_OK,
+                                    &output_batch);
+    assert(strcmp(response, "ok 91 bench mode accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_SET_MODE);
+    assert(command.control_mode == ARM_CONTROL_MODE_POSITION_VELOCITY);
+    complete_parser_one_shot(&engine, &command, 2500U);
+
+    response = process_text_request(
+        &engine,
+        "92 bench mit 1 action=hold kp=1 kd=1 torque_ff=0 duration_ms=1000\n",
+        3000U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 92 bench mit accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_MIT_ACTION);
+    assert(command.motor_mask == 0x01U);
+    assert(command.mit_action == PROTOCOL_MIT_ACTION_HOLD);
+    assert(command.mit_kp == 1.0F);
+    assert(command.mit_kd == 1.0F);
+    assert(command.mit_torque_ff_nm == 0.0F);
+    assert(command.hold_duration_us == 1000000ULL);
+    complete_parser_one_shot(&engine, &command, 3500U);
+
+    response = process_text_request(
+        &engine,
+        "93 bench mit 3 action=move position=5 speed=2 kp=1 kd=1 "
+        "torque_ff=0 duration_ms=1000\n",
+        4000U,
+        PROTOCOL_ENGINE_STATUS_OK,
+        &output_batch);
+    assert(strcmp(response, "ok 93 bench mit accepted=1\n") == 0);
+    assert(protocol_engine_pop_command(&engine, &command) == 1U);
+    assert(command.type == PROTOCOL_COMMAND_MIT_ACTION);
+    assert(command.motor_mask == 0x04U);
+    assert(command.mit_action == PROTOCOL_MIT_ACTION_MOVE);
+    assert(command.values[2] == 5.0F);
+    assert(command.speeds[2] == 2.0F);
+    assert(command.mit_kp == 1.0F);
+    assert(command.mit_kd == 1.0F);
+    assert(command.mit_torque_ff_nm == 0.0F);
+    assert(command.hold_duration_us == 1000000ULL);
+    complete_parser_one_shot(&engine, &command, 4500U);
+}
+
+/** @brief Verifies unsafe or ambiguous MIT requests fail at the text boundary. */
+static void test_text_bench_mit_rejections(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output_batch;
+    const char *response;
+
+    protocol_engine_init(&engine, 9569U);
+
+    response = process_text_request(
+        &engine,
+        "0 bench mit 1 action=hold kp=1 kd=1 torque_ff=0 duration_ms=1000\n",
+        1000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 0 bench mit code=bad_argument field=request_id\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(
+        &engine,
+        "94 bench mit 1,3 action=hold kp=1 kd=1 torque_ff=0 duration_ms=1000\n",
+        2000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 94 bench mit code=bad_argument field=motors\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(
+        &engine,
+        "95 bench mit 1 action=move position=5 speed=2 kp=1 kd=0 "
+        "torque_ff=0 duration_ms=1000\n",
+        3000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 95 bench mit code=out_of_range field=kd\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(
+        &engine,
+        "96 bench mit 1 action=move position=5 speed=0 kp=1 kd=1 "
+        "torque_ff=0 duration_ms=1000\n",
+        4000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 96 bench mit code=out_of_range field=speed\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+
+    response = process_text_request(
+        &engine,
+        "97 bench mode 1 mode=speed\n",
+        5000U,
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        &output_batch);
+    assert(strcmp(response,
+                  "error 97 bench mode code=bad_argument field=mode\n") == 0);
+    assert_normal_command_queue_empty(&engine);
+}
+
+/** @brief RTOS query distinguishes zero free space, missing samples, and all seven tasks. */
+static void test_text_rtos_stack_samples(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output;
+    ProtocolQueryContext context = make_query_context();
+    const char *response;
+    uint8_t task_index;
+    protocol_engine_init(&engine, 1U);
+    protocol_engine_update_query_context(&engine, &context);
+    response = process_text_request(&engine, "201 show diag rtos\n", 1000U, PROTOCOL_ENGINE_STATUS_OK, &output);
+    assert(strstr(response, "control_stack=?") != NULL);
+    assert(strstr(response, "ui_stack=?") != NULL);
+    for (task_index = 0U; task_index < DIAGNOSTIC_TASK_COUNT; ++task_index)
+    {
+        context.diagnostics.task_stacks[task_index].free_words = task_index;
+        context.diagnostics.task_stacks[task_index].allocated_words = 100U + task_index;
+    }
+    protocol_engine_update_query_context(&engine, &context);
+    response = process_text_request(&engine, "202 show diag rtos\n", 1001U, PROTOCOL_ENGINE_STATUS_OK, &output);
+    assert(strstr(response, "control_stack=0/100 can_stack=1/101 protocol_stack=2/102 usb_stack=3/103") != NULL);
+    assert(strstr(response, "telemetry_stack=4/104 diag_stack=5/105 ui_stack=6/106 stack_unit=words") != NULL);
+    for (task_index = 0U; task_index < DIAGNOSTIC_TASK_COUNT; ++task_index)
+    {
+        context.diagnostics.task_stacks[task_index].free_words = UINT16_MAX;
+        context.diagnostics.task_stacks[task_index].allocated_words = UINT16_MAX;
+    }
+    context.diagnostics.minimum_heap_bytes = UINT32_MAX;
+    protocol_engine_update_query_context(&engine, &context);
+    response = process_text_request(&engine, "4294967295 show diag rtos\n", 1002U, PROTOCOL_ENGINE_STATUS_OK, &output);
+    assert(strstr(response, "control_stack=65535/65535") != NULL);
+    assert(strstr(response, "ui_stack=65535/65535") != NULL);
+    assert(strlen(response) <= TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH);
+    context.diagnostics.task_stacks[DIAGNOSTIC_TASK_UI].allocated_words = 0U;
+    protocol_engine_update_query_context(&engine, &context);
+    response = process_text_request(&engine, "203 show diag rtos\n", 1003U, PROTOCOL_ENGINE_STATUS_OK, &output);
+    assert(strstr(response, "ui_stack=?") != NULL);
+    for (task_index = 0U; task_index < DIAGNOSTIC_TASK_COUNT; ++task_index)
+    {
+        context.diagnostics.task_stacks[task_index].free_words = UINT32_MAX;
+        context.diagnostics.task_stacks[task_index].allocated_words = UINT32_MAX;
+    }
+    protocol_engine_update_query_context(&engine, &context);
+    assert(protocol_engine_process_text_line(&engine, "204 show diag rtos\n",
+        strlen("204 show diag rtos\n"), 1004U, &output) == PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL);
+    assert(output.count == 0U);
+}
+
 /** @brief Runs the aethor-text-v1 engine lifecycle tests. */
 int main(void)
 {
+    test_text_rtos_stack_samples();
     test_text_lifecycle();
     test_text_request_replay();
     test_manual_request_is_not_cached();
@@ -1862,6 +2050,8 @@ int main(void)
     test_valid_text_replays_keep_motors_energized();
     test_text_replay_validity_cache_boundaries();
     test_text_help();
+    test_text_bench_mode_and_mit_commands();
+    test_text_bench_mit_rejections();
     puts("TEXT_PROTOCOL_ENGINE_TESTS_PASSED");
     return 0;
 }

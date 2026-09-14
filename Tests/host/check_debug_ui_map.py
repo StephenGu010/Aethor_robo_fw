@@ -74,12 +74,12 @@ def verify_target(root: Path, target: str) -> dict:
                    for address, size in buffers), buffers
         ordered = sorted(buffers)
         assert ordered[0][0] + ordered[0][1] <= ordered[1][0]
-        assert read_symbol(contents, "debug_ui_lvgl_pool") == (0x24008000, 65536)
+        assert read_symbol(contents, "debug_ui_lvgl_pool") == (0x24008000, 32768)
         assert read_symbol(contents, "debugUiTaskBuffer")[1] == 8192
         for section in (".lcd_dma", ".lvgl_pool"):
             assert re.search(r"^\s*0x[0-9a-fA-F]+\s+0x[0-9a-fA-F]+\s+Zero\s+RW\s+\d+\s+" + re.escape(section), contents, re.M), section
         report.update(dma_buffers=[{"address": hex(address), "bytes": size} for address, size in buffers],
-                      lvgl_pool_address="0x24008000", lvgl_pool_bytes=65536,
+                      lvgl_pool_address="0x24008000", lvgl_pool_bytes=32768,
                       ui_stack_bytes=8192, dedicated_regions_zero_initialized=True)
     print(f"MAP_PASS {target}: code={code} ro={ro} rw={rw} zi={zi}")
     return report

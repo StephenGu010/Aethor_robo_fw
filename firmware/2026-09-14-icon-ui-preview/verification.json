@@ -1,0 +1,549 @@
+{
+  "base_main_commit": "f33fec1e8185baff43d0be1ea08317d7d5f035cc",
+  "implementation_branch": "feature/lvgl-icon-ui",
+  "completed_at_utc": "2026-09-14T12:37:33.9704687Z",
+  "software_only": true,
+  "hardware_tested": false,
+  "checks": [
+    {
+      "name": "check_phase0_architecture",
+      "exit_code": 0,
+      "elapsed_seconds": 1.079
+    },
+    {
+      "name": "test_architecture_publication_check",
+      "exit_code": 0,
+      "elapsed_seconds": 1.035
+    },
+    {
+      "name": "check_debug_ui_architecture",
+      "exit_code": 0,
+      "elapsed_seconds": 1.041
+    },
+    {
+      "name": "run_phase0_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 7.101
+    },
+    {
+      "name": "run_text_protocol_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 2.044
+    },
+    {
+      "name": "run_text_protocol_engine_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 3.047
+    },
+    {
+      "name": "run_text_protocol_arm_profile_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 3.058
+    },
+    {
+      "name": "run_motor_core_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 3.065
+    },
+    {
+      "name": "run_motion_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 3.045
+    },
+    {
+      "name": "run_platform_io_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 2.041
+    },
+    {
+      "name": "run_protocol_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 3.064
+    },
+    {
+      "name": "run_simulator_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 1.029
+    },
+    {
+      "name": "run_debug_ui_input_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 3.045
+    },
+    {
+      "name": "run_lcd_transport_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 3.043
+    },
+    {
+      "name": "run_debug_ui_mailbox_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 1.028
+    },
+    {
+      "name": "run_debug_ui_app_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 34.326
+    },
+    {
+      "name": "run_debug_ui_model_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 2.05
+    },
+    {
+      "name": "run_debug_ui_soak_tests",
+      "exit_code": 0,
+      "elapsed_seconds": 14.122
+    },
+    {
+      "name": "test_debug_ui_build_contract",
+      "exit_code": 0,
+      "elapsed_seconds": 2.041
+    },
+    {
+      "name": "run_input_model_integration",
+      "exit_code": 0,
+      "elapsed_seconds": 3.049
+    },
+    {
+      "name": "run_ui_render_smoke",
+      "exit_code": 0,
+      "elapsed_seconds": 33.277
+    },
+    {
+      "name": "run_ui_review_regressions",
+      "exit_code": 0,
+      "elapsed_seconds": 36.302
+    },
+    {
+      "name": "keil_CtrBoard-H7_FDCAN",
+      "exit_code": 0,
+      "elapsed_seconds": 61.491
+    },
+    {
+      "name": "keil_LCD-ReadOnly",
+      "exit_code": 0,
+      "elapsed_seconds": 95.916
+    },
+    {
+      "name": "keil_LCD-POS",
+      "exit_code": 0,
+      "elapsed_seconds": 94.843
+    },
+    {
+      "name": "keil_LCD-MIT",
+      "exit_code": 0,
+      "elapsed_seconds": 94.887
+    },
+    {
+      "name": "check_debug_ui_map",
+      "exit_code": 0,
+      "elapsed_seconds": 1.019
+    }
+  ],
+  "first_party_sources_unchanged_during_verification": true,
+  "first_party_source_hashes": {
+    "App/aethor_app.c": "ad7e1246fd615f4ffb189634a527df3c045f7120029696e4481bbdeff57d052d",
+    "App/aethor_app.h": "2e63cb759db930d9c27db318589d010a94c21daf00b3f7452725f5b625e706da",
+    "App/Arm/arm_controller.c": "398625aca194aa02f8701168a4b6718f537113394e1bcc4d4ccd93a6172c4dbf",
+    "App/Arm/arm_controller.h": "1defaa5854bdabfa25f653743a9643a4c6b021632ea201b035d571053c7507d1",
+    "App/Arm/joint_reference.c": "d8d74c26aa65416e6f5ef6881b01dee13583ab2088491f194bfb9b330f57821d",
+    "App/Arm/joint_reference.h": "fd66eb12982f792750b965e82abb4eea48ce306522f16321ec3f31d5f88793c1",
+    "App/Config/app_profile.h": "b52ab6df76d5f78b0fa19fa24f17461878853e2b3412ea5d5084cd85621c5c0c",
+    "App/Config/arm_config.c": "489da1f75685511568fbad5521ce3abf20f5b7da96d4c146757c13be1de5af6e",
+    "App/Config/arm_config.h": "742763c43f2b3533a8b658e5db3a389ed11f6c3a8eb3cab2a684fc6efa19d7c2",
+    "App/Config/board_config.h": "dad0fbaaf766ec3dfffbf22156301c237a8ce9fbfb3c1992c58a6185f969dfed",
+    "App/Config/build_info.c": "4f832399d091f302d8a58c1c8339e9fc4d65bed60802abeeac89c825eda8a397",
+    "App/Config/build_info.h": "ae901890d6f660d013db7434f4dc69e6e8b5fbfae6332b42bbf33438a084fbbd",
+    "App/Config/debug_ui_config.h": "3b0f77440fa164b5cc5f7d2875ecee51c55b87e45b0fd7aff2e334d7ed1eaae6",
+    "App/Config/motor_compatibility.h": "d16f4d10162f28560128c5d9b830a359566a7c41e768eca3ae9cdcb22f301645",
+    "App/DebugUi/debug_ui_contract.h": "3dfd6e29a60092653fb8d079fba0bc41a86d128d7e36c7708070f532b06ac761",
+    "App/DebugUi/debug_ui_input.c": "a278c7592cfa94393a07bbb0d0c073939bf4949de89cecb0c04b6643997e4053",
+    "App/DebugUi/debug_ui_input.h": "50bb7ae00c3487156a49edc83d152ade3c0d332cda16648fe4001604c831cee6",
+    "App/DebugUi/debug_ui_mailbox.c": "2e71d3850b67db8364a8ed10e882958ecb1d94d60ddbf9539690690425c16d44",
+    "App/DebugUi/debug_ui_mailbox.h": "0a8d4570964213c85e7b526273db66954197b9c613a4c4497c295d3e75bd6958",
+    "App/DebugUi/debug_ui_model.c": "733e33df8100011cc5b96a43cb275820315cfcd1acd90aa6ca29539f3e3e6692",
+    "App/DebugUi/debug_ui_model.h": "95015661ed4a0304288ddad182ce2cd3e243cab8f73932c09fd47469c5b12252",
+    "App/Motion/joint_motion.c": "3163c25d609674724ca681771482ed912b03e210b4f9976ba202cb60bc5297e7",
+    "App/Motion/joint_motion.h": "12b01ec4d63d1796a887bfba896d3904991e74a95bbbdd43938c805e87819ec1",
+    "App/Motion/joint_motion_can.c": "2c052f658b1abfc3fe1c1fd7577ad7cc8f9ddd123a2775db9e78a2978a675d2d",
+    "App/Motion/joint_motion_can.h": "50e9b15c8f2411d38d77b722e46aeea1ad87ffbca2c6467378ac21cbcb86d813",
+    "App/Motion/motion_types.h": "8f0d0ff2dbeb9811c1f25cb3eeceb14d42a874ae7cd2620e31e2f5c625668f4d",
+    "App/Motor/can_frame.c": "2e7fdaa5ae01eb51fab499686a62a43c69dc71df8af1d80daa4940dfa262b474",
+    "App/Motor/can_frame.h": "ffbceaedfdbb1d982ac5f017be1a13406e601430c464d065968b1a82816c4f9b",
+    "App/Motor/can_tx_scheduler.c": "b6db9095c91e60b40e0959604f013641147613590b14575b834b717c96bbe398",
+    "App/Motor/can_tx_scheduler.h": "c8f2827a608d063a3ff6eed0421d8aa8b744db4f654a13f9d8a0f3223eddd290",
+    "App/Motor/motor_bank.c": "057a895068f0ae2d174bffc586892ebeae91423ea3375e61b765c216275e34cd",
+    "App/Motor/motor_bank.h": "94355b5fdd48797d482c8161b265cba97c7eb85dcbe255f963427f7aaaf28ca8",
+    "App/Motor/motor_discovery.c": "354a4db140926c0d9d4f87d2f9561988e57330932d055484d7c9362c020cd222",
+    "App/Motor/motor_discovery.h": "a14095f26c063e26e067deed40eb29cf0580026a2f145e79f7aa6515f5cd2e56",
+    "App/Motor/motor_runtime.c": "707ce1b58af0cb11022593555e8c6a9a30da1c3f39b4eb78ab95e5e45637dfd1",
+    "App/Motor/motor_runtime.h": "e69393aaffa065392d4257f5f2afc90f2a56aaca5f9e4dc73441fb1991caf279",
+    "App/Motor/motor_types.h": "1eb5c99ac95765f55e3c80a709bf48115b873e2a62f4645fada09afabc78f52e",
+    "App/Motor/s3519_codec.c": "1e93b88fb1b882fca29e2320e1d316dad30958d23fb34c355d96aa4e65263c5b",
+    "App/Motor/s3519_codec.h": "c3960a313c624c3de0d8e45e58586b07fb17b5cac78db4ebf394d59ec6e63e60",
+    "App/Platform/can_rx_inbox.c": "eb7d81853e632b2f831791001860ec36a9a885a6dbef52c6c55a7bfa357b4c9d",
+    "App/Platform/can_rx_inbox.h": "4cc7c4498ec2a4dad5a38bf80bb24e6391b7320ea942d27779bc09cb530402c2",
+    "App/Platform/lcd_key_adc.c": "a054b3cd2325be2b8bb8fcc6ee2cad5ea46ca6602a31816a1bc7fd7977069164",
+    "App/Platform/lcd_key_adc.h": "0515c2bfc71bf4ef435b5fbf894e9c014c958e2634cf1d3573513ad85c197bb4",
+    "App/Platform/lcd_st7789.c": "690f78fcd433c4ae4b08d5de9346867b7a0f255412f2fb02c15f971c1728e2d2",
+    "App/Platform/lcd_st7789.h": "5e781d36075921e7cddf73a456da1b27311f830271e590254db60349c1f929b7",
+    "App/Platform/lcd_transfer.c": "30ea241dd6dc71cc217c0105218735e6154ec660bfaf69fe30df3736cd6e20fb",
+    "App/Platform/lcd_transfer.h": "19db0578b4a159df1f2b9a4f3759ad4fc18f14b930ee315721c5353c1ce6cd16",
+    "App/Platform/monotonic_time.h": "0937558320882ce37c2aaaf90dc0b8a0a00476b0e654de1d399eba832e8761d4",
+    "App/Platform/platform_contract.h": "5ef76bbeb87351e86d0b735af5ea8cb4177e3a40252aa8cc9f1e9c28a8fac13e",
+    "App/Platform/stm32_platform.c": "2895a9de69f7ec4be7c531d726fba0dd64a510a8008aa3bb2dd42ca35afa1c9b",
+    "App/Platform/stm32_platform.h": "0ff73350fb4c86ae0ddfd871a58c3c124d2c7913d1ce8cda64d115c1b32c09f7",
+    "App/Platform/usb_cdc_stream.c": "87dc730c286ec5e6e298c3c7cbba72711fb8151c26cece3ec8ed01a45d6bc82d",
+    "App/Platform/usb_cdc_stream.h": "ec783d8d2d090811372292e6c819c27c84344e4d92740f53f8722ea0cdfd0711",
+    "App/Protocol/ascii_protocol.c": "ccf57a590548fd55f84be737f042280b3d5a85c0deeff98c0156edb7df374cc1",
+    "App/Protocol/ascii_protocol.h": "b5088d10937f9dc835bbd9e368bbf38bc701fa3ede8ad9c1dc20615b18d9be4a",
+    "App/Protocol/protocol_contract.h": "5028f1804733e35dd290040c75b1250d4a7f6f0fbcb0c2e017f3c028e12cc270",
+    "App/Protocol/protocol_engine.c": "35fc557a59b214068801288cc93f2fd59c48b1accbfc7154236eb9733a423e2e",
+    "App/Protocol/protocol_engine.h": "e332863bf660ee57a092161a454f120c417bae34b3b60104f87943cfeabd816b",
+    "App/Protocol/text_protocol.c": "a7fe35d498fb7694c6da85f324c7fcc3da03ba188c3ec6f2e33c234ad3070e7e",
+    "App/Protocol/text_protocol.h": "b527c786def91d46b815cd720372edcd8e118616cbbe3db0b34b3b8319dcdfe3",
+    "App/Telemetry/diagnostics.c": "010ce86ed0d4ab11e69f84910395e73ed1dfabffabbf10e2eda6ce6b8fd734fb",
+    "App/Telemetry/diagnostics.h": "ca125c6df38d2ae9b63f4cd9c9644e3b046dffa98b99f23e7b93077e26a0c085",
+    "Core/Inc/fdcan.h": "901ad9f782dd3930e688ce64c6fb52d7e25f271ba4a91cfa28e47e71230dcbb0",
+    "Core/Inc/FreeRTOSConfig.h": "ef9f889578847ec765e0dd7aed43d24708af01dea20224f1bd83a78a76b54a37",
+    "Core/Inc/gpio.h": "ed4dd400a061ad318521cf96ae903fe21d1aba75fbb685603c3f78db56df226b",
+    "Core/Inc/main.h": "38c55adbfa9e7fa5e9f6bd60b10c0576eec4febd54b372122db48eda781b9ba0",
+    "Core/Inc/stm32h7xx_hal_conf.h": "b3b719592e885bad66a4e13c9877aecfadfbbe29e18c39f181157d69d0384e1a",
+    "Core/Inc/stm32h7xx_it.h": "943858075d4ee72aeeb0e34f518a62cbf34f1da64566642377db99e699a3c2b2",
+    "Core/Src/fdcan.c": "827f7c853e2bba2728663a1feaf1db66a023d98e1691afeefd8a3cb385959d09",
+    "Core/Src/freertos.c": "bcb711a7267f275fad3e941557dc303341341161b176c8a5d31bd6a6c106c915",
+    "Core/Src/gpio.c": "b99d467f3bbc210ebc1706db9a4d92198332b1044b4d1a81f1b0948a99890c47",
+    "Core/Src/main.c": "0257906e1d0374dd81cac635ee4c97554765fb2e3eed22848caaa152c24b7acc",
+    "Core/Src/stm32h7xx_hal_msp.c": "982b360e7050a1ecac8c43a03b44f3ca0e350355ba26f576acd21baf95baa022",
+    "Core/Src/stm32h7xx_hal_timebase_tim.c": "9e504eb00508bfa5de1adff06e9a1179df0e7d6dcf3d089148bd00ed123ca4d3",
+    "Core/Src/stm32h7xx_it.c": "3aa034979b7ae688ad2a3299e24d0ad4ab49eed93d674b893f6c913a7ff94047",
+    "Core/Src/system_stm32h7xx.c": "9a480b4bdb25da46826f2d04686e60b1f654525a9d56ea08643a38dc59af749f",
+    "CtrBoard-H7_FDCAN.ioc": "a9d8f8e6d3ec74e6526a9847dc11fc98746efae523b256c72fd1f12bcdac76cc",
+    "MDK-ARM/aethor_memory.sct": "c6f4fa944c0984407d0d4e8c4f18853497eb2e43f95a4eb3c7380b2f59c011ce",
+    "MDK-ARM/CtrBoard-H7_FDCAN.uvprojx": "85f04d8dc35e007f888c64a8f989408192907b164d08470b19871708732073fa",
+    "Ui/debug_ui_graphics_guard.c": "a913113b17763e43546bb9712b875e79cbf1fc1cae4b1de9aaf32dea74c3a10b",
+    "Ui/debug_ui_graphics_guard.h": "2dd4b5b347a2d301d22a2b61598897502417027179e3991bb1fe248521048dae",
+    "Ui/debug_ui_task.c": "1716e469e7201318ba2193100984bd068524d6743a3e415163617a4a15b8e4a7",
+    "Ui/debug_ui_task.h": "78410809c933755365846f724417a14802fe64633eaffc9d3f1300d0e8491044",
+    "Ui/debug_ui_view.c": "9baa08c486cfec8719d728d374cf727fdbe7372084713952136e0d8c7712af20",
+    "Ui/debug_ui_view.h": "e362c7bfde39c2a7fc0a25e56aeac37c6af2265b3f5d1f4b258dbcdc226d1df6",
+    "Ui/fonts/ui_font_16.c": "4f8715e9e21c24dea45adb968eba8fb1aee47c3b69476c924fab536b2135ecfe",
+    "Ui/lv_conf.h": "3704a45d3569094ad8b4553aa35afa4e916949d36d39e7a31d5ae99f8a637c91",
+    "Ui/lv_port_disp.c": "880e96457571f287a5e195a4c878d0f7069edcdb3fbde4590b7c9267daa89610",
+    "Ui/lv_port_disp.h": "41d64bac0ac0cdd12f3aab9130c9a391223deaf696b32a6443cbba30ce996c4f",
+    "Ui/lv_port_indev.c": "0891b678dc7520b35cc631b5f3242366cba5ef8eee69337edc906892d9035fad",
+    "Ui/lv_port_indev.h": "4c4c7341c8163cc9d51dc382d224e639362db60edd1644e5dc573f162310dd50"
+  },
+  "targets": [
+    {
+      "target": "CtrBoard-H7_FDCAN",
+      "code_bytes": 89964,
+      "ro_bytes": 3920,
+      "rw_bytes": 452,
+      "zi_bytes": 98228,
+      "ram_bytes": 98680,
+      "hex_sha256": "bc2dce56cf3d99186ae8e6218471d820c0a5d3872acdb911028619429f655c47",
+      "hardware_timing_verified": false,
+      "task_stack_lower_bounds": [
+        {
+          "task": "StartArmControlTask",
+          "reserved_bytes": 5120,
+          "known_depth_bytes": 3160,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartCanRxTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 200,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartProtocolTask",
+          "reserved_bytes": 5120,
+          "known_depth_bytes": 3024,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartUsbTxTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 52,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartTelemetryTask",
+          "reserved_bytes": 4096,
+          "known_depth_bytes": 80,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartDiagnosticsTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 296,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        }
+      ],
+      "ui_symbols_absent": true,
+      "baseline_ram_bytes": 98680,
+      "ram_saved_bytes": 0,
+      "flash_code_ro_bytes": 93884,
+      "baseline_flash_code_ro_bytes": 93884
+    },
+    {
+      "target": "LCD-ReadOnly",
+      "code_bytes": 187340,
+      "ro_bytes": 121516,
+      "rw_bytes": 780,
+      "zi_bytes": 173124,
+      "ram_bytes": 173904,
+      "hex_sha256": "1db39fa9acfbee8ead86bf537eff7a7a88639e1e5f5ff091b801b5ff968ce6c8",
+      "hardware_timing_verified": false,
+      "task_stack_lower_bounds": [
+        {
+          "task": "StartArmControlTask",
+          "reserved_bytes": 5120,
+          "known_depth_bytes": 3160,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartCanRxTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 200,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartProtocolTask",
+          "reserved_bytes": 5120,
+          "known_depth_bytes": 3024,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartUsbTxTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 52,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartTelemetryTask",
+          "reserved_bytes": 4096,
+          "known_depth_bytes": 80,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartDiagnosticsTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 304,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartDebugUiTask",
+          "reserved_bytes": 8192,
+          "known_depth_bytes": 1040,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        }
+      ],
+      "dma_buffers": [
+        {
+          "address": "0x24000000",
+          "bytes": 13440
+        },
+        {
+          "address": "0x24003480",
+          "bytes": 13440
+        }
+      ],
+      "lvgl_pool_address": "0x24008000",
+      "lvgl_pool_bytes": 32768,
+      "ui_stack_bytes": 8192,
+      "dedicated_regions_zero_initialized": true,
+      "baseline_ram_bytes": 219024,
+      "ram_saved_bytes": 45120,
+      "flash_code_ro_bytes": 308856,
+      "baseline_flash_code_ro_bytes": 245804
+    },
+    {
+      "target": "LCD-POS",
+      "code_bytes": 191012,
+      "ro_bytes": 121516,
+      "rw_bytes": 780,
+      "zi_bytes": 173124,
+      "ram_bytes": 173904,
+      "hex_sha256": "3d09d725d565508d73e2bbecee1ca51299dc938e97e22152f81b22173850066a",
+      "hardware_timing_verified": false,
+      "task_stack_lower_bounds": [
+        {
+          "task": "StartArmControlTask",
+          "reserved_bytes": 5120,
+          "known_depth_bytes": 3160,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartCanRxTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 200,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartProtocolTask",
+          "reserved_bytes": 5120,
+          "known_depth_bytes": 3024,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartUsbTxTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 52,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartTelemetryTask",
+          "reserved_bytes": 4096,
+          "known_depth_bytes": 80,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartDiagnosticsTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 304,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartDebugUiTask",
+          "reserved_bytes": 8192,
+          "known_depth_bytes": 1040,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        }
+      ],
+      "dma_buffers": [
+        {
+          "address": "0x24000000",
+          "bytes": 13440
+        },
+        {
+          "address": "0x24003480",
+          "bytes": 13440
+        }
+      ],
+      "lvgl_pool_address": "0x24008000",
+      "lvgl_pool_bytes": 32768,
+      "ui_stack_bytes": 8192,
+      "dedicated_regions_zero_initialized": true,
+      "baseline_ram_bytes": 219024,
+      "ram_saved_bytes": 45120,
+      "flash_code_ro_bytes": 312528,
+      "baseline_flash_code_ro_bytes": 249472
+    },
+    {
+      "target": "LCD-MIT",
+      "code_bytes": 191136,
+      "ro_bytes": 121516,
+      "rw_bytes": 780,
+      "zi_bytes": 173124,
+      "ram_bytes": 173904,
+      "hex_sha256": "600cce3686adb7a2133e9ce7fb1310721f8a31375503b20c8d2fb6386bc43143",
+      "hardware_timing_verified": false,
+      "task_stack_lower_bounds": [
+        {
+          "task": "StartArmControlTask",
+          "reserved_bytes": 5120,
+          "known_depth_bytes": 3160,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartCanRxTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 200,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartProtocolTask",
+          "reserved_bytes": 5120,
+          "known_depth_bytes": 3024,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartUsbTxTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 52,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartTelemetryTask",
+          "reserved_bytes": 4096,
+          "known_depth_bytes": 80,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartDiagnosticsTask",
+          "reserved_bytes": 1536,
+          "known_depth_bytes": 304,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        },
+        {
+          "task": "StartDebugUiTask",
+          "reserved_bytes": 8192,
+          "known_depth_bytes": 1040,
+          "known_only": true,
+          "actual_stack_high_water_pending": true
+        }
+      ],
+      "dma_buffers": [
+        {
+          "address": "0x24000000",
+          "bytes": 13440
+        },
+        {
+          "address": "0x24003480",
+          "bytes": 13440
+        }
+      ],
+      "lvgl_pool_address": "0x24008000",
+      "lvgl_pool_bytes": 32768,
+      "ui_stack_bytes": 8192,
+      "dedicated_regions_zero_initialized": true,
+      "baseline_ram_bytes": 219024,
+      "ram_saved_bytes": 45120,
+      "flash_code_ro_bytes": 312652,
+      "baseline_flash_code_ro_bytes": 249596
+    }
+  ],
+  "lvgl_render": {
+    "pages": 63,
+    "width": 280,
+    "height": 240,
+    "updates": 1212,
+    "root_children": 17,
+    "host_view_bytes": 2592,
+    "pool_reserved_bytes": 32768,
+    "sampled_pool_used_max_bytes": 9680,
+    "sampled_value_is_not_allocation_instant_peak": true,
+    "dma_bytes": 26880,
+    "oom_local_escape_passed": true
+  }
+}

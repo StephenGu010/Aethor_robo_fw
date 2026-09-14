@@ -22,6 +22,7 @@ static const lv_color_t *owned_pixels;
 static LcdTransferWindow owned_window;
 static uint32_t fake_ms, transaction, wait_count, flush_count;
 static uint32_t framebuffer_writes;
+static size_t sampled_pool_used_max;
 
 /** @brief Match the HAL-millisecond domain in the fake platform. */
 uint32_t DebugUiNowMs(void) { return fake_ms; }
@@ -138,11 +139,23 @@ static void simulated_data(void)
 static void validate_text(lv_obj_t *label, const char *text)
 {
     lv_point_t size;
-    assert(debug_ui_view_missing_glyphs(text) == 0U);
-    lv_txt_get_size(&size, text, &ui_font_16, 0, 0, 32767, LV_TEXT_FLAG_NONE);
-    if (size.x > lv_obj_get_width(label) - 4) {
+    const lv_font_t *font = lv_obj_get_style_text_font(label, 0);
+    int available = lv_obj_get_width(label) - lv_obj_get_style_pad_left(label, 0) - lv_obj_get_style_pad_right(label, 0);
+    uint32_t offset = 0U;
+    if (lv_obj_has_flag(label, LV_OBJ_FLAG_HIDDEN)) return;
+    while (text[offset] != '\0') {
+        uint32_t codepoint = _lv_txt_encoded_next(text, &offset);
+        lv_font_glyph_dsc_t descriptor;
+        if (codepoint <= 32U) continue;
+        assert(lv_font_get_glyph_dsc(font, &descriptor, codepoint, 0U) && !descriptor.is_placeholder);
+    }
+    lv_txt_get_size(&size, text, font, 0, 0, 32767, LV_TEXT_FLAG_NONE);
+    if (size.x > available) {
         fprintf(stderr, "TEXT_OVERFLOW width=%d available=%d: %s\n", size.x, lv_obj_get_width(label) - 4, text);
         exit(2);
+    }
+    if (size.y > lv_obj_get_height(label) - lv_obj_get_style_pad_top(label, 0)) {
+        fprintf(stderr, "TEXT_HEIGHT_OVERFLOW: %s\n", text); exit(2);
     }
 }
 
@@ -150,6 +163,7 @@ static void validate_text(lv_obj_t *label, const char *text)
 static void render_graphics(void *context)
 {
     unsigned index;
+    lv_mem_monitor_t memory_sample;
     DebugUiViewPage *page;
     (void)context;
     debug_ui_view_update(&view, &model, &diagnostics);
@@ -157,10 +171,16 @@ static void render_graphics(void *context)
     fake_ms += 100U;
     lv_refr_now(NULL);
     lcd_st7789_service(fake_ms);
-    page = &view.pages[model.page];
+    lv_mem_monitor(&memory_sample);
+    if (LV_MEM_SIZE - memory_sample.free_size > sampled_pool_used_max)
+        sampled_pool_used_max = LV_MEM_SIZE - memory_sample.free_size;
+    page = &view.page;
     validate_text(page->title, page->title_text);
     validate_text(page->footer, page->footer_text);
-    for (index = 0U; index < DEBUG_UI_VIEW_ROWS; ++index) validate_text(page->rows[index], page->row_text[index]);
+    for (index = 0U; index < DEBUG_UI_VIEW_ROWS; ++index) {
+        validate_text(page->rows[index], lv_label_get_text(page->rows[index]));
+        validate_text(page->icons[index], lv_label_get_text(page->icons[index]));
+    }
 }
 
 /** @brief Save framebuffer pixels as a binary PPM with a visible simulation label. */
@@ -208,7 +228,7 @@ static void exhaust_graphics_pool(void *context)
     unsigned index;
     (void)context;
     for (index = 0U; index < 2048U; ++index)
-        (void)lv_obj_create(view.pages[0].root);
+        (void)lv_obj_create(view.page.root);
 }
 
 /** @brief Render distinct requested modes using actual mode evidence and frozen requests. */
@@ -222,8 +242,8 @@ static void render_mode_reviews(const char *directory)
         assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_SET_MODE, requested));
         model.reviewed = model.draft; model.page = DEBUG_UI_PAGE_REVIEW;
         save_page(directory, index == 0U ? "17_review_set_pos" : "18_review_set_mit");
-        assert(strstr(view.pages[DEBUG_UI_PAGE_REVIEW].row_text[1], index == 0U ? "MIT -> POS" : "POS -> MIT") != NULL);
-        assert(strstr(view.pages[DEBUG_UI_PAGE_REVIEW].row_text[3], "预计") == NULL);
+        assert(strstr(view.page.row_text[1], index == 0U ? "MIT -> POS" : "POS -> MIT") != NULL);
+        assert(strstr(view.page.row_text[3], "预计") == NULL);
     }
 }
 
@@ -242,8 +262,8 @@ static void render_stop_latch(const char *directory, uint8_t confirmed)
     debug_ui_model_update(&model, &model.snapshot, model.snapshot.timestamp_us, 1U, 1U);
     if (confirmed) {
         save_page(directory, "19_remote_id3");
-        assert(strstr(view.pages[DEBUG_UI_PAGE_RUNNING].row_text[0], "ID3") != NULL);
-        assert(strstr(view.pages[DEBUG_UI_PAGE_RUNNING].row_text[3], "18.5") != NULL);
+        assert(strstr(view.page.row_text[0], "ID3") != NULL);
+        assert(strstr(view.page.row_text[3], "18.5") != NULL);
     }
     debug_ui_model_event(&model, &event);
     assert(debug_ui_model_take_request(&model, &request) && request.target_motor_id == 3U);
@@ -254,7 +274,7 @@ static void render_stop_latch(const char *directory, uint8_t confirmed)
     debug_ui_model_update(&model, &model.snapshot, model.snapshot.timestamp_us, 1U, 1U);
     if (confirmed) {
         save_page(directory, "20_stop_latched");
-        assert(strstr(view.pages[DEBUG_UI_PAGE_RUNNING].row_text[1], "停止已锁存") != NULL);
+        assert(strstr(view.page.row_text[1], "停止已锁存") != NULL);
     }
     model.snapshot.timestamp_us += 20000ULL;
     model.snapshot.stop_pending = 0U; model.snapshot.active_motor_mask = 0U;
@@ -264,7 +284,7 @@ static void render_stop_latch(const char *directory, uint8_t confirmed)
     assert(!model.stop_waiting && !model.completion_seen);
     assert(model.page == (confirmed ? DEBUG_UI_PAGE_RESULT : DEBUG_UI_PAGE_FAULT));
     save_page(directory, confirmed ? "21_stop_latch_confirmed" : "22_stop_latch_unconfirmed");
-    assert(strstr(view.pages[model.page].row_text[3], confirmed ? "反馈已确认失能" : "失能未确认") != NULL);
+    assert(strstr(view.page.row_text[3], confirmed ? "反馈已确认失能" : "失能未确认") != NULL);
 }
 
 /** @brief Make a multi-motor STOP scope visible and identify the position sample's ID. */
@@ -275,25 +295,48 @@ static void render_multiple_targets(const char *directory)
     model.snapshot.target_motor_id = 0U; model.snapshot.active_identity.origin = DEBUG_UI_ORIGIN_USB;
     debug_ui_model_update(&model, &model.snapshot, model.snapshot.timestamp_us, 1U, 1U);
     save_page(directory, "23_remote_multiple_targets");
-    if (strstr(view.pages[DEBUG_UI_PAGE_RUNNING].row_text[0], "ID3等2台") == NULL ||
-        strstr(view.pages[DEBUG_UI_PAGE_RUNNING].row_text[3], "ID3") == NULL) {
+    if (strstr(view.page.row_text[0], "ID3等2台") == NULL ||
+        strstr(view.page.row_text[3], "ID3") == NULL) {
         fputs("MULTI_TARGET_REGRESSION_FAIL scope_count_or_position_ID_missing\n", stderr);
         exit(1);
     }
 }
 
 /** @brief Render six required page families plus edit/review/result variants. */
+#include "icon_ui_scenarios.inc"
+
+/** @brief Exercise repeated actual LVGL layouts and assert no retained page allocations. */
+static void verify_shared_view_reuse(void)
+{
+    unsigned iteration;
+    lv_mem_monitor_t warmed, final_memory;
+    simulated_data();
+    for (iteration = 0U; iteration < 1212U; ++iteration) {
+        model.page = (DebugUiPage)(iteration % DEBUG_UI_PAGE_COUNT);
+        assert(debug_ui_graphics_run(render_graphics, NULL));
+        assert(lv_obj_get_child_cnt(view.page.root) == 17U);
+        if (iteration == 11U) lv_mem_monitor(&warmed);
+    }
+    lv_mem_monitor(&final_memory);
+    assert(final_memory.free_size == warmed.free_size);
+    printf("LVGL_SHARED_VIEW_REUSE_OK updates=1212 children=17 view_bytes=%lu sampled_pool_used_max=%lu\n",
+        (unsigned long)sizeof(DebugUiView), (unsigned long)sampled_pool_used_max);
+}
+
+/** @brief Render all operating states, validate shared allocations and exercise OOM escape. */
 int main(int argc, char **argv)
 {
     lv_mem_monitor_t memory;
     unsigned objects_before;
     (void)setvbuf(stdout, NULL, _IONBF, 0U);
     assert(argc == 3);
+    /* One shared view must fit without retaining every page's text and objects. */
+    assert(sizeof(DebugUiView) < 4096U);
     assert(LVGL_VERSION_MAJOR == 8 && LVGL_VERSION_MINOR == 3 && LVGL_VERSION_PATCH == 11);
     assert(debug_ui_graphics_run(initialize_graphics, NULL));
     verify_font_inventory(argv[2]);
     simulated_data();
-    objects_before = lv_obj_get_child_cnt(view.pages[0].root);
+    objects_before = lv_obj_get_child_cnt(view.page.root);
     save_page(argv[1], "01_overview");
     model.page = DEBUG_UI_PAGE_MOTORS; model.selected_motor = 6U; model.list_first = 2U;
     save_page(argv[1], "02_motors_scrolled");
@@ -313,8 +356,8 @@ int main(int argc, char **argv)
     /* Expired standard feedback must not appear as a usable absolute POS preview. */
     model.snapshot.motors[model.selected_motor].feedback_valid = 0U;
     debug_ui_view_update(&view, &model, &diagnostics);
-    assert(strcmp(view.pages[DEBUG_UI_PAGE_EDIT].row_text[2], "动作前 --") == 0);
-    assert(strcmp(view.pages[DEBUG_UI_PAGE_EDIT].row_text[3], "目标未知 / 等待反馈") == 0);
+    assert(strcmp(view.page.row_text[2], "动作前 --") == 0);
+    assert(strcmp(view.page.row_text[3], "目标未知 / 等待反馈") == 0);
     model.snapshot.motors[model.selected_motor].feedback_valid = 1U;
     assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_MIT_MOVE, DEBUG_UI_MODE_MIT));
     save_page(argv[1], "08_mit_draft");
@@ -357,13 +400,15 @@ int main(int argc, char **argv)
     model.snapshot.motors[6].register_age_ms[0] = 20U;
     model.snapshot.motors[6].register_age_ms[1] = 650U;
     save_page(argv[1], "25_position_registers");
-    assert(strstr(view.pages[DEBUG_UI_PAGE_REGISTERS].row_text[1], "0.000219124") != NULL);
-    assert(lv_obj_get_child_cnt(view.pages[0].root) == objects_before);
+    assert(strstr(view.page.row_text[1], "0.000219124") != NULL);
+    render_icon_scenarios(argv[1]);
+    verify_shared_view_reuse();
+    assert(lv_obj_get_child_cnt(view.page.root) == objects_before);
     assert(wait_count > 0U && flush_count > 100U && owned_pixels == NULL);
     lv_mem_monitor(&memory);
     assert(memory.free_size > 4096U);
     printf("LVGL_RENDER_SMOKE_OK version=8.3.11 flush=%lu wait=%lu pool_used=%lu pool_free=%lu\n",
-           (unsigned long)flush_count, (unsigned long)wait_count, (unsigned long)(65536U - memory.free_size),
+           (unsigned long)flush_count, (unsigned long)wait_count, (unsigned long)(LV_MEM_SIZE - memory.free_size),
            (unsigned long)memory.free_size);
     assert(!debug_ui_graphics_run(exhaust_graphics_pool, NULL));
     assert(!debug_ui_view_healthy() && owned_pixels == NULL);

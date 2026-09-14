@@ -137,7 +137,7 @@ static void graphics_service(void *context)
     lv_tick_inc(now_ms - last_tick_ms);
     last_tick_ms = now_ms;
     if (redraw_after_recovery) {
-        lv_obj_invalidate(task_view.pages[task_view.visible].root);
+        lv_obj_invalidate(task_view.page.root);
         redraw_after_recovery = 0U;
     }
     if (task_view.visible != task_model.page || (uint32_t)(now_ms - last_view_ms) >= 100U) {

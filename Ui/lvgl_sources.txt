@@ -44,6 +44,7 @@ Middlewares/Third_Party/LVGL/src/font/lv_font.c
 Middlewares/Third_Party/LVGL/src/font/lv_font_fmt_txt.c
 Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_16.c
 Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_20.c
+Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_28.c
 Middlewares/Third_Party/LVGL/src/hal/lv_hal_disp.c
 Middlewares/Third_Party/LVGL/src/hal/lv_hal_indev.c
 Middlewares/Third_Party/LVGL/src/hal/lv_hal_tick.c

@@ -95,6 +95,85 @@ static void test_browse_and_units(void)
     assert(model.page == DEBUG_UI_PAGE_DETAIL);
 }
 
+/** @brief Keep detail observational and route all eight actions through a separate menu. */
+static void test_action_menu_navigation(void)
+{
+    const DebugUiPage actions_page = DEBUG_UI_PAGE_ACTIONS;
+    const DebugUiOperation operations[7] = { DEBUG_UI_OPERATION_POS_MOVE,
+        DEBUG_UI_OPERATION_MIT_HOLD, DEBUG_UI_OPERATION_MIT_MOVE, DEBUG_UI_OPERATION_SET_MODE,
+        DEBUG_UI_OPERATION_SET_MODE, DEBUG_UI_OPERATION_CLEAR_FAULT, DEBUG_UI_OPERATION_DISABLE };
+    DebugUiModel model;
+    DebugUiSnapshot snapshot = fixture();
+    DebugUiRequest request;
+    unsigned action_index;
+    assert(DEBUG_UI_PAGE_REGISTERS == 10 && DEBUG_UI_PAGE_ACTIONS == 11);
+    debug_ui_model_init(&model);
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    model.page = DEBUG_UI_PAGE_DETAIL;
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1000U, 0U);
+    assert(model.page == actions_page && model.focus == 0U);
+    assert(!debug_ui_model_take_request(&model, &request));
+    key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_CENTER, 1001U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_UP, 1010U, 0U);
+    assert(model.focus == 7U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_DOWN, 1020U, 0U);
+    assert(model.focus == 0U);
+    for (action_index = 0U; action_index < 8U; ++action_index) {
+        assert(model.focus == action_index);
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1030U, 0U);
+        assert(!debug_ui_model_take_request(&model, &request));
+        if (action_index == 7U) assert(model.page == DEBUG_UI_PAGE_REGISTERS);
+        else {
+            assert(model.page == DEBUG_UI_PAGE_EDIT);
+            assert(model.draft.operation == operations[action_index]);
+            if (action_index < 5U)
+                assert(model.draft.requested_mode == (action_index == 0U || action_index == 3U ?
+                    DEBUG_UI_MODE_POS_VEL : DEBUG_UI_MODE_MIT));
+            key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1040U, 0U);
+            assert(model.page == actions_page && model.focus == action_index);
+            key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1050U, 0U);
+            key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1060U, 0U);
+            assert(model.page == DEBUG_UI_PAGE_REVIEW);
+            key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_CENTER, 1061U, 0U);
+        }
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1070U, 0U);
+        assert(model.page == actions_page && model.focus == action_index);
+        assert(!debug_ui_model_take_request(&model, &request));
+        key(&model, DEBUG_UI_INPUT_EVENT_REPEAT, DEBUG_UI_KEY_DOWN, 1080U, 0U);
+    }
+    assert(model.focus == 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1090U, 0U);
+    assert(model.page == DEBUG_UI_PAGE_DETAIL);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1100U, 0U);
+    assert(model.page == actions_page && !model.outgoing_ready);
+    snapshot.authority = DEBUG_UI_AUTHORITY_REMOTE;
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1110U, 0U);
+    assert(model.page == actions_page && model.reason == DEBUG_UI_REASON_NOT_ARMED);
+    assert(!debug_ui_model_take_request(&model, &request));
+}
+
+/** @brief CENTER STOP preempts every page, including the action menu, before input gates. */
+static void test_stop_preempts_all_pages(void)
+{
+    unsigned page_index;
+    for (page_index = 0U; page_index < (unsigned)DEBUG_UI_PAGE_COUNT; ++page_index) {
+        DebugUiModel model;
+        DebugUiSnapshot snapshot = fixture();
+        DebugUiRequest request;
+        snapshot.active = 1U;
+        snapshot.target_motor_id = 4U;
+        snapshot.active_identity.origin = DEBUG_UI_ORIGIN_USB;
+        debug_ui_model_init(&model);
+        debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 0U, 1U);
+        model.page = (DebugUiPage)page_index;
+        model.center_consumed = 1U;
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1000U, 0U);
+        assert(debug_ui_model_take_request(&model, &request));
+        assert(request.operation == DEBUG_UI_OPERATION_STOP && request.target_motor_id == 4U);
+    }
+}
+
 /** @brief Enforce two distinct CENTER presses, 800 ms hold and frozen drafts. */
 static void test_review_once_and_identity(void)
 {
@@ -187,10 +266,10 @@ static void test_gates_and_cancellation(void)
     assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_MIT_MOVE, DEBUG_UI_MODE_MIT));
     snapshot.motors[0].reference_generation++;
     debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
-    assert(model.page == DEBUG_UI_PAGE_DETAIL && !model.outgoing_ready);
+    assert(model.page == DEBUG_UI_PAGE_ACTIONS && !model.outgoing_ready);
     assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_POS_MOVE, DEBUG_UI_MODE_POS_VEL));
     debug_ui_model_update(&model, NULL, snapshot.timestamp_us + 150001ULL, 1U, 1U);
-    assert(model.page == DEBUG_UI_PAGE_DETAIL);
+    assert(model.page == DEBUG_UI_PAGE_ACTIONS);
 }
 
 /** @brief Observe remote completion and allow STOP on a subsequent remote action. */
@@ -546,6 +625,8 @@ static void test_fault_recheck_refreshes_disabled_feedback(void)
 /** @brief Execute behavior groups and expose a simple nonzero failure contract. */
 int main(void)
 {
+    test_action_menu_navigation();
+    test_stop_preempts_all_pages();
     test_fault_recheck_refreshes_disabled_feedback();
     test_motion_speed_defaults_and_steps();
     test_pos_one_degree_edit_step();

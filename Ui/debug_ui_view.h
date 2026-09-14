@@ -1,5 +1,5 @@
 /** @file debug_ui_view.h
- * @brief Persistent LVGL objects and fixed text storage for all debug pages.
+ * @brief One shared LVGL view and bounded semantic/display text storage.
  */
 #ifndef UI_DEBUG_UI_VIEW_H
 #define UI_DEBUG_UI_VIEW_H
@@ -27,20 +27,23 @@ typedef struct {
     const char *firmware_version; /**< Process-lifetime build metadata, or NULL. */
 } DebugUiViewDiagnostics;
 
-/** @brief Prebuilt page; text buffers are never temporary LVGL string pointers. */
+/** @brief One reusable screen; semantic rows and displayed strings have stable storage. */
 typedef struct {
     lv_obj_t *root;
     lv_obj_t *title;
     lv_obj_t *rows[DEBUG_UI_VIEW_ROWS];
     lv_obj_t *footer;
+    lv_obj_t *icons[DEBUG_UI_VIEW_ROWS];
+    lv_obj_t *confirm_bar;
     char title_text[80];
     char row_text[DEBUG_UI_VIEW_ROWS][DEBUG_UI_VIEW_TEXT_BYTES];
     char footer_text[112];
+    char display_text[DEBUG_UI_VIEW_ROWS][DEBUG_UI_VIEW_TEXT_BYTES];
 } DebugUiViewPage;
 
-/** @brief All screens and focus groups allocated once before local UI health. */
+/** @brief Single screen allocated at startup; model state never owns LVGL objects. */
 typedef struct {
-    DebugUiViewPage pages[DEBUG_UI_PAGE_COUNT];
+    DebugUiViewPage page;
     lv_group_t *group;
     DebugUiPage visible;
     uint8_t initialized;

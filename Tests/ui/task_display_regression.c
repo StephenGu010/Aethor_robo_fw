@@ -165,17 +165,17 @@ static void probe_mode_confirmation(const char *directory)
     assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_SET_MODE, DEBUG_UI_MODE_POS_VEL));
     model.reviewed = model.draft; model.page = DEBUG_UI_PAGE_REVIEW;
     save_page(directory, "review_set_pos");
-    memcpy(pos_rows, view.pages[DEBUG_UI_PAGE_REVIEW].row_text, sizeof(pos_rows));
+    memcpy(pos_rows, view.page.row_text, sizeof(pos_rows));
     model.page = DEBUG_UI_PAGE_DETAIL;
     assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_SET_MODE, DEBUG_UI_MODE_MIT));
     model.reviewed = model.draft; model.page = DEBUG_UI_PAGE_REVIEW;
-    lv_obj_invalidate(view.pages[DEBUG_UI_PAGE_REVIEW].root);
+    lv_obj_invalidate(view.page.root);
     save_page(directory, "review_set_mit");
-    assert(memcmp(pos_rows, view.pages[DEBUG_UI_PAGE_REVIEW].row_text, sizeof(pos_rows)) != 0);
+    assert(memcmp(pos_rows, view.page.row_text, sizeof(pos_rows)) != 0);
     assert(strstr(pos_rows[1], "POS") != NULL);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_REVIEW].row_text[1], "MIT") != NULL);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_REVIEW].row_text[1], "POS -> MIT") != NULL);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_REVIEW].row_text[3], "预计") == NULL);
+    assert(strstr(view.page.row_text[1], "MIT") != NULL);
+    assert(strstr(view.page.row_text[1], "POS -> MIT") != NULL);
+    assert(strstr(view.page.row_text[3], "预计") == NULL);
     puts("SET_MODE_CONFIRMATION_DIFFERENT_PASS");
 }
 /** @brief Follow synchronous latch return through production dispatch and snapshot service. */
@@ -222,26 +222,26 @@ static void test_feedback_status_labels(void)
     motor->actual_mode = DEBUG_UI_MODE_POS_VEL;
     motor->feedback_age_ms = 143865U;
     debug_ui_view_update(&view, &status_model, &diagnostics);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_OVERVIEW].row_text[0], "已发现 1/7") != NULL);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_OVERVIEW].row_text[1], "反馈有效 0/7") != NULL);
+    assert(strstr(view.page.row_text[0], "已发现 1/7") != NULL);
+    assert(strstr(view.page.row_text[1], "反馈有效 0/7") != NULL);
     status_model.page = DEBUG_UI_PAGE_MOTORS;
     status_model.list_first = 2U;
     status_model.selected_motor = 6U;
     debug_ui_view_update(&view, &status_model, &diagnostics);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_MOTORS].row_text[4], "过期") != NULL);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_MOTORS].row_text[4], "使能") == NULL);
+    assert(strstr(view.page.row_text[4], "过期") != NULL);
+    assert(strstr(view.page.row_text[4], "使能") == NULL);
     motor->fault_flags = 6U;
     debug_ui_view_update(&view, &status_model, &diagnostics);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_MOTORS].row_text[4], "故障过期") != NULL);
+    assert(strstr(view.page.row_text[4], "故障过期") != NULL);
     status_model.page = DEBUG_UI_PAGE_DETAIL;
     debug_ui_view_update(&view, &status_model, &diagnostics);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_DETAIL].row_text[5], "故障 --") != NULL);
+    assert(strstr(view.page.row_text[5], "故障 --") != NULL);
     motor->feedback_valid = 1U;
     status_model.page = DEBUG_UI_PAGE_OVERVIEW;
     status_model.snapshot.arm_fault = 1U;
     debug_ui_view_update(&view, &status_model, &diagnostics);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_OVERVIEW].row_text[1], "反馈有效 1/7") != NULL);
-    assert(strstr(view.pages[DEBUG_UI_PAGE_OVERVIEW].row_text[2], "系统故障") != NULL);
+    assert(strstr(view.page.row_text[1], "反馈有效 1/7") != NULL);
+    assert(strstr(view.page.row_text[2], "系统故障") != NULL);
     puts("FEEDBACK_STATUS_LABELS_PASS discovered_fresh_stale_fault");
 }
 

@@ -1569,6 +1569,12 @@
       "upstream_equal": true
     },
     {
+      "path": "src/font/lv_font_montserrat_28.c",
+      "sha256": "c963a5d3f55ed415b2d991f8ea4766797f98692f9253db3d079caf34bc1a661e",
+      "upstream_sha256": "c963a5d3f55ed415b2d991f8ea4766797f98692f9253db3d079caf34bc1a661e",
+      "upstream_equal": true
+    },
+    {
       "path": "src/font/lv_font_simsun_16_cjk.c",
       "sha256": "3201cd38346858e018546b800f80219f7d3b3c7baed0c1f119c6d0ff129f9dde",
       "upstream_sha256": "3201cd38346858e018546b800f80219f7d3b3c7baed0c1f119c6d0ff129f9dde",

@@ -2230,6 +2230,11 @@
               <FilePath>../Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_20.c</FilePath>
             </File>
             <File>
+              <FileName>lv_font_montserrat_28.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_28.c</FilePath>
+            </File>
+            <File>
               <FileName>lv_hal_disp.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Middlewares/Third_Party/LVGL/src/hal/lv_hal_disp.c</FilePath>
@@ -4580,6 +4585,11 @@
               <FileName>lv_font_montserrat_20.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_20.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_montserrat_28.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_28.c</FilePath>
             </File>
             <File>
               <FileName>lv_hal_disp.c</FileName>
@@ -6934,6 +6944,11 @@
               <FilePath>../Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_20.c</FilePath>
             </File>
             <File>
+              <FileName>lv_font_montserrat_28.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_28.c</FilePath>
+            </File>
+            <File>
               <FileName>lv_hal_disp.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Middlewares/Third_Party/LVGL/src/hal/lv_hal_disp.c</FilePath>
@@ -9284,6 +9299,11 @@
               <FileName>lv_font_montserrat_20.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_20.c</FilePath>
+            </File>
+            <File>
+              <FileName>lv_font_montserrat_28.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Middlewares/Third_Party/LVGL/src/font/lv_font_montserrat_28.c</FilePath>
             </File>
             <File>
               <FileName>lv_hal_disp.c</FileName>

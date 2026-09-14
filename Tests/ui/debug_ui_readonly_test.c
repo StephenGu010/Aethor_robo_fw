@@ -13,6 +13,7 @@ int main(void)
     DebugUiSnapshot snapshot;
     DebugUiRequest request;
     DebugUiInputEvent event;
+    unsigned action_index;
     assert(!AETHOR_DEBUG_UI_ALLOW_MOTION);
     memset(&snapshot, 0, sizeof(snapshot));
     snapshot.motion_enabled = 1U;
@@ -52,6 +53,15 @@ int main(void)
     assert(model.page == DEBUG_UI_PAGE_PREPARE);
     debug_ui_model_event(&model, &event);
     assert(model.page == DEBUG_UI_PAGE_DETAIL && model.selected_motor == 6U);
+    debug_ui_model_event(&model, &event);
+    assert(model.page == DEBUG_UI_PAGE_ACTIONS && model.focus == 0U);
+    /* Every state-changing menu entry remains gated in a compile-time read-only build. */
+    for (action_index = 0U; action_index < 7U; ++action_index) {
+        model.focus = (uint8_t)action_index;
+        debug_ui_model_event(&model, &event);
+        assert(model.page == DEBUG_UI_PAGE_ACTIONS && model.reason == DEBUG_UI_REASON_DISABLED);
+        assert(!debug_ui_model_take_request(&model, &request));
+    }
     model.focus = 7U;
     debug_ui_model_event(&model, &event);
     assert(model.page == DEBUG_UI_PAGE_REGISTERS);
@@ -60,7 +70,7 @@ int main(void)
     assert(model.page == DEBUG_UI_PAGE_REGISTERS);
     event.key = DEBUG_UI_KEY_LEFT;
     debug_ui_model_event(&model, &event);
-    assert(model.page == DEBUG_UI_PAGE_DETAIL);
+    assert(model.page == DEBUG_UI_PAGE_ACTIONS);
     assert(!debug_ui_model_take_request(&model, &request));
     puts("DEBUG_UI_COMPILETIME_READONLY_OK");
     return 0;

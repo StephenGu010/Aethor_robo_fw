@@ -9,8 +9,8 @@
 #define LV_COLOR_16_SWAP 1
 #define LV_COLOR_SCREEN_TRANSP 0
 #define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE (64U * 1024U)
-extern uint8_t debug_ui_lvgl_pool[64U * 1024U];
+#define LV_MEM_SIZE (32U * 1024U)
+extern uint8_t debug_ui_lvgl_pool[LV_MEM_SIZE];
 #define LV_MEM_ADR 0
 #define LV_MEM_POOL_ALLOC(size) ((void)(size), debug_ui_lvgl_pool)
 #define LV_DISP_DEF_REFR_PERIOD 50
@@ -35,6 +35,7 @@ void debug_ui_lvgl_assert_failed(void);
 #define LV_USE_USER_DATA 1
 #define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_20 1
+#define LV_FONT_MONTSERRAT_28 1
 #define LV_FONT_SIMSUN_16_CJK 0
 #define LV_FONT_DEFAULT &lv_font_montserrat_16
 #define LV_USE_FONT_COMPRESSED 0

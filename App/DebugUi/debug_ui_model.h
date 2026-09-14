@@ -17,6 +17,7 @@ typedef enum { DEBUG_UI_PAGE_OVERVIEW = 0, DEBUG_UI_PAGE_MOTORS,
     DEBUG_UI_PAGE_DETAIL, DEBUG_UI_PAGE_DIAGNOSTICS, DEBUG_UI_PAGE_EDIT,
     DEBUG_UI_PAGE_REVIEW, DEBUG_UI_PAGE_RUNNING, DEBUG_UI_PAGE_RESULT,
     DEBUG_UI_PAGE_FAULT, DEBUG_UI_PAGE_PREPARE, DEBUG_UI_PAGE_REGISTERS,
+    DEBUG_UI_PAGE_ACTIONS, /**< Appended to preserve all existing page identifiers. */
     DEBUG_UI_PAGE_COUNT } DebugUiPage;
 
 /** @brief Snapshot evidence for STOP_LATCHED; these are not application terminals. */

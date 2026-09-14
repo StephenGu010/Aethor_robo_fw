@@ -4,151 +4,379 @@
   "images": [
     {
       "image": "01_overview.png",
-      "rgb_sha256": "d30bf8686a55efe8248776d4d6ddf2d126daa0488658024aa90e7633b956d4f1",
+      "rgb_sha256": "0b0914f79ac82fad5807e91c4d5a8c9633c461dbf838586322d6b841387e6cc2",
       "width": 280,
       "height": 240
     },
     {
       "image": "02_motors_scrolled.png",
-      "rgb_sha256": "fa98ea2f6c8ab794052412336867c3e7fdf4ca9af2d6e963c5daca24867104cc",
+      "rgb_sha256": "27d277852fe7d1c35166d0eab93433c3acd0709b0f6f159f44f9caf705872a50",
       "width": 280,
       "height": 240
     },
     {
       "image": "03_motor_detail.png",
-      "rgb_sha256": "0ce0bfb9b3f120c2f334565492a18de9ccb121ca77a5ae4893aaac6610041e9b",
+      "rgb_sha256": "952f1d95fbc859caf80cfe36768109c9d1992d81c1ca9b65f7191d9a7b30ba47",
       "width": 280,
       "height": 240
     },
     {
       "image": "04_feedback_stale.png",
-      "rgb_sha256": "5180c8cfd035fe3b8aacb7fc9c362dde1d6073a4a89bcda810211728a5862a7f",
+      "rgb_sha256": "946b050b6081491420660813858318f61838305dabddc9c71c4f3f7a1fe4c642",
       "width": 280,
       "height": 240
     },
     {
       "image": "05_diagnostics.png",
-      "rgb_sha256": "5cf3cd6f30efc6e59205da579c607ddd84276c94e6d595887fe37803d84833ec",
+      "rgb_sha256": "bdb4ad27c8c98b92e806a4411fb0c49d3cfc56bb011c23d5ee8f948ff801d0e0",
       "width": 280,
       "height": 240
     },
     {
       "image": "06_control_diagnostics.png",
-      "rgb_sha256": "7fb99c8ccf0f317690807cf1dfa4a43eb6cc50881a8dcbea41c8fc975092fd67",
+      "rgb_sha256": "d9022858ec60b6e1126be609e465f3c61173903248f3dd93c7ea51d9792d55ef",
       "width": 280,
       "height": 240
     },
     {
       "image": "07_pos_draft.png",
-      "rgb_sha256": "6ffa736c8111df22f9331ef33f0c56476dea75bd5eb730132be2324a7471c90a",
+      "rgb_sha256": "89746d1ae0c199a178355d8492969f384b8f647a62895cc7a279d855226fb5fc",
       "width": 280,
       "height": 240
     },
     {
       "image": "08_mit_draft.png",
-      "rgb_sha256": "60d177e8697f3b83cf638fc76c44a0dd9efd7734d58b56e0945bb8f63d78de0b",
+      "rgb_sha256": "cbd955187716cbd3333df8465b022f24e4225e1397fd5f59ed9cd943200f961c",
       "width": 280,
       "height": 240
     },
     {
       "image": "09_review_release.png",
-      "rgb_sha256": "94a7a4cc39a07d42f3170ec2f75d44c21af1051fe44d83082528f77699dcb832",
+      "rgb_sha256": "24a899cc24e37e84deaa71193de9de7a223a1ea8ebbfab404ab227308b4aa6b9",
       "width": 280,
       "height": 240
     },
     {
       "image": "10_review_hold.png",
-      "rgb_sha256": "e23b29dfe5c66f80dff7c384df685597ff08051281a508d48f1e43870db8bc2d",
+      "rgb_sha256": "0dd5610703efcfc0ec9913cff9760b8a39f46971946dc1b2f9a02fe2d29ad5f3",
       "width": 280,
       "height": 240
     },
     {
       "image": "11_running.png",
-      "rgb_sha256": "41433e7bfbb8f022e8fc962b57dd3e79b538aa7c3ebbbf43210998789a61202c",
+      "rgb_sha256": "9c645d919274d816a2effa8d542bd256a1ec46fe2681e05a50f8039680de3e61",
       "width": 280,
       "height": 240
     },
     {
       "image": "12_stop_cleanup.png",
-      "rgb_sha256": "f5c1e01c8c8926deef20dce7b11872e7587e3d56d42ecdba26002f60bc8efb9c",
+      "rgb_sha256": "d9783f34a0b67d577de7b1330691ff4bc152a451f6ecc308d3b615af7abf85a8",
       "width": 280,
       "height": 240
     },
     {
       "image": "13_result.png",
-      "rgb_sha256": "0573247d794c486c229eb937f931a548b8b803c8130ca40e04efa5026c2181ce",
+      "rgb_sha256": "4a0de383d4c165f73c3504e1854fe24c2a0cd0c19b8b50246a429e650a25604c",
       "width": 280,
       "height": 240
     },
     {
       "image": "14_fault.png",
-      "rgb_sha256": "288c8743ecd11f8f9ae813307b8a3092eac6c6595db376332795c592f5624a35",
+      "rgb_sha256": "7338297f99b357a76117534eff75318c2455d7e0db3cbed5c9d133e95cd363b2",
       "width": 280,
       "height": 240
     },
     {
       "image": "15_readonly_running.png",
-      "rgb_sha256": "1b7197a130fc8081ca3943f251bca9fd5eddb6fd4815d979cb83e162c451a137",
+      "rgb_sha256": "f710050d205ac11c7d2098b15b966bffc1f99e9345cec12c363d33ffcd50eb5a",
       "width": 280,
       "height": 240
     },
     {
       "image": "16_runtime_diagnostics.png",
-      "rgb_sha256": "24355ae2891138d0a2e3ea3e3bbbbbe780f967d0b96f416e28174f98af1096d9",
+      "rgb_sha256": "1eca14c702332858ddfed0d6f80b081fc139903bc6172aef299ff108c747462d",
       "width": 280,
       "height": 240
     },
     {
       "image": "17_review_set_pos.png",
-      "rgb_sha256": "d9f98346b0374231a8e7a55d6dbcb75f54fcc633f8ff2525184d6f64c7cc79d7",
+      "rgb_sha256": "9ed58c3892bb8ef7e3fcce4d6a526353ddb5da735f53efc2f01c39927840e081",
       "width": 280,
       "height": 240
     },
     {
       "image": "18_review_set_mit.png",
-      "rgb_sha256": "c14e5fe7daf3d358ed35850bb1cad2aa726837b038bb8aff159b7023fb457079",
+      "rgb_sha256": "72e5bf7bf9bb69ae22ead35a05d9a7fa0daa075b8a83407d387b2961607a04d6",
       "width": 280,
       "height": 240
     },
     {
       "image": "19_remote_id3.png",
-      "rgb_sha256": "391f314175c2e26c435cd958a585a5eae2a7861357e36793b0ddb3b6833ef6a3",
+      "rgb_sha256": "1bd6601ff4b0261b9bcc9060fce2f8eabbabc563474aae29f04692997ae8cc5b",
       "width": 280,
       "height": 240
     },
     {
       "image": "20_stop_latched.png",
-      "rgb_sha256": "fec176f48d25b12613d869bf2370ecbd296deb1c2f61bb383794af877e8ee267",
+      "rgb_sha256": "4cdc391a9541c256a7cc1afdbefe0caf86dd076057bee14456277737b641c27c",
       "width": 280,
       "height": 240
     },
     {
       "image": "21_stop_latch_confirmed.png",
-      "rgb_sha256": "633e1dfaf2dca30b652f72395de7d81a85388c969df9e81a45c8b3d90cdf70b0",
+      "rgb_sha256": "4720e12419890e21b252c239f8d67be7fc46f35ccc13751df91b3a9398e88f46",
       "width": 280,
       "height": 240
     },
     {
       "image": "22_stop_latch_unconfirmed.png",
-      "rgb_sha256": "cf7228d9c2edc16f0e1f5301c8a44d59a7858ec7cac90af702035b3a5430363a",
+      "rgb_sha256": "ff17ecfc801780ed217acdc934a805cbf2bd536735026f6975a7b0ff20d7ddc5",
       "width": 280,
       "height": 240
     },
     {
       "image": "23_remote_multiple_targets.png",
-      "rgb_sha256": "f83c18de02de62bf17edc991a18d9fcf93cadb0cc2b9aa39005d36d469855cc3",
+      "rgb_sha256": "d29a72dc7c64136324df06c3ed45d7514e4ff1c084822fc0d33ab8f0f3128081",
       "width": 280,
       "height": 240
     },
     {
       "image": "24_control_prepare.png",
-      "rgb_sha256": "6195932c47aa5f22cecf3f89db60c38837bd1c5da31f7448f4b154cdb383ba2d",
+      "rgb_sha256": "9733380c80c71ab788acc127c3cbea8d758427409c9ccee9a269f3b83765fafb",
       "width": 280,
       "height": 240
     },
     {
       "image": "25_position_registers.png",
-      "rgb_sha256": "8eebe413dba71343fc12059882c9a7f3219bb1ed3fb9dd8a17e374f4c7f22928",
+      "rgb_sha256": "6345397f65cb350739e325dd63578409f2730afad772521ea259983a8eb787da",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "26_actions_focus_0.png",
+      "rgb_sha256": "9c4a8ed8f15a034669f2a6e7d3444dc9c5dd2d58abd6926bb7290f1c3993a0cb",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "27_actions_focus_1.png",
+      "rgb_sha256": "e35cb764c635aba0625fb38f3fe6e984d27cd958817c562756437f95d2cd2828",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "28_actions_focus_2.png",
+      "rgb_sha256": "8e5ffbe5fba2839b2b69eff05374eb6d778bfe51eff04a50d7170908370e0941",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "29_actions_focus_3.png",
+      "rgb_sha256": "25f0b35fb7d5378a8ddb6f1315859afe49c66f79a40b042b8c3478d1ee2d3667",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "30_actions_focus_4.png",
+      "rgb_sha256": "484e0066804d34be341245b1724725e707ab895ed623184248ec9ef6048bf2ab",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "31_actions_focus_5.png",
+      "rgb_sha256": "549ea65824d05671e8d5b783c713cfa42de7251163a50bd5396f9c7c4577d937",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "32_actions_focus_6.png",
+      "rgb_sha256": "72546976aa21d008d9e7321b81c442509c8d3f89e6a4370021d2a94acd02aadd",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "33_actions_focus_7.png",
+      "rgb_sha256": "6b78dad252d769459c6b27006c3643a05b5748c944efa8770029af5ae7b5e550",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "34_home_remote.png",
+      "rgb_sha256": "2342322efd6c83f0104144f6c681cdedb14ecf1765f02bf1db74e0cc1b8b3089",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "35_home_local_release.png",
+      "rgb_sha256": "a4f868a1bcbb6ee6090e176d3ea2ea575866b86a90ca0709efaa6d0efe1f3eba",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "36_home_readonly.png",
+      "rgb_sha256": "20dc3123412ad3313241b99ac0ba11a2bf29fdd3f3d36cff2857dbdb24376f70",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "37_home_no_data.png",
+      "rgb_sha256": "62221f4e062ffbe2d596cc318354394e2e36bbdcd8dc505a3ba39f39f74cb863",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "38_pos_speed_edit.png",
+      "rgb_sha256": "93745f0de4393b6e18ea245586353e339834c83a062040e1c01dcdd02219f4e5",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "39_pos_confirm.png",
+      "rgb_sha256": "ac976ae3f291423cef6b9021af9848a25695be81741ac0300f663ef3aa40e4cd",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "40_mit_field_2.png",
+      "rgb_sha256": "b3c808c391a206f88fa33a67bc5ba140378cd4474950a804c77c199c018f3ec3",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "41_mit_field_3.png",
+      "rgb_sha256": "a564427b14146bbb8a174f0f56507e6a5c674f12cb2627de9ae46e350929d560",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "42_mit_field_4.png",
+      "rgb_sha256": "79669ee2b11fdb7e5ac60eff1b4e32943e4e9d48e9d6132a2adefbee83945239",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "43_mit_hold_edit.png",
+      "rgb_sha256": "e875b2bbcc6897ad349f9f2cd1386915636746c6699d6b7704746af6bed97afc",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "44_mit_hold_review.png",
+      "rgb_sha256": "bf0922ff860e27990ac9197d6aca1830a45e0783d5ac3d0355972a92994bc30c",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "45_acquire_edit.png",
+      "rgb_sha256": "1938bb7a342c6b67f30e92ace5c50d7652ab60f3579b62a90553d7e894baef88",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "46_acquire_review.png",
+      "rgb_sha256": "ea017e3f11f8973d5a30674d07a93eb8716a0c9c4bc41b002a748cf3ec91c686",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "47_release_edit.png",
+      "rgb_sha256": "cf2aab70349a637811d6e61ac2cd4f63dcd5eba99da1cf1589b69a382f79ab3c",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "48_release_review.png",
+      "rgb_sha256": "b4dc13119ba4799fd68e426fc54c1c25094796b563ea579926c13e89462e7770",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "49_clear_fault_edit.png",
+      "rgb_sha256": "f99f382684ec763cee675ebcbb68038049acf3c287e09d0f0a313d39c5f10c5e",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "50_clear_fault_review.png",
+      "rgb_sha256": "bd3b63eadcea204529022e310dd1f35ab98665e4b2a79e1166f40c48b6a89adf",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "51_disable_edit.png",
+      "rgb_sha256": "405e638be12ffc9860c9ad1270ec9c7dc73150fc1e496aa0c67041360fdcd1a4",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "52_disable_review.png",
+      "rgb_sha256": "c4f91abf2466358baf004484910969855837b89b5728bd4cc06cb31d22770687",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "53_result_cancelled_epoch.png",
+      "rgb_sha256": "44480a2b62aa9b4a2313c18e2aa49f305f74a48bdb1eb9a48415d28cbb1c0d97",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "54_result_protection_0.png",
+      "rgb_sha256": "7baa62902a613e0a9335bfc2c69eb94452e6193e03a9d2eb4422d923cc031d7e",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "55_result_protection_1.png",
+      "rgb_sha256": "6d679a9dd404d5294cf4c30271e74e6c169294bb6352533f71f8e2c83413d873",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "56_result_protection_2.png",
+      "rgb_sha256": "7a0e6a57ae3dd5e8ad7511664e36ba6611bf04503dbc2769a00ffa43948d7919",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "57_prepare_blocked_disable.png",
+      "rgb_sha256": "c853aa158204a7dd15bb802d10932cf8e339cc73a3ce6bfac32523e82a5709d2",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "58_prepare_recovery_ready.png",
+      "rgb_sha256": "6cb050b0aadaada8aaf9dc3e9295333bae453b2cd2a0c289d24fa088d3558939",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "59_motors_first_window.png",
+      "rgb_sha256": "32cf7fabb877c7153690ab68f91f3926df9179525f6a8580a57bfe6fb6b4eb0c",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "60_mit_motor_detail.png",
+      "rgb_sha256": "d7e1c21404d662e14258c4e642abd00f57979d161241e143d2c4c6111627a78d",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "61_pos_target_out_of_range.png",
+      "rgb_sha256": "adcc38446dbe22622b98892c19d05faaf722f002d7ee9c7f40db10fd3fec7b22",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "62_mit_running.png",
+      "rgb_sha256": "b7f751ac8e7c64f9a9f1fb6da7de5cd5c7c2945d07bcbda5b4a6465fa33c71e5",
+      "width": 280,
+      "height": 240
+    },
+    {
+      "image": "63_result_stopped.png",
+      "rgb_sha256": "145039bba423fe786df880780bb09710463cb9fa45f5947a974d362ef3cb33df",
       "width": 280,
       "height": 240
     }

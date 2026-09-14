@@ -320,7 +320,7 @@ void debug_ui_model_update(DebugUiModel *model, const DebugUiSnapshot *snapshot,
             model->edit_reference != selected(model)->reference_generation)
             reason = DEBUG_UI_REASON_OLD_EPOCH;
         if (reason != DEBUG_UI_REASON_NONE) {
-            model->page = DEBUG_UI_PAGE_DETAIL;
+            model->page = DEBUG_UI_PAGE_ACTIONS;
             model->reason = reason;
             model->review_pressed = model->review_released = 0U;
         }
@@ -468,7 +468,7 @@ void debug_ui_model_event(DebugUiModel *model, const DebugUiInputEvent *event)
     if (model->page == DEBUG_UI_PAGE_RUNNING) return;
     if (model->page == DEBUG_UI_PAGE_REVIEW) {
         if (event->type == DEBUG_UI_INPUT_EVENT_PRESS && event->key == DEBUG_UI_KEY_LEFT) {
-            model->page = DEBUG_UI_PAGE_DETAIL;
+            model->page = DEBUG_UI_PAGE_ACTIONS;
             model->review_pressed = 0U;
         } else if (event->key == DEBUG_UI_KEY_CENTER && !model->center_consumed) {
             if (event->type == DEBUG_UI_INPUT_EVENT_PRESS && model->review_released) {
@@ -529,6 +529,11 @@ void debug_ui_model_event(DebugUiModel *model, const DebugUiInputEvent *event)
         if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_OVERVIEW;
         break;
     case DEBUG_UI_PAGE_DETAIL:
+        /* Opening the action menu is observation only and cannot create a draft. */
+        if (activation) { model->page = DEBUG_UI_PAGE_ACTIONS; model->focus = 0U; }
+        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_MOTORS;
+        break;
+    case DEBUG_UI_PAGE_ACTIONS:
         if (direction) model->focus = (uint8_t)((model->focus + 8 + direction) % 8);
         if (activation) {
             static const DebugUiOperation operations[7] = { DEBUG_UI_OPERATION_POS_MOVE,
@@ -538,17 +543,17 @@ void debug_ui_model_event(DebugUiModel *model, const DebugUiInputEvent *event)
             (void)debug_ui_model_begin(model, operations[model->focus],
                                        model->focus == 0U || model->focus == 3U ? DEBUG_UI_MODE_POS_VEL : DEBUG_UI_MODE_MIT);
         }
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_MOTORS;
+        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_DETAIL;
         break;
     case DEBUG_UI_PAGE_REGISTERS:
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_DETAIL;
+        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_ACTIONS;
         break;
     case DEBUG_UI_PAGE_EDIT:
         if (direction) edit_value(model, -direction);
         if (event->key == DEBUG_UI_KEY_RIGHT)
             model->edit_field = (uint8_t)((model->edit_field + 1U) % (is_mit(model->draft.operation) ? 5U : 2U));
         if (event->key == DEBUG_UI_KEY_CENTER) enter_review(model);
-        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_DETAIL;
+        if (event->key == DEBUG_UI_KEY_LEFT) model->page = DEBUG_UI_PAGE_ACTIONS;
         break;
     case DEBUG_UI_PAGE_DIAGNOSTICS:
         if (activation || direction) model->diagnostic_page = (uint8_t)((model->diagnostic_page + 1U) % 3U);

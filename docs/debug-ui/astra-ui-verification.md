@@ -1,5 +1,7 @@
 # Astra 风格界面 B：操作与验证
 
+本记录对应 B1 提交 `2bb3931` 的工件与内存数据。后续仅参数弹窗的参考图对齐及新工件见 [弹窗对齐记录](astra-popup-alignment.md)；本记录保留。
+
 实施分支 `feature/lvgl-astra-ui`，起点为方案 A 提交 `2d801f9bce308955861f0d1120d5f2b86d3277ea`。用户已确认[设计](astra-ui-design.md)。本版保持 C / LVGL 8.3.11 与现有控制执行层，参考 Astra 的 Tile、List、焦点记忆和弹窗交互，自行实现视图；未复制 Astra 的 GPL C++ 源码或美术资产。
 
 ## 版本保留

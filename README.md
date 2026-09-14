@@ -2,6 +2,8 @@
 
 ## Astra 界面 B 实现分支
 
+最新参数弹窗已按确认的参考图对齐圆角、居中排版、Noto字号和细滑轨，见 [弹窗对齐说明](docs/debug-ui/astra-popup-alignment.md)。B1 版保留在 `archive/lvgl-astra-ui-b1`，此前固件归档不变。
+
 `feature/lvgl-astra-ui` 基于已保留的方案 A 实施三图标首页、六项电机列表、字段弹窗和分类诊断。操作及软件验证见 [Astra 界面 B](docs/debug-ui/astra-ui-verification.md)。本版不烧录，方案 A 分支、HEX 和原预览继续保留。
 
 ## 已保留的图标界面 A

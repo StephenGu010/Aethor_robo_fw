@@ -2235,6 +2235,11 @@
               <FilePath>../Ui/fonts/ui_font_numeric_28.c</FilePath>
             </File>
             <File>
+              <FileName>ui_font_popup.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Ui/fonts/ui_font_popup.c</FilePath>
+            </File>
+            <File>
               <FileName>lv_hal_disp.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Middlewares/Third_Party/LVGL/src/hal/lv_hal_disp.c</FilePath>
@@ -4590,6 +4595,11 @@
               <FileName>ui_font_numeric_28.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Ui/fonts/ui_font_numeric_28.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_font_popup.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Ui/fonts/ui_font_popup.c</FilePath>
             </File>
             <File>
               <FileName>lv_hal_disp.c</FileName>
@@ -6949,6 +6959,11 @@
               <FilePath>../Ui/fonts/ui_font_numeric_28.c</FilePath>
             </File>
             <File>
+              <FileName>ui_font_popup.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Ui/fonts/ui_font_popup.c</FilePath>
+            </File>
+            <File>
               <FileName>lv_hal_disp.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Middlewares/Third_Party/LVGL/src/hal/lv_hal_disp.c</FilePath>
@@ -9304,6 +9319,11 @@
               <FileName>ui_font_numeric_28.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Ui/fonts/ui_font_numeric_28.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_font_popup.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Ui/fonts/ui_font_popup.c</FilePath>
             </File>
             <File>
               <FileName>lv_hal_disp.c</FileName>

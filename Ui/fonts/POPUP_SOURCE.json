@@ -1,0 +1,40 @@
+{
+  "source_sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+  "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+  "copyright": [
+    "© 2014-2021 Adobe (http://www.adobe.com/)."
+  ],
+  "license": "SIL OFL 1.1",
+  "fonts": [
+    {
+      "size_px": 11,
+      "glyphs": 4,
+      "bitmap_bytes": 76,
+      "characters": " IMS"
+    },
+    {
+      "size_px": 12,
+      "glyphs": 35,
+      "bitmap_bytes": 1733,
+      "characters": " +-./0123456789ms°上下中仅保修值取存左改步每消稿草调"
+    },
+    {
+      "size_px": 14,
+      "glyphs": 23,
+      "bitmap_bytes": 800,
+      "characters": " +-./0123456789>afimns°"
+    },
+    {
+      "size_px": 17,
+      "glyphs": 36,
+      "bitmap_bytes": 3433,
+      "characters": " /0123456789HIKMOPSTdp保出动对度持时相移角轴输速间"
+    },
+    {
+      "size_px": 30,
+      "glyphs": 22,
+      "bitmap_bytes": 3249,
+      "characters": " +-./0123456789afimns°"
+    }
+  ]
+}

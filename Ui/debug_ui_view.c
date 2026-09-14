@@ -185,6 +185,7 @@ static void slot(DebugUiViewPage *page, unsigned index, int x, int y, int width,
     lv_obj_set_pos(label, (lv_coord_t)x, (lv_coord_t)y);
     lv_obj_set_size(label, (lv_coord_t)width, (lv_coord_t)height);
     lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_pad_left(label, symbol != NULL ? 34 : 4, 0);
     lv_obj_set_style_pad_top(label, height < 23 ? 0 : 2, 0);
     lv_obj_set_style_text_color(label, lv_color_hex(selected ? 0x000000U : color), 0);
@@ -491,6 +492,29 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
     } else (void)snprintf(title, sizeof(title), "%s%s", heading, diagnostics->simulated ? " [模拟]" : "");
     text_set(page->title, page->title_text, sizeof(page->title_text), title);
     text_set(page->footer, page->footer_text, sizeof(page->footer_text), footer);
+    if (model->page == DEBUG_UI_PAGE_NUMBER) {
+        const char *operation = model->draft.operation == DEBUG_UI_OPERATION_POS_MOVE ? "POS 移动" :
+            (model->draft.operation == DEBUG_UI_OPERATION_MIT_MOVE ? "MIT 移动" : "MIT 保持");
+        (void)snprintf(title,sizeof(title),"%02u / %s",model->draft.target_motor_id,operation);
+        text_set(page->title,page->title_text,sizeof(page->title_text),title);
+        text_set(page->footer,page->footer_text,sizeof(page->footer_text),"上下 调值   中 保存   左 取消");
+        astra_popup_label(page->title,&ui_font_popup_17,page->title_text,12,8,218,LV_TEXT_ALIGN_LEFT);
+        astra_popup_label(page->footer,&ui_font_popup_12,page->footer_text,0,219,280,LV_TEXT_ALIGN_CENTER);
+        if (diagnostics->simulated) {
+            lv_label_set_text_static(page->icons[6],"SIM");
+            astra_popup_label(page->icons[6],&ui_font_popup_11,"SIM",240,11,28,LV_TEXT_ALIGN_RIGHT);
+            lv_obj_set_style_text_color(page->icons[6],lv_color_white(),0);
+            show(page->icons[6],1U);
+        }
+    } else {
+        lv_obj_set_pos(page->title,8,2); lv_obj_set_size(page->title,264,26);
+        lv_obj_set_pos(page->footer,8,212); lv_obj_set_size(page->footer,264,26);
+        lv_obj_set_style_text_font(page->title,&ui_font_16,0);
+        lv_obj_set_style_text_font(page->footer,&ui_font_16,0);
+        lv_obj_set_style_text_align(page->footer,LV_TEXT_ALIGN_LEFT,0);
+        lv_obj_set_style_pad_left(page->title,4,0); lv_obj_set_style_pad_top(page->title,2,0);
+        lv_obj_set_style_pad_left(page->footer,4,0); lv_obj_set_style_pad_top(page->footer,2,0);
+    }
 }
 
 /** @brief Count missing bitmap descriptors across every decoded UTF-8 codepoint. */

@@ -31,6 +31,95 @@ static void astra_icon(lv_draw_ctx_t *context, unsigned icon, int x, int y, int 
     for (index = 0U; index < count; ++index)
         astra_line(context, x, y, scale, segments[index][0], segments[index][1], segments[index][2], segments[index][3], color);
 }
+/** @brief Fill a clipped rectangle in LVGL's currently available draw buffer. */
+static void astra_fill(lv_draw_ctx_t *context, int left, int top, int right, int bottom, uint32_t color)
+{
+    lv_draw_rect_dsc_t descriptor;
+    lv_area_t area = {(lv_coord_t)left, (lv_coord_t)top, (lv_coord_t)right, (lv_coord_t)bottom};
+    lv_draw_rect_dsc_init(&descriptor);
+    descriptor.bg_color = lv_color_hex(color);
+    descriptor.bg_opa = LV_OPA_COVER;
+    lv_draw_rect(context, &descriptor, &area);
+}
+/** @brief Find the actual ink top so LVGL matches the reference's top-anchored text. */
+static int astra_ink_top(const lv_font_t *font, const char *text)
+{
+    uint32_t offset = 0U;
+    int top = font->line_height;
+    while (text[offset] != '\0') {
+        uint32_t codepoint = _lv_txt_encoded_next(text, &offset);
+        lv_font_glyph_dsc_t glyph;
+        if (lv_font_get_glyph_dsc(font, &glyph, codepoint, 0U) && glyph.box_h != 0U) {
+            int glyph_top = font->line_height - font->base_line - glyph.box_h - glyph.ofs_y;
+            if (glyph_top < top) top = glyph_top;
+        }
+    }
+    return top == font->line_height ? 0 : top;
+}
+/** @brief Draw one parent-list string with the design's left/right text alignment. */
+static void astra_parent_text(lv_draw_ctx_t *context, const lv_font_t *font,
+                              const char *text, int x, int top, uint8_t right, uint32_t color)
+{
+    lv_draw_label_dsc_t descriptor;
+    lv_point_t size;
+    lv_area_t area;
+    lv_draw_label_dsc_init(&descriptor);
+    descriptor.font = font; descriptor.color = lv_color_hex(color);
+    lv_txt_get_size(&size, text, font, 0, 0, 32767, LV_TEXT_FLAG_NONE);
+    area.x1 = (lv_coord_t)(right ? x-size.x : x);
+    area.y1 = (lv_coord_t)(top-astra_ink_top(font, text));
+    area.x2 = (lv_coord_t)(area.x1+size.x); area.y2 = (lv_coord_t)(area.y1+font->line_height-1);
+    lv_draw_label(context, &descriptor, &area, text, NULL);
+}
+/** @brief Apply the reference's checkerboard directly, bounded by both draw and clip areas. */
+static void astra_parent_dither(lv_draw_ctx_t *context)
+{
+    lv_area_t area, content = {0,35,279,209};
+    int x, y, stride = lv_area_get_width(context->buf_area);
+    lv_color_t *pixels = (lv_color_t *)context->buf;
+    if (!_lv_area_intersect(&area, &content, context->clip_area) ||
+        !_lv_area_intersect(&area, &area, context->buf_area)) return;
+    for (y = area.y1; y <= area.y2; ++y)
+        for (x = area.x1; x <= area.x2; ++x)
+            if (((x+y)&1) == 0)
+                pixels[(y-context->buf_area->y1)*stride+x-context->buf_area->x1] = lv_color_black();
+}
+/** @brief Match the 247x157 radius-eight popup without enabling LVGL complex drawing. */
+static void astra_number_panel(lv_draw_ctx_t *context, const DebugUiViewPage *page)
+{
+    static const uint8_t outer[8] = {6,4,3,2,1,1,0,0};
+    static const uint8_t inner[8] = {0,0,6,4,3,3,2,2};
+    static const uint8_t selection_corner[5] = {3,2,1,0,0};
+    unsigned index;
+    for (index = 0U; index < 5U; ++index) {
+        int top = 40+(int)index*32;
+        uint8_t selected = (uint8_t)(index == page->popup_focus);
+        if (selected) {
+            unsigned corner;
+            astra_fill(context, 10, top+5, 257, top+23, 0xFFFFFFU);
+            for (corner = 0U; corner < 5U; ++corner) {
+                astra_fill(context, 10+selection_corner[corner], top+(int)corner, 257-selection_corner[corner], top+(int)corner, 0xFFFFFFU);
+                astra_fill(context, 10+selection_corner[corner], top+28-(int)corner, 257-selection_corner[corner], top+28-(int)corner, 0xFFFFFFU);
+            }
+        }
+        astra_parent_text(context, &ui_font_16, page->background_text[index], 18, top+5, 0U, selected ? 0U : 0xFFFFFFU);
+        astra_parent_text(context, &ui_font_popup_14, page->background_text[index]+40, 249, top+6, 1U, selected ? 0U : 0xFFFFFFU);
+    }
+    astra_parent_dither(context);
+    astra_fill(context, 17,56,263,196,0xFFFFFFU);
+    astra_fill(context, 19,56,261,196,0U);
+    for (index = 0U; index < 8U; ++index) {
+        astra_fill(context, 17+outer[index],48+(int)index,263-outer[index],48+(int)index,0xFFFFFFU);
+        astra_fill(context, 17+outer[index],204-(int)index,263-outer[index],204-(int)index,0xFFFFFFU);
+        if (index >= 2U) {
+            astra_fill(context,17+inner[index],48+(int)index,263-inner[index],48+(int)index,0U);
+            astra_fill(context,17+inner[index],204-(int)index,263-inner[index],204-(int)index,0U);
+        }
+    }
+    astra_fill(context,39,143,241,144,0xFFFFFFU);
+    if (page->popup_marker >= 39 && page->popup_marker <= 241)
+        astra_fill(context,page->popup_marker-3,138,page->popup_marker+3,148,0xFFFFFFU);
+}
 /** @brief Draw parent context, Tile corners and scrollbar without additional objects. */
 static void astra_draw(lv_event_t *event)
 {
@@ -38,8 +127,14 @@ static void astra_draw(lv_event_t *event)
     lv_draw_ctx_t *context = lv_event_get_draw_ctx(event);
     unsigned index;
     if (page == NULL || context == NULL) return;
-    astra_line(context, 0, 0, 1, 12, 29, 268, 29, 0x777777U);
-    astra_line(context, 0, 0, 1, 12, 211, 268, 211, 0x777777U);
+    if (page->decoration == 3U) {
+        astra_fill(context,12,32,268,32,0xFFFFFFU);
+        astra_fill(context,12,211,268,211,0xFFFFFFU);
+        astra_number_panel(context, page);
+    } else {
+        astra_line(context, 0, 0, 1, 12, 29, 268, 29, 0x777777U);
+        astra_line(context, 0, 0, 1, 12, 211, 268, 211, 0x777777U);
+    }
     if (page->decoration == 1U) {
         int offset = page->tile_offset;
         astra_icon(context, (page->tile_focus + 2U) % 3U, 26 + offset, 96, 1, 0x777777U);
@@ -138,6 +233,16 @@ static void astra_parent(DebugUiViewPage *page, const DebugUiModel *model, Debug
     }
     show(page->overlay, 1U);
 }
+/** @brief Align a stable popup label to the reference ink box without another object. */
+static void astra_popup_label(lv_obj_t *label, const lv_font_t *font, const char *text,
+                              int x, int top, int width, lv_text_align_t align)
+{
+    lv_obj_set_pos(label, (lv_coord_t)x, (lv_coord_t)(top-astra_ink_top(font,text)));
+    lv_obj_set_size(label, (lv_coord_t)width, font->line_height);
+    lv_obj_set_style_text_font(label,font,0);
+    lv_obj_set_style_pad_left(label,0,0); lv_obj_set_style_pad_top(label,0,0);
+    lv_obj_set_style_text_align(label,align,0);
+}
 /** @brief Apply shared Tile/List/Overlay templates without model mutation or allocations. */
 static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_row)
 {
@@ -148,6 +253,8 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
     (void)focus_row;
     page->decoration = 0U; page->scrollbar_count = 0U;
     show(page->overlay, 0U); show(page->confirm_bar, 0U);
+    lv_obj_set_style_bg_opa(page->overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(page->overlay, 2, 0);
     for (index = 0U; index < 7U; ++index) { show(page->rows[index], 0U); show(page->icons[index], 0U); }
     if (model->page != DEBUG_UI_PAGE_OVERVIEW || model->snapshot.active || model->snapshot.pending || model->stop_requested || model->snapshot.arm_fault || !model->input_valid || !model->display_valid) {
         page->animation_active = 0U; page->tile_offset = 0;
@@ -175,10 +282,29 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
         break;
     case DEBUG_UI_PAGE_NUMBER: {
         unsigned field = model->edit_field < 5U ? model->edit_field : 0U;
-        astra_parent(page, model, DEBUG_UI_PAGE_EDIT);
-        slot(page, 0U, 28, 57, 224, 24, astra_fields[field], NULL, 0U, 0xFFFFFFU, &ui_font_16);
+        unsigned first = model->page_first[DEBUG_UI_PAGE_EDIT];
+        unsigned fields = debug_ui_model_parameter_count(model);
+        static const char *const steps[] = {"每步 1.0°", "每步 1.0°/s", "每步 0.10", "每步 0.01", "每步 100 ms"};
+        page->decoration = 3U;
+        page->popup_focus = model->page_focus[DEBUG_UI_PAGE_EDIT] >= first ?
+            (uint8_t)(model->page_focus[DEBUG_UI_PAGE_EDIT]-first) : 255U;
+        page->popup_marker = -1;
+        for (index=0U; index<5U; ++index) {
+            memset(page->background_text[index],0,sizeof(page->background_text[index]));
+            if (first+index < fields) {
+                unsigned parent_field = debug_ui_model_parameter_field(model,(uint8_t)(first+index));
+                (void)snprintf(page->background_text[index],40,"%s",astra_fields[parent_field]);
+                astra_number(page->background_text[index]+40,40,&model->draft,parent_field);
+            } else if (first+index == fields) {
+                (void)snprintf(page->background_text[index],40,"预览并执行");
+                (void)snprintf(page->background_text[index]+40,40,">");
+            }
+        }
+        slot(page, 0U, 28, 59, 224, 24, field == 1U ? "输出轴速度" : astra_fields[field], NULL, 0U, 0xFFFFFFU, &ui_font_popup_17);
+        astra_popup_label(page->rows[0],&ui_font_popup_17,page->display_text[0],28,59,224,LV_TEXT_ALIGN_CENTER);
         astra_number(value, sizeof(value), &model->draft, field);
-        slot(page, 1U, 28, 91, 224, 38, value, NULL, 0U, 0xFFFFFFU, &ui_font_numeric_28);
+        slot(page, 1U, 30, 96, 220, 38, value, NULL, 0U, 0xFFFFFFU, &ui_font_popup_30);
+        astra_popup_label(page->rows[1],&ui_font_popup_30,page->display_text[1],30,96,220,LV_TEXT_ALIGN_CENTER);
         {
             uint8_t mit = (uint8_t)(model->draft.operation == DEBUG_UI_OPERATION_MIT_MOVE || model->draft.operation == DEBUG_UI_OPERATION_MIT_HOLD);
             DebugUiMotorProfile bounds = debug_ui_profile_bounds(&motor->profile, mit);
@@ -188,16 +314,16 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
             else if (field == 2U) { minimum = bounds.kp_min; maximum = bounds.kp_max; current = model->draft.kp; }
             else if (field == 3U) { minimum = bounds.kd_min; maximum = bounds.kd_max; current = model->draft.kd; }
             else { minimum = (float)bounds.hold_min_ms; maximum = (float)bounds.hold_max_ms; current = (float)model->draft.hold_duration_ms; }
-            (void)snprintf(value, sizeof(value), "范围 %.2g ~ %.2g", (double)minimum, (double)maximum);
-            slot(page, 2U, 28, 139, 224, 23, value, NULL, 0U, 0xAAAAAAU, &ui_font_16);
             if (isfinite(current) && isfinite(minimum) && isfinite(maximum) && maximum > minimum) {
                 float fraction = (current-minimum)/(maximum-minimum);
                 if (fraction < 0.0f) fraction = 0.0f; else if (fraction > 1.0f) fraction = 1.0f;
-                lv_obj_set_pos(page->confirm_bar, 28, 164);
-                lv_obj_set_width(page->confirm_bar, (lv_coord_t)(1.0f+223.0f*fraction)); show(page->confirm_bar, 1U);
-            }
+                page->popup_marker = (int16_t)(39.0f+202.0f*fraction);
+            } else if (isfinite(current) && isfinite(minimum) && maximum == minimum && current == minimum) page->popup_marker=140;
         }
-        slot(page, 3U, 28, 174, 224, 25, "中 保存   左 取消", NULL, 1U, 0xFFFFFFU, &ui_font_16);
+        slot(page,2U,28,158,224,20,steps[field],NULL,0U,0xFFFFFFU,&ui_font_popup_12);
+        astra_popup_label(page->rows[2],&ui_font_popup_12,page->display_text[2],28,158,224,LV_TEXT_ALIGN_CENTER);
+        slot(page,3U,28,184,224,20,"仅修改草稿",NULL,0U,0xFFFFFFU,&ui_font_popup_12);
+        astra_popup_label(page->rows[3],&ui_font_popup_12,page->display_text[3],28,184,224,LV_TEXT_ALIGN_CENTER);
         break;
     }
     case DEBUG_UI_PAGE_REVIEW:

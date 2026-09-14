@@ -185,13 +185,25 @@ static void render_graphics(void *context)
         validate_text(page->rows[index], lv_label_get_text(page->rows[index]));
         validate_text(page->icons[index], lv_label_get_text(page->icons[index]));
     }
-    if (page->decoration == 2U) {
+    if (page->decoration == 2U || page->decoration == 3U) {
         for (index = 0U; index < 5U; ++index) {
             lv_point_t size;
             assert(debug_ui_view_missing_glyphs(page->background_text[index]) == 0U);
             lv_txt_get_size(&size, page->background_text[index], &ui_font_16,
                             0, 0, 32767, LV_TEXT_FLAG_NONE);
             assert(size.x <= 237 && size.y <= 21);
+            if (page->decoration == 3U) {
+                const char *value = page->background_text[index]+40;
+                uint32_t offset=0U;
+                int caption_width=size.x;
+                while (value[offset] != '\0') {
+                    lv_font_glyph_dsc_t glyph;
+                    uint32_t codepoint=_lv_txt_encoded_next(value,&offset);
+                    assert(lv_font_get_glyph_dsc(&ui_font_popup_14,&glyph,codepoint,0U) && !glyph.is_placeholder);
+                }
+                lv_txt_get_size(&size,value,&ui_font_popup_14,0,0,32767,LV_TEXT_FLAG_NONE);
+                assert(caption_width+size.x+12 <= 231 && size.y <= 18);
+            }
         }
     }
 }
@@ -317,6 +329,38 @@ static void render_multiple_targets(const char *directory)
 
 /** @brief Render six required page families plus edit/review/result variants. */
 #include "astra_ui_scenarios.inc"
+
+/** @brief Verify reference geometry, centered typography, marker bounds and draft-only hint. */
+static void verify_parameter_popup_design(void)
+{
+    unsigned field, x;
+    astra_scenario_draft(DEBUG_UI_OPERATION_MIT_MOVE, DEBUG_UI_PAGE_NUMBER);
+    for (field=0U; field<5U; ++field) {
+        unsigned white_pixels=0U;
+        model.edit_field=(uint8_t)field;
+        assert(debug_ui_graphics_run(render_graphics,NULL));
+        assert(view.page.decoration == 3U);
+        assert(lv_obj_get_style_text_align(view.page.rows[0],0)==LV_TEXT_ALIGN_CENTER);
+        assert(lv_obj_get_style_text_font(view.page.rows[0],0)==&ui_font_popup_17);
+        assert(lv_obj_get_style_text_font(view.page.rows[1],0)==&ui_font_popup_30);
+        assert(lv_obj_get_style_text_font(view.page.rows[2],0)==&ui_font_popup_12);
+        assert(strncmp(lv_label_get_text(view.page.rows[2]),"每步",6)==0);
+        assert(strcmp(lv_label_get_text(view.page.rows[3]),"仅修改草稿")==0);
+        assert(view.page.popup_marker>=39 && view.page.popup_marker<=241);
+        assert(framebuffer[48U*280U+23U].full==lv_color_white().full);
+        assert(framebuffer[48U*280U+18U].full==lv_color_black().full); /* Dithered parent remains outside the rounded corner. */
+        assert(framebuffer[204U*280U+140U].full==lv_color_white().full);
+        for (x=39U; x<=241U; ++x) assert(framebuffer[143U*280U+x].full==lv_color_white().full);
+        for (x=30U; x<=250U; ++x) if (framebuffer[190U*280U+x].full==lv_color_white().full) ++white_pixels;
+        assert(white_pixels<100U); /* The design has a small hint, never a full inverse button. */
+    }
+    model.edit_field=0U;
+    model.draft.delta_rad=-model.snapshot.motors[6].profile.mit_max_delta_rad;
+    assert(debug_ui_graphics_run(render_graphics,NULL)); assert(view.page.popup_marker==39);
+    model.draft.delta_rad=-model.draft.delta_rad;
+    assert(debug_ui_graphics_run(render_graphics,NULL)); assert(view.page.popup_marker==241);
+    puts("PARAMETER_POPUP_DESIGN_OK rounded_247x157=1 centered_Noto=1 slider_endpoints=1 draft_hint=1");
+}
 
 /** @brief Check visible unknown values and result destinations against actual state. */
 static void verify_view_edge_states(void)
@@ -473,6 +517,7 @@ int main(int argc, char **argv)
     save_page(argv[1], "25_position_registers");
     assert(strstr(view.page.row_text[1], "0.000219124") != NULL);
     render_astra_scenarios(argv[1]);
+    verify_parameter_popup_design();
     verify_view_edge_states();
     verify_idle_animation();
     verify_shared_view_reuse();

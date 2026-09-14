@@ -1,8 +1,8 @@
 # Aethor 七自由度机械臂固件
 
-## Astra 界面 B 实现分支
+## 当前发布：Astra 参数弹窗对齐版 B2
 
-最新参数弹窗已按确认的参考图对齐圆角、居中排版、Noto字号和细滑轨，见 [弹窗对齐说明](docs/debug-ui/astra-popup-alignment.md)。B1 版保留在 `archive/lvgl-astra-ui-b1`，此前固件归档不变。
+最新参数弹窗已按确认的参考图对齐圆角、居中排版、Noto字号和细滑轨，见 [弹窗对齐说明](docs/debug-ui/astra-popup-alignment.md)。可烧录HEX、目标选择和源码校验记录见 [B2固件目录](firmware/2026-09-14-astra-popup-preview/README.md)。已完成软件验证，尚未烧录；最新实屏及硬件时序仍待上板确认。B1 版保留在 `archive/lvgl-astra-ui-b1`，此前固件归档不变。
 
 `feature/lvgl-astra-ui` 基于已保留的方案 A 实施三图标首页、六项电机列表、字段弹窗和分类诊断。操作及软件验证见 [Astra 界面 B](docs/debug-ui/astra-ui-verification.md)。本版不烧录，方案 A 分支、HEX 和原预览继续保留。
 
@@ -10,9 +10,9 @@
 
 `feature/lvgl-icon-ui` 在下述已上传基线之后实现共享LVGL图标界面：两屏动作菜单、大数值编辑、800 ms确认与独立失能结果，LVGL池预留降至32 KiB。当前操作及软件验证见[图标界面说明](docs/debug-ui/icon-ui-verification.md)。本次没有烧录；固定基线HEX保留不变。
 
-## 2026-09-14 发布基线
+## 已保留的 2026-09-14 文字界面基线
 
-最新发布为电机7的 **LCD-MIT 输出轴坐标与3.5 Nm反馈保护版本**，同时支持本地POS。固定HEX与可移植验证摘要见 [固件发布目录](firmware/2026-09-14/README.md)。它包含当前文字式LVGL界面；新的图标界面已完成设计确认，后续单独实现，本次发布尚未包含。
+此前文字界面基线为电机7的 **LCD-MIT 输出轴坐标与3.5 Nm反馈保护版本**，同时支持本地POS。固定HEX与可移植验证摘要见 [文字版固件目录](firmware/2026-09-14/README.md)。该目录保留原文字式LVGL界面；最新图标界面使用上方B2固件目录。
 
 LCD角度以输出轴、本次上电零点为基准；POS使用固定终点及速度上限，MIT使用本地轨迹。正常动作后保留本地控制，每个动作仍需松开后长按800 ms确认，运行中中键立即请求STOP。LCD Kp=80、Kd=0.2；3.5 Nm为反馈保护阈值，不是瞬时硬限流。操作与证据边界见 [最新发布说明](docs/debug-ui/release-20260914.md)。
 

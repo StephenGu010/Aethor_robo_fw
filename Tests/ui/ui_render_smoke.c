@@ -362,6 +362,63 @@ static void verify_parameter_popup_design(void)
     puts("PARAMETER_POPUP_DESIGN_OK rounded_247x157=1 centered_Noto=1 slider_endpoints=1 draft_hint=1");
 }
 
+/** @brief Reproduce real-profile speed edits through model keys and rendered labels/markers. */
+static void verify_speed_popup_steps(void)
+{
+    static const DebugUiOperation operations[] = { DEBUG_UI_OPERATION_POS_MOVE, DEBUG_UI_OPERATION_MIT_MOVE };
+    static const float limits[] = { 0.5f, 1.0f, 5.0f, 10.0f, 11.0f, 11459.156f };
+    unsigned operation_index, limit_index;
+    DebugUiInputEvent event = {0};
+    for (operation_index=0U; operation_index<2U; ++operation_index) {
+        int previous_marker;
+        char filename[48];
+        astra_scenario_draft(operations[operation_index], DEBUG_UI_PAGE_NUMBER);
+        model.input_valid=1U; model.edit_field=1U;
+        model.snapshot.motors[6].profile.max_speed_rad_s=200.0f;
+        model.snapshot.motors[6].profile.mit_max_speed_rad_s=200.0f;
+        model.draft.speed_rad_s=debug_ui_degrees_to_radians(10.0f);
+        assert(debug_ui_graphics_run(render_graphics,NULL));
+        assert(strcmp(lv_label_get_text(view.page.rows[1]),"10.0°/s")==0);
+        assert(view.page.popup_marker==140);
+        (void)snprintf(filename,sizeof(filename),"speed_%s_10",operation_index==0U ? "pos" : "mit");
+        save_page("Tests/ui/build/render",filename);
+        event.type=DEBUG_UI_INPUT_EVENT_PRESS; event.key=DEBUG_UI_KEY_UP;
+        debug_ui_model_event(&model,&event);
+        assert(debug_ui_graphics_run(render_graphics,NULL));
+        assert(strcmp(lv_label_get_text(view.page.rows[1]),"11.0°/s")==0);
+        assert(view.page.popup_marker>=145);
+        (void)snprintf(filename,sizeof(filename),"speed_%s_11",operation_index==0U ? "pos" : "mit");
+        save_page("Tests/ui/build/render",filename);
+        event.key=DEBUG_UI_KEY_DOWN;
+        debug_ui_model_event(&model,&event);
+        assert(debug_ui_graphics_run(render_graphics,NULL));
+        assert(view.page.popup_marker==140);
+        debug_ui_model_event(&model,&event);
+        assert(debug_ui_graphics_run(render_graphics,NULL));
+        assert(strcmp(lv_label_get_text(view.page.rows[1]),"9.0°/s")==0);
+        assert(view.page.popup_marker<=135);
+        (void)snprintf(filename,sizeof(filename),"speed_%s_09",operation_index==0U ? "pos" : "mit");
+        save_page("Tests/ui/build/render",filename);
+        assert(!model.outgoing_ready && !model.stop_ready);
+        for (limit_index=0U; limit_index<sizeof(limits)/sizeof(limits[0]); ++limit_index) {
+            unsigned sample;
+            float maximum=limits[limit_index], minimum=maximum<1.0f ? maximum : 1.0f;
+            model.snapshot.motors[6].profile.max_speed_rad_s=debug_ui_degrees_to_radians(maximum);
+            model.snapshot.motors[6].profile.mit_max_speed_rad_s=debug_ui_degrees_to_radians(maximum);
+            previous_marker=38;
+            for (sample=0U; sample<=100U; ++sample) {
+                model.draft.speed_rad_s=debug_ui_degrees_to_radians(minimum+(maximum-minimum)*(float)sample/100.0f);
+                assert(debug_ui_graphics_run(render_graphics,NULL));
+                assert(view.page.popup_marker>=previous_marker && view.page.popup_marker<=241);
+                if (sample==0U) assert(view.page.popup_marker==(maximum==minimum ? 140 : 39));
+                if (sample==100U) assert(view.page.popup_marker==(maximum==minimum ? 140 : 241));
+                previous_marker=view.page.popup_marker;
+            }
+        }
+    }
+    puts("SPEED_POPUP_STEPS_OK pos_mit=1 default_center=1 keys_change_numbers=1 visible_step=1 bounded_monotonic=1 draft_only=1");
+}
+
 /** @brief Check visible unknown values and result destinations against actual state. */
 static void verify_view_edge_states(void)
 {
@@ -518,6 +575,7 @@ int main(int argc, char **argv)
     assert(strstr(view.page.row_text[1], "0.000219124") != NULL);
     render_astra_scenarios(argv[1]);
     verify_parameter_popup_design();
+    verify_speed_popup_steps();
     verify_view_edge_states();
     verify_idle_animation();
     verify_shared_view_reuse();

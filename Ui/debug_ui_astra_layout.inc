@@ -7,6 +7,24 @@ static const char *const astra_recovery[] = { "清除故障", "请求失能", "�
 static const char *const astra_diagnostics[] = { "按键与显示", "调度与通信", "系统资源" };
 static const char *const astra_fields[] = { "相对角度", "速度", "Kp", "Kd", "保持时间" };
 
+/** @brief Center 10 deg/s and magnify nearby edits without narrowing the allowed speed range.
+ * Each side uses a normalized distance/(distance+9) curve; bounds remain endpoints.
+ * Profiles capped at or below 10 deg/s retain their linear, possibly fixed range.
+ */
+static float astra_speed_fraction(float current, float minimum, float maximum)
+{
+    const float center = 10.0f;
+    float distance, span, offset;
+    if (maximum <= center || minimum >= center)
+        return (current-minimum)/(maximum-minimum);
+    if (current <= minimum) return 0.0f;
+    if (current >= maximum) return 1.0f;
+    distance = current >= center ? current-center : center-current;
+    span = current >= center ? maximum-center : center-minimum;
+    offset = 0.5f*(distance/(distance+9.0f))/(span/(span+9.0f));
+    return current >= center ? 0.5f+offset : 0.5f-offset;
+}
+
 /** @brief Draw one original line segment with a bounded coordinate transform. */
 static void astra_line(lv_draw_ctx_t *context, int x, int y, int scale,
                        int x1, int y1, int x2, int y2, uint32_t color)
@@ -315,9 +333,10 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
             else if (field == 3U) { minimum = bounds.kd_min; maximum = bounds.kd_max; current = model->draft.kd; }
             else { minimum = (float)bounds.hold_min_ms; maximum = (float)bounds.hold_max_ms; current = (float)model->draft.hold_duration_ms; }
             if (isfinite(current) && isfinite(minimum) && isfinite(maximum) && maximum > minimum) {
-                float fraction = (current-minimum)/(maximum-minimum);
+                float fraction = field == 1U ? astra_speed_fraction(current,minimum,maximum) :
+                    (current-minimum)/(maximum-minimum);
                 if (fraction < 0.0f) fraction = 0.0f; else if (fraction > 1.0f) fraction = 1.0f;
-                page->popup_marker = (int16_t)(39.0f+202.0f*fraction);
+                page->popup_marker = (int16_t)(39.0f+202.0f*fraction+(field == 1U ? 0.5f : 0.0f));
             } else if (isfinite(current) && isfinite(minimum) && maximum == minimum && current == minimum) page->popup_marker=140;
         }
         slot(page,2U,28,158,224,20,steps[field],NULL,0U,0xFFFFFFU,&ui_font_popup_12);

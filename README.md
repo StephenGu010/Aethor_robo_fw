@@ -2,6 +2,8 @@
 
 ## 当前发布：Astra 参数弹窗对齐版 B2
 
+2026-09-15速度弹窗修正：POS、MIT默认10°/s居中，增减1°/s时放大附近滑块位移，数值与实际速度范围不变。见 [修正说明](docs/debug-ui/speed-popup-centered-20260915.md) 与 [修正版固件](firmware/2026-09-15-astra-speed-preview/README.md)。下方B2原始固件继续保留。
+
 最新参数弹窗已按确认的参考图对齐圆角、居中排版、Noto字号和细滑轨，见 [弹窗对齐说明](docs/debug-ui/astra-popup-alignment.md)。可烧录HEX、目标选择和源码校验记录见 [B2固件目录](firmware/2026-09-14-astra-popup-preview/README.md)。已完成软件验证，尚未烧录；最新实屏及硬件时序仍待上板确认。B1 版保留在 `archive/lvgl-astra-ui-b1`，此前固件归档不变。
 
 `feature/lvgl-astra-ui` 基于已保留的方案 A 实施三图标首页、六项电机列表、字段弹窗和分类诊断。操作及软件验证见 [Astra 界面 B](docs/debug-ui/astra-ui-verification.md)。本版不烧录，方案 A 分支、HEX 和原预览继续保留。

@@ -2700,7 +2700,7 @@
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls>--no_multibyte_chars</MiscControls>
-              <Define>USE_HAL_DRIVER,STM32H723xx,LV_CONF_INCLUDE_SIMPLE=1,AETHOR_DEBUG_UI_ENABLE=1,AETHOR_DEBUG_UI_ALLOW_MOTION=0,AETHOR_DEBUG_UI_ALLOW_MIT=0</Define>
+              <Define>USE_HAL_DRIVER,STM32H723xx,LV_CONF_INCLUDE_SIMPLE=1,AETHOR_DEBUG_UI_ENABLE=1,AETHOR_DEBUG_UI_ALLOW_MOTION=0,AETHOR_DEBUG_UI_ALLOW_MIT=0,AETHOR_S3519_SAME_MODEL_MASK=0x7F</Define>
               <Undefine></Undefine>
               <IncludePath>../Core/Inc;../USB_DEVICE/App;../USB_DEVICE/Target;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User;../App;../App/Config;../App/Protocol;../App/Arm;../App/Motion;../App/Motor;../App/Telemetry;../App/Platform;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc;../App/DebugUi;../Ui;../Middlewares/Third_Party/LVGL</IncludePath>
             </VariousControls>
@@ -5062,7 +5062,7 @@
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls>--no_multibyte_chars</MiscControls>
-              <Define>USE_HAL_DRIVER,STM32H723xx,LV_CONF_INCLUDE_SIMPLE=1,AETHOR_DEBUG_UI_ENABLE=1,AETHOR_DEBUG_UI_ALLOW_MOTION=1,AETHOR_DEBUG_UI_ALLOW_MIT=0,AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1</Define>
+              <Define>USE_HAL_DRIVER,STM32H723xx,LV_CONF_INCLUDE_SIMPLE=1,AETHOR_DEBUG_UI_ENABLE=1,AETHOR_DEBUG_UI_ALLOW_MOTION=1,AETHOR_DEBUG_UI_ALLOW_MIT=0,AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1,AETHOR_S3519_SAME_MODEL_MASK=0x7F,AETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F</Define>
               <Undefine></Undefine>
               <IncludePath>../Core/Inc;../USB_DEVICE/App;../USB_DEVICE/Target;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User;../App;../App/Config;../App/Protocol;../App/Arm;../App/Motion;../App/Motor;../App/Telemetry;../App/Platform;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc;../App/DebugUi;../Ui;../Middlewares/Third_Party/LVGL</IncludePath>
             </VariousControls>
@@ -7424,7 +7424,7 @@
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls>--no_multibyte_chars</MiscControls>
-              <Define>USE_HAL_DRIVER,STM32H723xx,LV_CONF_INCLUDE_SIMPLE=1,AETHOR_DEBUG_UI_ENABLE=1,AETHOR_DEBUG_UI_ALLOW_MOTION=1,AETHOR_DEBUG_UI_ALLOW_MIT=1,AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1,AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE=1</Define>
+              <Define>USE_HAL_DRIVER,STM32H723xx,LV_CONF_INCLUDE_SIMPLE=1,AETHOR_DEBUG_UI_ENABLE=1,AETHOR_DEBUG_UI_ALLOW_MOTION=1,AETHOR_DEBUG_UI_ALLOW_MIT=1,AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1,AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE=1,AETHOR_S3519_SAME_MODEL_MASK=0x7F,AETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F</Define>
               <Undefine></Undefine>
               <IncludePath>../Core/Inc;../USB_DEVICE/App;../USB_DEVICE/Target;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../User;../App;../App/Config;../App/Protocol;../App/Arm;../App/Motion;../App/Motor;../App/Telemetry;../App/Platform;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc;../App/DebugUi;../Ui;../Middlewares/Third_Party/LVGL</IncludePath>
             </VariousControls>

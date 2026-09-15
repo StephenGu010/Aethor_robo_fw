@@ -22,9 +22,12 @@ try {
     $configurations = @(
         @{ Name = 'off'; Defines = @() },
         @{ Name = 'readonly'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1') },
+        @{ Name = 'seven_readonly'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_S3519_SAME_MODEL_MASK=0x7F') },
         @{ Name = 'pos'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1') },
         @{ Name = 'motor7_pos'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1', '-DAETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1') },
         @{ Name = 'motor7_mit'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1', '-DAETHOR_DEBUG_UI_ALLOW_MIT=1', '-DAETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1', '-DAETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE=1') },
+        @{ Name = 'seven_pos'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1', '-DAETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1', '-DAETHOR_S3519_SAME_MODEL_MASK=0x7F', '-DAETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F') },
+        @{ Name = 'seven_mit'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1', '-DAETHOR_DEBUG_UI_ALLOW_MIT=1', '-DAETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1', '-DAETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE=1', '-DAETHOR_S3519_SAME_MODEL_MASK=0x7F', '-DAETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F') },
         @{ Name = 'mit'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1', '-DAETHOR_DEBUG_UI_ALLOW_MIT=1') },
         @{ Name = 'production_readonly'; Defines = @('-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_ACTIVE_PROFILE=2') }
     )

@@ -5,6 +5,7 @@
 #define APP_CONFIG_DEBUG_UI_CONFIG_H
 
 #include "app_profile.h"
+#include "motor_compatibility.h"
 
 #ifndef AETHOR_DEBUG_UI_ENABLE
 #define AETHOR_DEBUG_UI_ENABLE (0U)
@@ -22,6 +23,18 @@
 /* Opt-in bounded motor7 MIT trial; independent of the POS protocol envelope. */
 #ifndef AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE
 #define AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE (0U)
+#endif
+/* Legacy opt-in flags retain ID7; an explicit mask extends the same discovery
+ * and gain preset to the user-confirmed same-model motors, never absent IDs. */
+#ifndef AETHOR_DEBUG_UI_S3519_PROFILE_MASK
+#define AETHOR_DEBUG_UI_S3519_PROFILE_MASK (AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE ? 0x40U : 0U)
+#endif
+#if (AETHOR_DEBUG_UI_S3519_PROFILE_MASK & ~0x7FU) || \
+    (AETHOR_DEBUG_UI_S3519_PROFILE_MASK & ~(AETHOR_S3519_SAME_MODEL_MASK | 0U))
+#error "Auto profiles require a matching same-model preset for every selected ID."
+#endif
+#if AETHOR_DEBUG_UI_S3519_PROFILE_MASK && !AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE
+#error "Auto profiles require the explicit discovered POS bench opt-in."
 #endif
 #if (AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE != 0) && (AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE != 1)
 #error "Motor7 MIT profile flag must be zero or one."

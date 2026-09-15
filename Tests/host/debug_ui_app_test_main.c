@@ -1616,8 +1616,14 @@ static void test_local_output_arrival_tolerance(void)
     assert(aethor_app_one_shot_targets_arrived(&snapshot));
 }
 
+#include "seven_motor_preset_tests.inc"
+
 int main(int argument_count, char **arguments)
 {
+#if (AETHOR_DEBUG_UI_S3519_PROFILE_MASK & 0x3FU)
+    test_seven_motor_presets();
+    return 0;
+#endif
     test_local_output_arrival_tolerance();
 #if AETHOR_DEBUG_UI_ALLOW_MOTION
     if (argument_count == 2)

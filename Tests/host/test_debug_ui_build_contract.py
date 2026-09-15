@@ -28,6 +28,8 @@ def verify_keil_source_selection(root: Path) -> None:
             assert f"{flag}={value}" in definitions, (name, flag)
         assert ("AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1" in definitions) == (name in ("LCD-POS", "LCD-MIT")), name
         assert ("AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE=1" in definitions) == (name == "LCD-MIT"), name
+        assert ("AETHOR_S3519_SAME_MODEL_MASK=0x7F" in definitions) == name.startswith("LCD-"), name
+        assert ("AETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F" in definitions) == (name in ("LCD-POS", "LCD-MIT")), name
         assert "--no_multibyte_chars" in controls.findtext("MiscControls")
         groups = {group.findtext("GroupName"): group for group in target.findall("./Groups/Group")}
         for group_name in ("Ui", "LVGL 8.3.11"):
@@ -61,6 +63,18 @@ def main() -> int:
         ("negative MIT flag", ["AETHOR_DEBUG_UI_ALLOW_MIT=-1"], False),
     ]
     cases.extend([
+        ("seven same-model readonly", ["AETHOR_DEBUG_UI_ENABLE=1", "AETHOR_S3519_SAME_MODEL_MASK=0x7F"], True),
+        ("seven POS profiles", ["AETHOR_DEBUG_UI_ENABLE=1", "AETHOR_DEBUG_UI_ALLOW_MOTION=1",
+            "AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1", "AETHOR_S3519_SAME_MODEL_MASK=0x7F",
+            "AETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F"], True),
+        ("seven profiles without matching compatibility", ["AETHOR_DEBUG_UI_ENABLE=1",
+            "AETHOR_DEBUG_UI_ALLOW_MOTION=1", "AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1",
+            "AETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F"], False),
+        ("seven profiles readonly forbidden", ["AETHOR_DEBUG_UI_ENABLE=1",
+            "AETHOR_S3519_SAME_MODEL_MASK=0x7F", "AETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F"], False),
+        ("invalid same-model mask", ["AETHOR_S3519_SAME_MODEL_MASK=0x80"], False),
+        ("invalid profile mask", ["AETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x80"], False),
+        ("production preset forbidden", ["AETHOR_ACTIVE_PROFILE=2", "AETHOR_S3519_SAME_MODEL_MASK=0x7F"], False),
         ("bounded motor7 MIT", ["AETHOR_DEBUG_UI_ENABLE=1", "AETHOR_DEBUG_UI_ALLOW_MOTION=1",
             "AETHOR_DEBUG_UI_ALLOW_MIT=1", "AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1",
             "AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE=1"], True),

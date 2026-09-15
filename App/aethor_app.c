@@ -1204,11 +1204,13 @@ static uint8_t aethor_app_start_one_shot_cleanup_disable(
     return 0U;
 }
 
-/** @brief Converts commissioned motor7 rotor positions to LCD output-shaft coordinates. */
+/** @brief Converts selected same-model bench motor positions to LCD output-shaft coordinates. */
 static float aethor_app_lcd_position_ratio(uint8_t joint_index)
 {
 #if AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE
-    return joint_index == 6U ? AETHOR_S3519_MOTOR7_POSITION_RATIO : 1.0F;
+    return joint_index < ARM_JOINT_COUNT &&
+        (AETHOR_S3519_SAME_MODEL_MASK & (1U << joint_index)) != 0U ?
+        AETHOR_S3519_MOTOR7_POSITION_RATIO : 1.0F;
 #else
     (void)joint_index;
     return 1.0F;
@@ -4293,44 +4295,47 @@ static bool aethor_app_debug_ui_profile_valid(const DebugUiMotorProfile *profile
     return true;
 }
 
-#if AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE
-/** @brief Derives motor7 POS bounds from verified protocol limits, never mechanical calibration.
+#if AETHOR_DEBUG_UI_S3519_PROFILE_MASK
+/** @brief Derives each selected motor's bounds from its own discovered protocol limits.
  * Caller holds the task critical section. Any bound change invalidates old reviewed requests.
+ * Same-model gains are a user-requested preset, not hardware acceptance for IDs1..6.
  */
-static void aethor_app_debug_ui_refresh_motor7_profile(void)
+static void aethor_app_debug_ui_refresh_motor_profiles(void)
 {
     MotorPositionVelocityLimits limits;
     DebugUiMotorProfile profile;
-    DebugUiMotorProfile *current = &application_debug_ui.profiles[6];
-    memset(&profile, 0, sizeof(profile));
-    if ((motor_runtime_get_position_velocity_limits(&application_motor_runtime, 6U, &limits) ==
-         MOTOR_RUNTIME_STATUS_OK) && isfinite(2.0F * limits.position_max_rad))
+    uint8_t joint_index;
+    for (joint_index = 0U; joint_index < DEBUG_UI_MOTOR_COUNT; ++joint_index)
     {
-        profile.pos_valid = 1U;
-        profile.position_min_rad = -limits.position_max_rad;
-        profile.position_max_rad = limits.position_max_rad;
-        profile.max_delta_rad = 2.0F * limits.position_max_rad;
-        profile.max_speed_rad_s = limits.move_speed_limit_rad_s;
+        DebugUiMotorProfile *current = &application_debug_ui.profiles[joint_index];
+        if ((AETHOR_DEBUG_UI_S3519_PROFILE_MASK & (1U << joint_index)) == 0U) { continue; }
+        memset(&profile, 0, sizeof(profile));
+        if ((motor_runtime_get_position_velocity_limits(&application_motor_runtime, joint_index, &limits) ==
+             MOTOR_RUNTIME_STATUS_OK) && isfinite(2.0F * limits.position_max_rad))
+        {
+            profile.pos_valid = 1U;
+            profile.position_min_rad = -limits.position_max_rad;
+            profile.position_max_rad = limits.position_max_rad;
+            profile.max_delta_rad = 2.0F * limits.position_max_rad;
+            profile.max_speed_rad_s = limits.move_speed_limit_rad_s;
 #if AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE
-        /* Output Kp=80 passed bounded no-load moves after Kp=40 stalled 0.715
-         * output degree short. This is a commissioning gain, not a vendor
-         * recommendation or full-load calibration. */
-        profile.mit_valid = 1U;
-        profile.mit_position_min_rad = -limits.position_max_rad;
-        profile.mit_position_max_rad = limits.position_max_rad;
-        profile.mit_max_delta_rad = 2.0F * limits.position_max_rad;
-        profile.mit_max_speed_rad_s = limits.move_speed_limit_rad_s;
-        profile.kp_min = profile.kp_max = profile.default_kp =
-            80.0F / aethor_app_lcd_position_ratio(6U);
-        profile.kd_min = profile.kd_max = profile.default_kd = 0.2F;
-        profile.hold_min_ms = 100U;
-        profile.hold_max_ms = 1000U;
+            profile.mit_valid = 1U;
+            profile.mit_position_min_rad = -limits.position_max_rad;
+            profile.mit_position_max_rad = limits.position_max_rad;
+            profile.mit_max_delta_rad = 2.0F * limits.position_max_rad;
+            profile.mit_max_speed_rad_s = limits.move_speed_limit_rad_s;
+            profile.kp_min = profile.kp_max = profile.default_kp =
+                80.0F / aethor_app_lcd_position_ratio(joint_index);
+            profile.kd_min = profile.kd_max = profile.default_kd = 0.2F;
+            profile.hold_min_ms = 100U;
+            profile.hold_max_ms = 1000U;
 #endif
-    }
-    if (memcmp(current, &profile, sizeof(profile)) != 0)
-    {
-        *current = profile;
-        ++application_debug_ui.reference_generation[6];
+        }
+        if (memcmp(current, &profile, sizeof(profile)) != 0)
+        {
+            *current = profile;
+            ++application_debug_ui.reference_generation[joint_index];
+        }
     }
 }
 #endif
@@ -4340,8 +4345,8 @@ static void aethor_app_debug_ui_refresh_reference(uint64_t timestamp_us)
 {
     uint8_t joint_index;
     (void)timestamp_us; /* Freshness is an execution gate, not a coordinate/reference change. */
-#if AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE
-    aethor_app_debug_ui_refresh_motor7_profile();
+#if AETHOR_DEBUG_UI_S3519_PROFILE_MASK
+    aethor_app_debug_ui_refresh_motor_profiles();
 #endif
     for (joint_index = 0U; joint_index < DEBUG_UI_MOTOR_COUNT; ++joint_index)
     {

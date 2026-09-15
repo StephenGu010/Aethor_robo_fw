@@ -1,5 +1,11 @@
 # Aethor 七自由度机械臂固件
 
+## 当前调试配置：ID1～7 同型号S3519预置
+
+可烧录工件与完整验证摘要见 [七电机预置固件](firmware/2026-09-15-seven-motor-preset/README.md)。
+
+用户确认七台电机与ID7同型号、同驱动器、同Gr=19.2032。LCD目标现已为ID1～7配置相同的POS/MIT调试参数、输出轴换算和特殊命令通信方式；身份、模式和范围仍由每台电机独立发现，未连接不会就绪。新接入ID先通过USB执行对应 `bench init N`，再在LCD选择并申请本地控制。配置表、接入步骤及证据边界见 [七电机预置说明](docs/debug-ui/seven-motor-preset-20260915.md)。原固件归档和下方版本记录继续保留。
+
 ## 当前发布：Astra 参数弹窗对齐版 B2
 
 2026-09-15速度弹窗修正：POS、MIT默认10°/s居中，增减1°/s时放大附近滑块位移，数值与实际速度范围不变。见 [修正说明](docs/debug-ui/speed-popup-centered-20260915.md) 与 [修正版固件](firmware/2026-09-15-astra-speed-preview/README.md)。下方B2原始固件继续保留。

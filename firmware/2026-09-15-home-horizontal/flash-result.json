@@ -1,0 +1,12 @@
+{
+  "target": "LCD-MIT",
+  "chip_id": "0x10016483",
+  "hex_sha256": "5c59a77186a72684000fc89b4772add935d3bfc6cdc0f96d5546f544bc05759d",
+  "elf_sha256": "545d26aa3443264c344f4c1b09329224944a45ecad616745182526ce538079bb",
+  "verified_bytes": 297476,
+  "flash_readback_equal": true,
+  "previous_flash_sha256": "eb2f953209c7396a4d33280cdeb917167cc387c0f4af2661faffc02e3703a6cf",
+  "motion_sent": false,
+  "reset_completed": true,
+  "core_after_reset": "State.RUNNING"
+}

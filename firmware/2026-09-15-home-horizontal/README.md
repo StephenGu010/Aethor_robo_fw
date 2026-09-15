@@ -14,4 +14,8 @@
 
 ## 烧录状态
 
-本版未烧录。2026-09-15烧录前检查中，ID7显示 `state=absent`、无有效反馈，控制器报告 `fault=transport`；STOP未确认，故停止烧录。待连接和失能状态恢复后，可使用本目录固定HEX继续校验烧录。本版没有执行电机运动，也未完成实物按键验收。
+本版LCD-MIT已于2026-09-15烧录，源码提交为 `be30fc45d58c7f345dc925998d844eec409ff5d1`。前两次检查因ID7无反馈、STOP未确认而停止；连接恢复后重新确认38 ms的新鲜失能反馈，再开始烧录。
+
+固定HEX SHA-256为 `5c59a77186a72684000fc89b4772add935d3bfc6cdc0f96d5546f544bc05759d`，297476字节完整Flash回读一致，复位后CPU运行。LCD、输入、协议健康标志均有效，显示DMA错误为0。复位后再次STOP成功，ID7反馈年龄39 ms、失能且无故障，控制器 `enabled=00 moving=0 active=0 fault=none`。见 [烧录回读记录](flash-result.json) 与 [复位后失能确认](post-reset-disable.json)。
+
+原Flash的1 MiB备份及配套ELF、诊断记录保留于本地 `D:\download\TCG\output\home-keys-flash-20260915\20260915T143058`。本次没有执行电机运动，实物按键交互未作为本次烧录验收项目；七电机预置不代表未接入的ID1～6已完成硬件验证。

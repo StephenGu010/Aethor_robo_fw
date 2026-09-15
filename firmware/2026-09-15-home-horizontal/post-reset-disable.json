@@ -1,0 +1,8 @@
+﻿{
+    "motion_sent":  false,
+    "completed":  true,
+    "disabled_confirmed":  true,
+    "method":  "USB STOP plus explicit fresh disabled feedback; no lock bypass",
+    "failure":  null,
+    "lines":  "ok 0 hello protocol=aethor-text-v1 fw=0.1.0-phase0 profile=bench dof=7 boot=4043332612 watchdog_ms=1000\nok 892032087 bench stop accepted=1\ndone 892032087 bench stop result=stopped stopped=40\nok 0 show motor joint=7 esc=07 master=17 state=disabled pos_deg=0.055 speed_deg_s=-2.799 torque_nm=-0.007 mos_c=32 rotor_c=26 fault=0 age_ms=39 pmax_deg=716.197 vmax_deg_s=11459.156 max_speed_deg_s=68754.938 move_speed_limit_deg_s=11459.156\nok 0 show state state=unaligned aligned=0 enabled=00 moving=0 active=0 fault=none\n"
+}

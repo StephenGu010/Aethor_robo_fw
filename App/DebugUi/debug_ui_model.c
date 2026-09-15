@@ -576,6 +576,10 @@ void debug_ui_model_event(DebugUiModel *model, const DebugUiInputEvent *event)
     direction = event->key == DEBUG_UI_KEY_UP ? -1 : (event->key == DEBUG_UI_KEY_DOWN ? 1 : 0);
     switch (model->page) {
     case DEBUG_UI_PAGE_OVERVIEW:
+        /* The horizontal home carousel alone uses LEFT/RIGHT selection and CENTER/DOWN entry. */
+        direction = event->key == DEBUG_UI_KEY_LEFT ? -1 : (event->key == DEBUG_UI_KEY_RIGHT ? 1 : 0);
+        activation = (uint8_t)(event->type == DEBUG_UI_INPUT_EVENT_PRESS &&
+            (event->key == DEBUG_UI_KEY_CENTER || event->key == DEBUG_UI_KEY_DOWN));
         if (direction) model->focus = (uint8_t)((model->focus + 3 + direction) % 3);
         if (activation) {
             if (model->focus == 0U) navigate(model, DEBUG_UI_PAGE_MOTORS);

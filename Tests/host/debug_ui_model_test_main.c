@@ -68,6 +68,40 @@ static void key(DebugUiModel *model, DebugUiInputEventType type, DebugUiKey code
     debug_ui_model_event(model, &event);
 }
 
+/** @brief Verify horizontal home selection and deliberate CENTER/DOWN entry without requests. */
+static void test_overview_horizontal_navigation(void)
+{
+    DebugUiModel model;
+    DebugUiSnapshot snapshot=fixture();
+    static const DebugUiPage destinations[]={DEBUG_UI_PAGE_MOTORS,DEBUG_UI_PAGE_DIAGNOSTIC_MENU,DEBUG_UI_PAGE_PREPARE};
+    unsigned focus,enter_key;
+    snapshot.authority=DEBUG_UI_AUTHORITY_REMOTE;
+    debug_ui_model_init(&model);
+    debug_ui_model_update(&model,&snapshot,snapshot.timestamp_us,1U,1U);
+    key(&model,DEBUG_UI_INPUT_EVENT_PRESS,DEBUG_UI_KEY_RIGHT,1000U,0U);
+    assert(model.page==DEBUG_UI_PAGE_OVERVIEW && model.focus==1U);
+    key(&model,DEBUG_UI_INPUT_EVENT_REPEAT,DEBUG_UI_KEY_RIGHT,1001U,0U);
+    assert(model.page==DEBUG_UI_PAGE_OVERVIEW && model.focus==2U);
+    key(&model,DEBUG_UI_INPUT_EVENT_PRESS,DEBUG_UI_KEY_RIGHT,1002U,0U);
+    assert(model.focus==0U);
+    key(&model,DEBUG_UI_INPUT_EVENT_PRESS,DEBUG_UI_KEY_LEFT,1003U,0U);
+    assert(model.page==DEBUG_UI_PAGE_OVERVIEW && model.focus==2U);
+    key(&model,DEBUG_UI_INPUT_EVENT_REPEAT,DEBUG_UI_KEY_LEFT,1004U,0U);
+    assert(model.focus==1U);
+    key(&model,DEBUG_UI_INPUT_EVENT_PRESS,DEBUG_UI_KEY_UP,1005U,0U);
+    key(&model,DEBUG_UI_INPUT_EVENT_REPEAT,DEBUG_UI_KEY_DOWN,1006U,0U);
+    assert(model.page==DEBUG_UI_PAGE_OVERVIEW && model.focus==1U);
+    for(focus=0U;focus<3U;++focus) for(enter_key=0U;enter_key<2U;++enter_key) {
+        debug_ui_model_init(&model);
+        debug_ui_model_update(&model,&snapshot,snapshot.timestamp_us,1U,1U);
+        model.focus=(uint8_t)focus;
+        key(&model,DEBUG_UI_INPUT_EVENT_PRESS,enter_key ? DEBUG_UI_KEY_DOWN : DEBUG_UI_KEY_CENTER,1010U,0U);
+        assert(model.page==destinations[focus]);
+        assert(!model.outgoing_ready && !model.stop_ready);
+    }
+    puts("OVERVIEW_HORIZONTAL_KEYS_PASS wrap=1 repeat_selection=1 center_down_enter=1 no_requests=1");
+}
+
 /** @brief Start with no inferred feedback, and scroll all seven rows using keys. */
 static void test_browse_and_units(void)
 {
@@ -86,7 +120,7 @@ static void test_browse_and_units(void)
     assert(fabsf(debug_ui_radians_to_degrees(3.14159265358979323846f) - 180.0f) < 0.001f);
     assert(fabsf(debug_ui_degrees_to_radians(-180.0f) + 3.14159265358979323846f) < 0.00001f);
     debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
-    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1000U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_DOWN, 1000U, 0U);
     assert(model.page == DEBUG_UI_PAGE_MOTORS);
     for (index = 0U; index < 8U; ++index)
         key(&model, DEBUG_UI_INPUT_EVENT_REPEAT, DEBUG_UI_KEY_DOWN, 1001U + index, 0U);
@@ -97,7 +131,7 @@ static void test_browse_and_units(void)
     model.selected_motor = 6U; /* Match UiTask's configured initial motor. */
     model.list_first = 2U;
     debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
-    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1100U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_DOWN, 1100U, 0U);
     assert(model.page == DEBUG_UI_PAGE_MOTORS && model.focus == 6U && model.list_first == 2U);
 }
 
@@ -533,7 +567,7 @@ static void test_prepare_recheck_requires_review(void)
     snapshot.authority = DEBUG_UI_AUTHORITY_REMOTE;
     debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
     model.focus = 2U;
-    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1000U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_DOWN, 1000U, 0U);
     assert(model.page == DEBUG_UI_PAGE_PREPARE);
     assert(!debug_ui_model_take_request(&model, &request));
     snapshot = fixture();
@@ -792,6 +826,7 @@ int main(void)
     test_pos_review_defers_feedback_acquisition(DEBUG_UI_OPERATION_SET_MODE);
     test_stationary_feedback_matches_executor_gate();
     test_browse_and_units();
+    test_overview_horizontal_navigation();
     test_review_once_and_identity();
     test_running_stop_and_health();
     test_gates_and_cancellation();

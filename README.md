@@ -1,5 +1,9 @@
 # Aethor 七自由度机械臂固件
 
+## 系统总览：左右选择，中/下进入（2026-09-15）
+
+首页三个图标改为左右循环选择，中键或下键进入，页脚提示同步更新。子页面操作和七台S3519预置保持不变。见 [导航说明](docs/debug-ui/home-horizontal-20260915.md) 与 [本版固件及验证](firmware/2026-09-15-home-horizontal/README.md)。上一版七电机预置源码保留在 `archive/lvgl-seven-motor-preset`，原固件目录继续保留。
+
 ## 当前调试配置：ID1～7 同型号S3519预置
 
 可烧录工件与完整验证摘要见 [七电机预置固件](firmware/2026-09-15-seven-motor-preset/README.md)。

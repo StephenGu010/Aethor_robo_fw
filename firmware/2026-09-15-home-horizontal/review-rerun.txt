@@ -1,0 +1,12 @@
+ACTIVE_MASK_TARGET_PASS remote_ID3_selected_ID1_old_submission_ID1
+STOP_LATCH_SNAPSHOT_PASS no_terminal_wait_multi_motor_fresh_disable_or_fault
+STOP_LATCH_INTERLEAVING_PASS original_terminal_preserved_no_auto_unlock
+LANDSCAPE_KEY_NAVIGATION_PASS right_select_down_enter_left_back_left_select_center_enter
+FEEDBACK_STATUS_LABELS_PASS discovered_fresh_stale_fault
+TASK_DMA_WAIT_STOP_PASS requests=1 while_owned=1 buffers=2 immutable_checks=609 health=11
+D:\download\TCG\Aethor_robo_fw\.worktrees\flatten-project-root\Tests\ui\build\review\images/review_set_pos.ppm
+D:\download\TCG\Aethor_robo_fw\.worktrees\flatten-project-root\Tests\ui\build\review\images/review_set_mit.ppm
+SET_MODE_CONFIRMATION_DIFFERENT_PASS
+RECOVERED_DISPLAY_HEALTH ready=1 input=1 ui=1 display_error=0 App_healthy=1 protocol_valid=1
+TASK_STOP_LATCHED_PASS dispatch_snapshot_no_async_result_no_duplicate
+TASK_ASSERT_LIVE_DMA_PASS local_escape=1 STOP_before_release=1 health_withdrawn=1 cleanup_completed=1

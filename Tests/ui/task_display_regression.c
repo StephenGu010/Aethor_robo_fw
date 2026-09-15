@@ -254,24 +254,24 @@ static void test_landscape_key_navigation(void)
     navigation.input_valid = 1U; /* Model normally receives ADC health from UiTask. */
     memset(&event, 0, sizeof(event));
     event.type = DEBUG_UI_INPUT_EVENT_PRESS;
-    /* Physical down was decoded as LEFT; it must select diagnostics. */
-    event.key = DEBUG_UI_KEY_LEFT;
-    lv_port_indev_event(&navigation, &event);
-    assert(navigation.focus == 1U);
-    /* Physical right was decoded as DOWN; it must enter diagnostics. */
+    /* Screen right is decoded as DOWN; it must select diagnostics on the home carousel. */
     event.key = DEBUG_UI_KEY_DOWN;
+    lv_port_indev_event(&navigation, &event);
+    assert(navigation.page == DEBUG_UI_PAGE_OVERVIEW && navigation.focus == 1U);
+    /* Screen down is decoded as LEFT; a new press must enter diagnostics. */
+    event.key = DEBUG_UI_KEY_LEFT;
     lv_port_indev_event(&navigation, &event);
     assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTIC_MENU);
     event.key = DEBUG_UI_KEY_UP;
     lv_port_indev_event(&navigation, &event);
     assert(navigation.page == DEBUG_UI_PAGE_OVERVIEW);
-    event.key = DEBUG_UI_KEY_RIGHT;
+    event.key = DEBUG_UI_KEY_UP;
     lv_port_indev_event(&navigation, &event);
     assert(navigation.focus == 0U);
     event.key = DEBUG_UI_KEY_CENTER;
     lv_port_indev_event(&navigation, &event);
     assert(navigation.page == DEBUG_UI_PAGE_MOTORS);
-    puts("LANDSCAPE_KEY_NAVIGATION_PASS down_select_right_enter_left_back_up_select_center_enter");
+    puts("LANDSCAPE_KEY_NAVIGATION_PASS right_select_down_enter_left_back_left_select_center_enter");
 }
 
 /** @brief Verify real wait->UiTask->input->model->submit and post-assert cleanup paths. */

@@ -4,7 +4,7 @@
   "images": [
     {
       "image": "01_overview.png",
-      "rgb_sha256": "31ac529fae7bdbb2f6f42e7a1c04017b7f035aea13387ab0182dab55ef0c3ea3",
+      "rgb_sha256": "805b823090d1f0d5d91b17b2ad619be45940f57e3a045f07b22f23d8a59beda6",
       "width": 280,
       "height": 240
     },
@@ -154,31 +154,31 @@
     },
     {
       "image": "26_home_tile_1.png",
-      "rgb_sha256": "d46a933dab9123eeadbe2a016b430ae25c05b5a2828a775b19d43c54b0f1b30c",
+      "rgb_sha256": "f577f26cf951bd4949ece5b1afc3b42a9a43702402afe81c36b873021ac323ef",
       "width": 280,
       "height": 240
     },
     {
       "image": "27_home_tile_2.png",
-      "rgb_sha256": "2e30d35f8b6cc537881ebad405b4194b947db4d60cbdcc44c3c0fdaf5e436cd3",
+      "rgb_sha256": "ff059dd092c943aa63295d1a563e77fa45b71d1db448815b03c17a34656e6ee6",
       "width": 280,
       "height": 240
     },
     {
       "image": "28_home_remote_control.png",
-      "rgb_sha256": "be65f5e4ce312922c6f1f77599ad706124b5c3e2def06337e92aba849c82e379",
+      "rgb_sha256": "b91371cb8b11d2e03e3cef80f125b79e658af5c50cac43de5996bafc5c950a4c",
       "width": 280,
       "height": 240
     },
     {
       "image": "29_readonly_home.png",
-      "rgb_sha256": "670719ed28e2728be776875dd773949165d1cb4f4f539f1a682363c18a9d3ba6",
+      "rgb_sha256": "763469d2325ff6efd90c70e57be7fa8822ffa61563c0fe66e32e3b10383b3ab1",
       "width": 280,
       "height": 240
     },
     {
       "image": "30_home_unknown.png",
-      "rgb_sha256": "ae5ac50eb5d8e86060697fe41ff3da30212ee4af081e9d8c92a32b13dedb9f62",
+      "rgb_sha256": "7ecd3dd2aad06938016598519cf5e7fcb1bd8eaf1f535898f32dbe7c1360fb6f",
       "width": 280,
       "height": 240
     },

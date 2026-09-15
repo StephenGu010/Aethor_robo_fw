@@ -246,7 +246,7 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
         row(page, 6U, debug_ui_reason_text(debug_ui_model_gate(model,
             snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? DEBUG_UI_OPERATION_RELEASE : DEBUG_UI_OPERATION_ACQUIRE)));
         focus_row = 3 + model->focus % 3U;
-        footer = "上下 选择  中/右 进入";
+        footer = "左右 选择  中/下 进入";
         break;
     case DEBUG_UI_PAGE_PREPARE:
         heading = "本地控制检查";

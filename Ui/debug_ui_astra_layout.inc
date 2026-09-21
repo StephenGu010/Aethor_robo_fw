@@ -184,6 +184,7 @@ static void astra_draw(lv_event_t *event)
 /** @brief Advance a 140 ms idle Tile transition with a maximum 20 ms update rate. */
 void debug_ui_view_animate(DebugUiView *view)
 {
+    static const lv_area_t home_animation_area = {12, 58, 268, 180};
     DebugUiViewPage *page;
     uint32_t now, elapsed;
     if (view == NULL || !view->initialized || !debug_ui_view_healthy()) return;
@@ -195,7 +196,7 @@ void debug_ui_view_animate(DebugUiView *view)
     elapsed = now - page->animation_start;
     if (elapsed >= 140U) { page->animation_active = 0U; page->tile_offset = 0; }
     else page->tile_offset = (int16_t)(page->animation_from * (int32_t)(140U-elapsed) / 140);
-    lv_obj_invalidate(page->root);
+    lv_obj_invalidate_area(page->root, &home_animation_area);
 }
 /** @brief Format one actual draft field in display units with no hard-coded bounds. */
 static void astra_number(char *value, size_t capacity, const DebugUiRequest *action, unsigned field)

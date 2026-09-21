@@ -40,6 +40,18 @@ def verify_keil_source_selection(root: Path) -> None:
         print(f"PASS Keil {name}: explicit UI/LVGL selection and source inventory")
 
 
+def verify_home_animation_dirty_area(root: Path) -> None:
+    """Require the idle home animation to invalidate only its fixed drawing area."""
+    source = (root / "Ui/debug_ui_astra_layout.inc").read_text(encoding="utf-8")
+    function_start = source.index("void debug_ui_view_animate")
+    function_end = source.index("/** @brief Format one actual draft field", function_start)
+    function_body = source[function_start:function_end]
+    assert "static const lv_area_t home_animation_area = {12, 58, 268, 180};" in function_body
+    assert "lv_obj_invalidate_area(page->root, &home_animation_area);" in function_body
+    assert "lv_obj_invalidate(page->root);" not in function_body
+    print("PASS home animation: fixed 257x123 dirty area")
+
+
 def main() -> int:
     """Compile valid and forbidden feature/profile combinations independently."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -48,6 +60,7 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     verify_keil_source_selection(root)
+    verify_home_animation_dirty_area(root)
     cases = [
         ("defaults locked", [], True),
         ("read only", ["AETHOR_DEBUG_UI_ENABLE=1"], True),

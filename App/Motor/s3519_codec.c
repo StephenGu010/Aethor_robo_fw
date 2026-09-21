@@ -57,6 +57,7 @@ static uint8_t s3519_register_is_valid(S3519Register register_address)
                      (register_address == S3519_REGISTER_MAXIMUM_SPEED) ||
                      (register_address == S3519_REGISTER_MASTER_ID) ||
                      (register_address == S3519_REGISTER_ESC_ID) ||
+                     (register_address == S3519_REGISTER_TIMEOUT) ||
                      (register_address == S3519_REGISTER_CONTROL_MODE) ||
                      (register_address == S3519_REGISTER_HARDWARE_VERSION) ||
                      (register_address == S3519_REGISTER_SOFTWARE_VERSION) ||

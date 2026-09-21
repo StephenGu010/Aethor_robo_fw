@@ -1721,7 +1721,7 @@ static void test_s3519_command_encoding(void)
     CanFrame frame;
     S3519Ranges ranges = {12.5F, 45.0F, 18.0F};
 
-    assert(S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED == 0U);
+    assert(S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED == 1U);
     assert(s3519_pack_position_velocity(3U, 1.25F, 0.5F, &frame) ==
            S3519_CODEC_STATUS_OK);
     assert(frame.identifier == 0x103U);
@@ -1814,6 +1814,8 @@ static uint32_t make_discovery_raw_value(S3519Register register_address,
             return (uint32_t)(esc_id + 0x10U);
         case S3519_REGISTER_ESC_ID:
             return esc_id;
+        case S3519_REGISTER_TIMEOUT:
+            return 100U;
         case S3519_REGISTER_CONTROL_MODE:
             return 2U;
         case S3519_REGISTER_HARDWARE_VERSION:
@@ -1851,7 +1853,8 @@ static void test_motor_discovery_verifies_every_joint(void)
         S3519_REGISTER_SUB_VERSION,
         S3519_REGISTER_POSITION_RANGE,
         S3519_REGISTER_VELOCITY_RANGE,
-        S3519_REGISTER_TORQUE_RANGE
+        S3519_REGISTER_TORQUE_RANGE,
+        S3519_REGISTER_TIMEOUT
     };
     const ArmConfig *configuration = arm_config_get_production();
     MotorDiscovery discovery;
@@ -1859,6 +1862,13 @@ static void test_motor_discovery_verifies_every_joint(void)
     uint8_t joint_index;
 
     assert(motor_discovery_init(&discovery, configuration) == MOTOR_DISCOVERY_STATUS_OK);
+    assert((MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK & MOTOR_DISCOVERY_MODE_FIELDS_MASK) == 0U);
+    assert((MOTOR_DISCOVERY_RANGE_FIELDS_MASK & MOTOR_DISCOVERY_VERSION_FIELDS_MASK) == 0U);
+    assert((MOTOR_DISCOVERY_RANGE_FIELDS_MASK & MOTOR_DISCOVERY_WATCHDOG_FIELDS_MASK) == 0U);
+    assert((MOTOR_DISCOVERY_VERSION_FIELDS_MASK & MOTOR_DISCOVERY_WATCHDOG_FIELDS_MASK) == 0U);
+    assert((MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK | MOTOR_DISCOVERY_MODE_FIELDS_MASK |
+            MOTOR_DISCOVERY_RANGE_FIELDS_MASK | MOTOR_DISCOVERY_VERSION_FIELDS_MASK |
+            MOTOR_DISCOVERY_WATCHDOG_FIELDS_MASK) == MOTOR_DISCOVERY_ALL_FIELDS_MASK);
 
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
@@ -1903,6 +1913,9 @@ static void test_motor_discovery_verifies_every_joint(void)
                 case S3519_REGISTER_CONTROL_MODE:
                     response.raw_value = 2U;
                     break;
+                case S3519_REGISTER_TIMEOUT:
+                    response.raw_value = 100U;
+                    break;
                 case S3519_REGISTER_HARDWARE_VERSION:
                     response.raw_value = 0x00010002U;
                     break;
@@ -1938,6 +1951,7 @@ static void test_motor_discovery_verifies_every_joint(void)
         assert(discovery.results[joint_index].acceleration_rad_s2 == 30.0F);
         assert(discovery.results[joint_index].deceleration_rad_s2 == 25.0F);
         assert(discovery.results[joint_index].maximum_speed_rad_s == 20.0F);
+        assert(discovery.results[joint_index].communication_timeout_raw == 100U);
         assert(discovery.results[joint_index].hardware_version == 0x00010002U);
         assert(discovery.results[joint_index].software_version == 0x00030004U);
         assert(discovery.results[joint_index].sub_version == 0x00000005U);

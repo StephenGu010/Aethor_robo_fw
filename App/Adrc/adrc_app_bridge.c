@@ -5,13 +5,38 @@
 #include "motor_adrc_command.h"
 #include <float.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+#define ADRC_APP_BRIDGE_FEEDBACK_QUERY_PERIOD_US (4000ULL)
 
 /** @brief Rejects nonfinite mapping and receipt values without relying on a platform math library. */
 static uint8_t finite_value(float value)
 {
     return (uint8_t)(value == value && value <= FLT_MAX && value >= -FLT_MAX);
+}
+
+/** @brief Formats one bounded read-only bridge response with a mandatory line terminator. */
+static ProtocolEngineStatus format_query(ProtocolOutputBatch *output,
+    ProtocolEngineStatus status, const char *format, ...)
+{
+    int length;
+    va_list arguments;
+    memset(output, 0, sizeof(*output));
+    va_start(arguments, format);
+    length = vsnprintf(output->messages[0].data, PROTOCOL_ENGINE_MESSAGE_CAPACITY - 2U,
+        format, arguments);
+    va_end(arguments);
+    if (length < 0 || (unsigned int)length >= PROTOCOL_ENGINE_MESSAGE_CAPACITY - 2U)
+    { return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL; }
+    output->messages[0].data[length++] = '\r';
+    output->messages[0].data[length++] = '\n';
+    output->messages[0].data[length] = '\0';
+    output->messages[0].length = (uint16_t)length;
+    output->messages[0].priority = PROTOCOL_OUTPUT_HIGH_PRIORITY;
+    output->count = 1U;
+    return status;
 }
 
 /** @brief Builds fresh output-shaft feedback; no draft mapping is promoted to measured evidence. */
@@ -41,6 +66,39 @@ static void make_input(AdrcAppBridge *bridge, uint64_t timestamp_us, AdrcExperim
     input->driver_fault = (uint8_t)(feedback->fault_flags != 0U ||
         (feedback->driver_state != S3519_DRIVER_STATE_DISABLED &&
          feedback->driver_state != S3519_DRIVER_STATE_ENABLED));
+}
+
+/** @brief Resets selected-axis feedback timing evidence without altering motor or supervisor state. */
+static void reset_feedback_statistics(AdrcAppBridge *bridge)
+{
+    bridge->next_feedback_query_us = 0ULL;
+    bridge->last_feedback_us = 0ULL;
+    bridge->feedback_query_count = 0U;
+    bridge->feedback_sample_count = 0U;
+    bridge->feedback_interval_min_us = UINT32_MAX;
+    bridge->feedback_interval_max_us = 0U;
+}
+
+/** @brief Records each new selected-axis sample once for commissioning interval evidence. */
+static void observe_feedback(AdrcAppBridge *bridge, const AdrcExperimentInput *input)
+{
+    uint64_t interval_us;
+    if (input->feedback_valid == 0U || input->feedback_us == 0ULL ||
+        input->feedback_us == bridge->last_feedback_us) { return; }
+    if (bridge->last_feedback_us != 0ULL && input->feedback_us > bridge->last_feedback_us)
+    {
+        interval_us = input->feedback_us - bridge->last_feedback_us;
+        if (interval_us <= UINT32_MAX)
+        {
+            uint32_t bounded_interval_us = (uint32_t)interval_us;
+            if (bounded_interval_us < bridge->feedback_interval_min_us)
+            { bridge->feedback_interval_min_us = bounded_interval_us; }
+            if (bounded_interval_us > bridge->feedback_interval_max_us)
+            { bridge->feedback_interval_max_us = bounded_interval_us; }
+        }
+    }
+    bridge->last_feedback_us = input->feedback_us;
+    if (bridge->feedback_sample_count != UINT32_MAX) { ++bridge->feedback_sample_count; }
 }
 
 /** @brief Requires discovered identity, MIT mode and all protocol ranges for one selected motor. */
@@ -105,6 +163,7 @@ AdrcExperimentResult adrc_app_bridge_init(AdrcAppBridge *bridge, MotorRuntime *r
     if (result != ADRC_RESULT_OK) { return result; }
     protocol_engine_set_adrc_handler(engine, adrc_protocol_handle_request, adrc_bench_gateway(&bridge->bench));
     bridge->discovery_axis = bridge->bench.draft_config.axis_index;
+    reset_feedback_statistics(bridge);
     (void)motor_runtime_begin_discovery(runtime, (uint8_t)(1U << bridge->discovery_axis));
     bridge->initialized = 1U;
     return ADRC_RESULT_OK;
@@ -132,6 +191,7 @@ uint8_t adrc_app_bridge_service(AdrcAppBridge *bridge, uint64_t timestamp_us)
     }
     bridge->stop_pending = 0U;
     make_input(bridge, timestamp_us, &input);
+    observe_feedback(bridge, &input);
     bridge->receipt_valid = 0U;
     bridge->send_failed = 0U;
     (void)adrc_bench_service(&bridge->bench, &input, &output);
@@ -160,6 +220,74 @@ ProtocolEngineStatus adrc_app_bridge_process_line(AdrcAppBridge *bridge, const c
     parsed = text_protocol_parse_request(line, length, &request);
     if (parsed != TEXT_PROTOCOL_STATUS_OK)
     { return protocol_engine_process_text_line(bridge->engine, line, length, timestamp_us, output); }
+    if ((text_protocol_request_path_equals(&request, "adrc", "hardware") != 0U) ||
+        (text_protocol_request_path_equals(&request, "adrc", "limits") != 0U) ||
+        (text_protocol_request_path_equals(&request, "adrc", "feedback") != 0U))
+    {
+        uint8_t axis = bridge->bench.draft_config.axis_index;
+        const MotorDiscoveryResult *discovery;
+        if (request.positional_count != 0U || request.field_count != 0U || axis >= ARM_JOINT_COUNT)
+        {
+            return format_query(output, PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+                "error %lu adrc code=bad_argument", (unsigned long)request.request_id);
+        }
+        discovery = &bridge->runtime->discovery.results[axis];
+        if (text_protocol_request_path_equals(&request, "adrc", "hardware") != 0U)
+        {
+            return format_query(output, PROTOCOL_ENGINE_STATUS_OK,
+                "ok %lu adrc hardware motor=%u discovery=%u fields=%04x accepted=%lu rejected=%lu esc=%lu master=%lu mode=%lu timeout_raw=%lu hw=%lu sw=%lu sub=%lu",
+                (unsigned long)request.request_id, (unsigned int)axis + 1U,
+                (unsigned int)bridge->runtime->discovery.state,
+                (unsigned int)discovery->verified_fields_mask,
+                (unsigned long)bridge->runtime->accepted_parameter_response_count,
+                (unsigned long)bridge->runtime->rejected_parameter_response_count,
+                (unsigned long)discovery->observed_esc_id,
+                (unsigned long)discovery->observed_master_id,
+                (unsigned long)discovery->observed_control_mode,
+                (unsigned long)discovery->communication_timeout_raw,
+                (unsigned long)discovery->hardware_version,
+                (unsigned long)discovery->software_version,
+                (unsigned long)discovery->sub_version);
+        }
+        if (text_protocol_request_path_equals(&request, "adrc", "limits") != 0U)
+        {
+            return format_query(output, PROTOCOL_ENGINE_STATUS_OK,
+                "ok %lu adrc limits motor=%u pmax=%.7g vmax=%.7g tmax=%.7g acc=%.7g dec=%.7g maxspd=%.7g",
+                (unsigned long)request.request_id, (unsigned int)axis + 1U,
+                (double)discovery->ranges.position_max_rad,
+                (double)discovery->ranges.velocity_max_rad_s,
+                (double)discovery->ranges.torque_max_nm,
+                (double)discovery->acceleration_rad_s2,
+                (double)discovery->deceleration_rad_s2,
+                (double)discovery->maximum_speed_rad_s);
+        }
+        else
+        {
+            MotorFeedbackSnapshot snapshot;
+            const MotorJointFeedback *feedback;
+            uint64_t age_us = UINT64_MAX;
+            uint8_t fresh;
+            memset(&snapshot, 0, sizeof(snapshot));
+            (void)motor_runtime_get_snapshot(bridge->runtime, timestamp_us, 8000ULL, &snapshot);
+            feedback = &snapshot.joints[axis];
+            fresh = (uint8_t)((snapshot.valid_joint_mask & (1U << axis)) != 0U);
+            if (feedback->timestamp_us != 0ULL && timestamp_us >= feedback->timestamp_us)
+            { age_us = timestamp_us - feedback->timestamp_us; }
+            return format_query(output, PROTOCOL_ENGINE_STATUS_OK,
+                "ok %lu adrc feedback motor=%u seen=%u fresh=%u state=%u fault=%lu age_us=%llu samples=%lu min_us=%lu max_us=%lu pos=%.7g vel=%.7g torque=%.7g mos=%.7g rotor=%.7g",
+                (unsigned long)request.request_id, (unsigned int)axis + 1U,
+                (unsigned int)bridge->runtime->bank.motors[axis].feedback_valid,
+                (unsigned int)fresh, (unsigned int)feedback->driver_state,
+                (unsigned long)feedback->fault_flags, (unsigned long long)age_us,
+                (unsigned long)bridge->feedback_sample_count,
+                (unsigned long)(bridge->feedback_interval_min_us == UINT32_MAX ? 0U :
+                    bridge->feedback_interval_min_us),
+                (unsigned long)bridge->feedback_interval_max_us,
+                (double)feedback->position_rad, (double)feedback->velocity_rad_s,
+                (double)feedback->torque_nm, (double)feedback->mos_temperature_c,
+                (double)feedback->rotor_temperature_c);
+        }
+    }
     allowed = (uint8_t)((request.command_words[0].length == 4U &&
         strncmp(request.command_words[0].data, "adrc", 4U) == 0) ||
         (request.command_words[0].length == 4U && strncmp(request.command_words[0].data, "show", 4U) == 0) ||
@@ -223,6 +351,7 @@ MotorRuntimeStatus adrc_app_bridge_next_discovery(AdrcAppBridge *bridge, uint64_
     CanFrame *frame)
 {
     uint8_t axis;
+    MotorRuntimeStatus runtime_status;
     if (bridge == NULL || !bridge->initialized || frame == NULL) { return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT; }
     if (bridge->frame_pending || bridge->awaiting_receipt || bridge->stop_pending ||
         bridge->bench.gateway.active_run_request_id ||
@@ -236,8 +365,21 @@ MotorRuntimeStatus adrc_app_bridge_next_discovery(AdrcAppBridge *bridge, uint64_
         if (motor_runtime_begin_discovery(bridge->runtime, (uint8_t)(1U << axis)) != MOTOR_RUNTIME_STATUS_OK)
         { return MOTOR_RUNTIME_STATUS_DISCOVERY_ERROR; }
         bridge->discovery_axis = axis;
+        reset_feedback_statistics(bridge);
     }
-    return motor_runtime_next_discovery_frame(bridge->runtime, timestamp_us, frame);
+    runtime_status = motor_runtime_next_discovery_frame(bridge->runtime, timestamp_us, frame);
+    if (runtime_status != MOTOR_RUNTIME_STATUS_DISCOVERY_COMPLETE)
+    { return runtime_status; }
+    if (S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED == 0U ||
+        timestamp_us < bridge->next_feedback_query_us)
+    { return MOTOR_RUNTIME_STATUS_WAITING; }
+    if (s3519_pack_feedback_query(
+            (uint8_t)bridge->runtime->configuration->joints[axis].esc_id,
+            frame) != S3519_CODEC_STATUS_OK)
+    { return MOTOR_RUNTIME_STATUS_CODEC_ERROR; }
+    bridge->next_feedback_query_us = timestamp_us + ADRC_APP_BRIDGE_FEEDBACK_QUERY_PERIOD_US;
+    if (bridge->feedback_query_count != UINT32_MAX) { ++bridge->feedback_query_count; }
+    return MOTOR_RUNTIME_STATUS_FRAME_READY;
 }
 
 /** @brief Installs only locally supplied hardware evidence after actual disabled selected feedback. */

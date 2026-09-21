@@ -351,6 +351,82 @@ static void test_readonly_discovery_and_receive(void)
     assert(application_adrc_bridge.bench.gateway.snapshot.status.disabled_confirmed == 0U);
 }
 
+/** @brief Verifies completed discovery emits only the validated 0xCC feedback query at 4 ms intervals. */
+static void test_readonly_feedback_query_pacing(void)
+{
+    CanFrame frame;
+    CanTxPriority priority;
+    const JointConfig *joint;
+
+    aethor_app_init(1000U, 790U);
+    joint = &arm_config_get_production()->joints[0];
+    application_motor_runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+    application_motor_runtime.discovery.results[0].verified_fields_mask =
+        MOTOR_DISCOVERY_ALL_FIELDS_MASK;
+    application_motor_runtime.discovery.verified_joint_mask = 0x01U;
+
+    assert(aethor_app_next_can_frame(1000U, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(priority == CAN_TX_PRIORITY_PARAMETER);
+    assert(frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER);
+    assert(frame.length == 4U);
+    assert(frame.data[0] == (uint8_t)joint->esc_id);
+    assert(frame.data[1] == 0U && frame.data[2] == 0xCCU && frame.data[3] == 0U);
+    assert(application_adrc_bridge.feedback_query_count == 1U);
+    assert(aethor_app_next_can_frame(4999U, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_WAITING);
+    assert(aethor_app_next_can_frame(5000U, &frame, &priority) ==
+           MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.data[2] == 0xCCU);
+    assert(application_adrc_bridge.feedback_query_count == 2U);
+}
+
+/** @brief Verifies hardware diagnostics expose measured fields without creating an ADRC actuation frame. */
+static void test_readonly_hardware_diagnostics(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    uint8_t kind;
+    float decoded;
+    MotorDiscoveryResult *discovery;
+
+    aethor_app_init(1000U, 791U);
+    fixture_feedback(0U, 2000U, 0U);
+    (void)aethor_app_service(2000U);
+    fixture_feedback(0U, 6000U, 0U);
+    (void)aethor_app_service(6000U);
+    discovery = &application_motor_runtime.discovery.results[0];
+    discovery->communication_timeout_raw = 100U;
+    discovery->hardware_version = 0x00010002U;
+    discovery->software_version = 0x00030004U;
+    discovery->sub_version = 5U;
+    discovery->acceleration_rad_s2 = 30.0F;
+    discovery->deceleration_rad_s2 = 25.0F;
+    discovery->maximum_speed_rad_s = 20.0F;
+    application_motor_runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
+
+    assert(aethor_app_process_protocol_line("1 adrc hardware", strlen("1 adrc hardware"),
+        6001U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "motor=1") != NULL);
+    assert(strstr(output.messages[0].data, "fields=1fff") != NULL);
+    assert(strstr(output.messages[0].data, "timeout_raw=100") != NULL);
+    assert(strstr(output.messages[0].data, "hw=65538") != NULL);
+
+    assert(aethor_app_process_protocol_line("2 adrc limits", strlen("2 adrc limits"),
+        6001U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "pmax=2") != NULL);
+    assert(strstr(output.messages[0].data, "vmax=1") != NULL);
+    assert(strstr(output.messages[0].data, "tmax=1") != NULL);
+    assert(strstr(output.messages[0].data, "maxspd=20") != NULL);
+
+    assert(aethor_app_process_protocol_line("3 adrc feedback", strlen("3 adrc feedback"),
+        6001U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "seen=1 fresh=1 state=0") != NULL);
+    assert(strstr(output.messages[0].data, "samples=2 min_us=4000 max_us=4000") != NULL);
+    assert(application_protocol_engine.command_write_sequence == 0U);
+    assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 0U);
+}
+
 /** @brief Ensures opt-in ADRC builds reject legacy actuation and lack startup qualification. */
 int main(void)
 {
@@ -383,6 +459,8 @@ int main(void)
     test_identify_hard_deadlines();
     test_idle_protocol_stop_emits_disable();
     test_readonly_discovery_and_receive();
+    test_readonly_feedback_query_pacing();
+    test_readonly_hardware_diagnostics();
     puts("ADRC_APP_TESTS_PASSED");
     return 0;
 }

@@ -19,6 +19,12 @@ typedef struct
     CanFrame frame;
     float decoded_torque_nm;
     float receipt_torque_nm;
+    uint64_t next_feedback_query_us;
+    uint64_t last_feedback_us;
+    uint32_t feedback_query_count;
+    uint32_t feedback_sample_count;
+    uint32_t feedback_interval_min_us;
+    uint32_t feedback_interval_max_us;
     uint8_t frame_kind;
     uint8_t frame_pending;
     uint8_t awaiting_receipt;

@@ -305,6 +305,26 @@ static void test_identify_hard_deadlines(void)
     }
 }
 
+/** @brief Requires an idle USB STOP to emit one selected-axis disable without motion authority. */
+static void test_idle_protocol_stop_emits_disable(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    uint8_t kind;
+    float decoded;
+
+    aethor_app_init(1000U, 456U);
+    assert(aethor_app_process_protocol_line("1 adrc stop", strlen("1 adrc stop"),
+        2000U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "ok 1 adrc accepted=1") != NULL);
+    (void)aethor_app_service(4000U);
+    assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 1U);
+    assert(kind == 2U);
+    assert(frame.identifier == arm_config_get_production()->joints[0].esc_id);
+    assert(frame.data[7] == S3519_MODE_COMMAND_DISABLE);
+    assert(decoded == 0.0F);
+}
+
 /** @brief Checks idle discovery is read-only and actual received disable feedback remains available to LCD. */
 static void test_readonly_discovery_and_receive(void)
 {
@@ -361,6 +381,7 @@ int main(void)
     test_selected_axis_and_receipts();
     test_negative_grid_and_coarse_resolution();
     test_identify_hard_deadlines();
+    test_idle_protocol_stop_emits_disable();
     test_readonly_discovery_and_receive();
     puts("ADRC_APP_TESTS_PASSED");
     return 0;

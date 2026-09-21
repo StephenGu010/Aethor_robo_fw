@@ -121,7 +121,9 @@ uint8_t adrc_app_bridge_service(AdrcAppBridge *bridge, uint64_t timestamp_us)
     if (bridge->frame_pending || bridge->awaiting_receipt) { bridge->send_failed = 1U; }
     bridge->frame_pending = 0U;
     bridge->awaiting_receipt = 0U;
-    force_disable = (uint8_t)(bridge->stop_pending &&
+    force_disable = (uint8_t)((bridge->stop_pending ||
+        bridge->bench.gateway.stop_pending) &&
+        bridge->bench.experiment.status.disabled_confirmed == 0U &&
         bridge->bench.experiment.status.state != ADRC_STATE_RUNNING &&
         bridge->bench.experiment.status.state != ADRC_STATE_STOPPING);
     if (bridge->stop_pending || bridge->send_failed)

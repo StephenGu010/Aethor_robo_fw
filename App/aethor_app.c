@@ -13,6 +13,12 @@
 #include "joint_motion_can.h"
 #include "DebugUi/debug_ui_mailbox.h"
 #include "Config/motor_compatibility.h"
+#if AETHOR_ADRC_BENCH
+#include "Adrc/adrc_app_bridge.h"
+#include "Adrc/adrc_generated_adapter.h"
+/** @brief Static selected-axis owner; legacy targets allocate no ADRC trace or gateway storage. */
+static AdrcAppBridge application_adrc_bridge;
+#endif
 
 #define AETHOR_APP_ACTION_TIMEOUT_US (500000ULL)
 #define AETHOR_APP_DISCOVERY_TIMEOUT_US (8000000ULL)
@@ -107,7 +113,9 @@ static JointReference application_joint_reference;
 static MotorRuntime application_motor_runtime;
 static ProtocolEngine application_protocol_engine;
 static MotorEmergencyFrameBatch application_emergency_disable_batch;
+#if !AETHOR_ADRC_BENCH
 static uint8_t application_emergency_disable_read_index;
+#endif
 static AethorAppAction application_action;
 static ProtocolCommandResult
     application_deferred_results[AETHOR_APP_DEFERRED_RESULT_CAPACITY];
@@ -117,7 +125,9 @@ static AethorAppTransportFaultEvent
     application_transport_faults[AETHOR_APP_TRANSPORT_FAULT_CAPACITY];
 static volatile uint8_t application_transport_fault_read_sequence;
 static volatile uint8_t application_transport_fault_write_sequence;
+#if !AETHOR_ADRC_BENCH
 static uint64_t application_last_service_timestamp_us;
+#endif
 static AethorAppTaskCriticalHook application_enter_task_critical_hook;
 static AethorAppTaskCriticalHook application_exit_task_critical_hook;
 static uint8_t application_initialized;
@@ -158,15 +168,23 @@ typedef struct
 static AethorAppDebugUiState application_debug_ui;
 
 /** @brief Validates local authorization again at the ArmControlTask boundary. */
+#if !AETHOR_ADRC_BENCH
 static DebugUiReason aethor_app_debug_ui_validate_start(
     const ProtocolCommand *command, const MotorFeedbackSnapshot *snapshot, uint64_t timestamp_us,
     bool preflight_complete);
+#endif
 /** @brief Routes only LOCAL_UI result heads without formatting USB text. */
+#if !AETHOR_ADRC_BENCH
 static void aethor_app_debug_ui_route_results(void);
+#endif
 /** @brief ArmControlTask independently detects local UI or Protocol service failure. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_debug_ui_service_health(uint64_t timestamp_us);
+#endif
 /** @brief Copies local ownership under critical before the USB watchdog decision. */
+#if !AETHOR_ADRC_BENCH
 static bool aethor_app_debug_ui_owns_link_lifecycle(void);
+#endif
 /** @brief Checks command ownership before optional idle register monitoring. */
 static bool aethor_app_debug_ui_executor_busy(void);
 /** @brief Advances the local epoch and authority under the caller's critical boundary. */
@@ -174,13 +192,17 @@ static void aethor_app_debug_ui_revoke(DebugUiAuthority authority);
 /** @brief Retains required post-cleanup feedback for every original target. Caller holds critical. */
 static void aethor_app_debug_ui_lock_targets(uint8_t motor_mask, uint64_t timestamp_us);
 /** @brief Arm independently consumes saturated STOP intents without inventing result identities. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_debug_ui_service_stop_intent(uint64_t timestamp_us, uint8_t *result_generated);
+#endif
 /** @brief Copies immutable command source and physical disable evidence to its terminal. */
 static void aethor_app_debug_ui_result_metadata(
     ProtocolCommandResult *result, const ProtocolCommand *command, uint64_t timestamp_us);
 
 static void aethor_app_update_protocol_context(uint64_t timestamp_us);
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_start_one_shot_hold(uint64_t timestamp_us);
+#endif
 
 /** @brief Enters the injected task boundary when a platform installed one. */
 static void aethor_app_enter_task_critical(void)
@@ -216,6 +238,7 @@ void aethor_app_set_task_critical_hooks(
 }
 
 /** @brief Prevents compiler reordering across SPSC mailbox ownership edges. */
+#if !AETHOR_ADRC_BENCH
 static void aethor_app_compiler_barrier(void)
 {
 #if defined(__CC_ARM)
@@ -227,16 +250,20 @@ static void aethor_app_compiler_barrier(void)
     (void)barrier_value;
 #endif
 }
+#endif
 
 /**
  * @brief Applies one transport fault from the ArmControlTask ownership domain.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_apply_transport_fault(uint32_t detail,
                                                 uint64_t timestamp_us);
+#endif
 
 /**
  * @brief Consumes and merges every fully published transport fault event.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_take_transport_fault(uint32_t *detail,
                                                uint64_t *timestamp_us)
 {
@@ -269,10 +296,12 @@ static uint8_t aethor_app_take_transport_fault(uint32_t *detail,
     }
     return (uint8_t)(event_count != 0U);
 }
+#endif
 
 /**
  * @brief Calculates a finite representable travel, settle, and safety timeout.
  */
+#if !AETHOR_ADRC_BENCH
 static bool aethor_app_calculate_one_shot_motion_timeout_us(
     float current_position_rad,
     float target_position_rad,
@@ -304,8 +333,10 @@ static bool aethor_app_calculate_one_shot_motion_timeout_us(
     *timeout_us = (uint64_t)ceil(total_timeout_us);
     return true;
 }
+#endif
 
 /** @brief Adds a timeout only when the absolute deadline is finite and representable. */
+#if !AETHOR_ADRC_BENCH
 static bool aethor_app_calculate_deadline_us(uint64_t timestamp_us,
                                              uint64_t interval_us,
                                              uint64_t *deadline_us)
@@ -318,8 +349,10 @@ static bool aethor_app_calculate_deadline_us(uint64_t timestamp_us,
     *deadline_us = timestamp_us + interval_us;
     return true;
 }
+#endif
 
 /** @brief Reports whether the accepted one-shot action owns its link lifecycle. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_active_action_owns_link_lifecycle(void)
 {
     if ((application_action.command.type !=
@@ -357,6 +390,7 @@ static uint8_t aethor_app_active_action_owns_link_lifecycle(void)
             return 0U;
     }
 }
+#endif
 
 /** @brief Maps the current one-shot state to stable terminal-result stage metadata. */
 static ProtocolCommandStage aethor_app_current_one_shot_stage(void)
@@ -406,6 +440,7 @@ static ProtocolCommandStage aethor_app_current_one_shot_stage(void)
  * @param failure_error Stable public error associated with the failure.
  * @param failed_motor_number One-based failed motor number, or zero if unknown.
  */
+#if !AETHOR_ADRC_BENCH
 static void aethor_app_record_one_shot_failure_once(
     ProtocolCommandStage failed_stage,
     ProtocolCommandError failure_error,
@@ -418,22 +453,28 @@ static void aethor_app_record_one_shot_failure_once(
         application_action.failed_motor_number = failed_motor_number;
     }
 }
+#endif
 
 /** @brief Maps the public arm mode to the vendor identifier offset. */
+#if !AETHOR_ADRC_BENCH
 static S3519ControlMode aethor_app_vendor_mode(ArmControlMode control_mode)
 {
     return (control_mode == ARM_CONTROL_MODE_MIT)
                ? S3519_CONTROL_MODE_MIT
                : S3519_CONTROL_MODE_POSITION_VELOCITY;
 }
+#endif
 
 /** @brief Returns the vendor mode explicitly owned by the active one-shot command. */
+#if !AETHOR_ADRC_BENCH
 static S3519ControlMode aethor_app_one_shot_vendor_mode(void)
 {
     return aethor_app_vendor_mode(application_action.command.control_mode);
 }
+#endif
 
 /** @brief Reports whether fresh selected motors are disabled and nearly stationary. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_selected_motors_are_safe_for_mode_switch(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint8_t motor_mask)
@@ -464,6 +505,7 @@ static uint8_t aethor_app_selected_motors_are_safe_for_mode_switch(
     }
     return 1U;
 }
+#endif
 
 /** @brief Returns the number of terminal results retained by the app FIFO. */
 static uint8_t aethor_app_deferred_result_count(void)
@@ -511,6 +553,7 @@ static uint8_t aethor_app_submit_or_defer_result(
 }
 
 /** @brief Moves deferred terminals to ProtocolEngine without reordering them. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_flush_deferred_results(void)
 {
     uint8_t flushed = 0U;
@@ -532,8 +575,10 @@ static uint8_t aethor_app_flush_deferred_results(void)
     }
     return flushed;
 }
+#endif
 
 /** @brief Retains one explicit terminal for a queued command. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_submit_queued_command_result(
     const ProtocolCommand *command,
     ProtocolCommandResultCode code,
@@ -563,8 +608,10 @@ static uint8_t aethor_app_submit_queued_command_result(
     }
     return aethor_app_submit_or_defer_result(&result);
 }
+#endif
 
 /** @brief Retains one cancelled terminal for a queued STOP-preempted command. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_cancel_queued_command(
     const ProtocolCommand *command,
     uint64_t timestamp_us)
@@ -575,8 +622,10 @@ static uint8_t aethor_app_cancel_queued_command(
         0U,
         timestamp_us);
 }
+#endif
 
 /** @brief Retains a failed terminal for a globally cancelled queued motion. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_fail_queued_motion(uint16_t detail,
                                              uint64_t timestamp_us)
 {
@@ -599,8 +648,10 @@ static uint8_t aethor_app_fail_queued_motion(uint16_t detail,
         detail,
         timestamp_us);
 }
+#endif
 
 /** @brief Preserves the active one-shot/STOP scope in a pending newer STOP. */
+#if !AETHOR_ADRC_BENCH
 static void aethor_app_widen_pending_stop_before_global_cancel(void)
 {
     ProtocolCommand pending_stop;
@@ -618,6 +669,7 @@ static void aethor_app_widen_pending_stop_before_global_cancel(void)
             &pending_stop);
     }
 }
+#endif
 
 /** @brief Completes the active command and clears its execution gate. */
 static uint8_t aethor_app_complete_action(ProtocolCommandResultCode code,
@@ -694,11 +746,14 @@ static uint8_t aethor_app_complete_action(ProtocolCommandResultCode code,
         aethor_app_exit_task_critical();
     }
     memset(&application_action, 0, sizeof(application_action));
+#if !AETHOR_ADRC_BENCH
     application_last_service_timestamp_us = 0U;
+#endif
     return 1U;
 }
 
 /** @brief Accumulates the maximum absolute trajectory-following error in degrees. */
+#if !AETHOR_ADRC_BENCH
 static void aethor_app_update_following_error(
     const float feedback_position_rad[ARM_JOINT_COUNT],
     uint64_t timestamp_us)
@@ -726,8 +781,10 @@ static void aethor_app_update_following_error(
         }
     }
 }
+#endif
 
 /** @brief Converts one coherent public joint snapshot back to SI radians. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_joint_snapshot_to_radians(
     const JointStateSnapshot *snapshot,
     float position_rad[ARM_JOINT_COUNT],
@@ -750,8 +807,10 @@ static uint8_t aethor_app_joint_snapshot_to_radians(
     }
     return 1U;
 }
+#endif
 
 /** @brief Builds the next complete seven-frame motion control group. */
+#if !AETHOR_ADRC_BENCH
 static JointMotionCanStatus aethor_app_prepare_motion_group(
     uint64_t timestamp_us)
 {
@@ -775,8 +834,10 @@ static JointMotionCanStatus aethor_app_prepare_motion_group(
     application_action.control_group_ready = 1U;
     return JOINT_MOTION_CAN_STATUS_OK;
 }
+#endif
 
 /** @brief Builds the next controlled-stop group for the confirmed motor mode. */
+#if !AETHOR_ADRC_BENCH
 static JointMotionCanStatus aethor_app_prepare_controlled_stop_group(
     uint64_t timestamp_us)
 {
@@ -822,6 +883,7 @@ static JointMotionCanStatus aethor_app_prepare_controlled_stop_group(
     application_action.control_group_ready = 1U;
     return JOINT_MOTION_CAN_STATUS_OK;
 }
+#endif
 
 /** @brief Starts fail-safe disable frames after a motion-control failure. */
 static void aethor_app_latch_motion_failure(uint16_t detail,
@@ -831,13 +893,16 @@ static void aethor_app_latch_motion_failure(uint16_t detail,
                                              ARM_FAULT_MOTION_CONTROL,
                                              detail,
                                              timestamp_us);
+#if !AETHOR_ADRC_BENCH
     application_emergency_disable_read_index = 0U;
+#endif
     (void)motor_runtime_build_emergency_disable(
         &application_motor_runtime,
         &application_emergency_disable_batch);
 }
 
 /** @brief Returns the first formal-arm driver fault detail, or zero. */
+#if !AETHOR_ADRC_BENCH
 static uint32_t aethor_app_first_driver_fault_detail(
     const MotorFeedbackSnapshot *snapshot)
 {
@@ -857,6 +922,7 @@ static uint32_t aethor_app_first_driver_fault_detail(
     }
     return 0U;
 }
+#endif
 
 /** @brief Checks one selected feedback field against an exact driver state. */
 static uint8_t aethor_app_selected_motors_have_state(
@@ -882,6 +948,7 @@ static uint8_t aethor_app_selected_motors_have_state(
 }
 
 /** @brief Checks that selected fresh feedback no longer reports a driver fault. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_selected_motors_are_fault_free(
     const MotorFeedbackSnapshot *snapshot,
     uint8_t motor_mask)
@@ -902,6 +969,7 @@ static uint8_t aethor_app_selected_motors_are_fault_free(
     }
     return 1U;
 }
+#endif
 
 /**
  * @brief Checks that each selected feedback timestamp advanced from its baseline.
@@ -910,6 +978,7 @@ static uint8_t aethor_app_selected_motors_are_fault_free(
  * @param baseline_us Per-joint timestamps captured before the current batch.
  * @return One only when every selected joint published a newer valid sample.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_selected_feedback_advanced(
     const MotorFeedbackSnapshot *snapshot,
     uint8_t motor_mask,
@@ -935,11 +1004,13 @@ static uint8_t aethor_app_selected_feedback_advanced(
     }
     return 1U;
 }
+#endif
 
 /**
  * @brief Captures the latest per-joint feedback generation timestamps.
  * @param snapshot Coherent snapshot captured before a new command batch.
  */
+#if !AETHOR_ADRC_BENCH
 static void aethor_app_capture_feedback_baseline(
     const MotorFeedbackSnapshot *snapshot)
 {
@@ -951,12 +1022,14 @@ static void aethor_app_capture_feedback_baseline(
             (snapshot != NULL) ? snapshot->joints[joint_index].timestamp_us : 0U;
     }
 }
+#endif
 
 /**
  * @brief Maps motor-runtime admission failures to the fixed public protocol error set.
  * @param runtime_status Motor runtime result to normalize.
  * @return Stable public command error.
  */
+#if !AETHOR_ADRC_BENCH
 static ProtocolCommandError aethor_app_map_runtime_error(
     MotorRuntimeStatus runtime_status)
 {
@@ -988,6 +1061,7 @@ static ProtocolCommandError aethor_app_map_runtime_error(
             return PROTOCOL_COMMAND_ERROR_ACTION_FAILED;
     }
 }
+#endif
 
 /**
  * @brief Records a one-shot failure and starts mode-safe selected cleanup.
@@ -997,6 +1071,7 @@ static ProtocolCommandError aethor_app_map_runtime_error(
  * @param timestamp_us Current monotonic timestamp.
  * @return One when a terminal result was queued, otherwise zero while cleanup waits.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_begin_one_shot_cleanup(
     ProtocolCommandStage failed_stage,
     ProtocolCommandError failure_error,
@@ -1162,6 +1237,7 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
     }
     return 0U;
 }
+#endif
 
 /**
  * @brief Replaces cleanup HOLD work with a bounded selected POS_VEL disable.
@@ -1169,6 +1245,7 @@ static uint8_t aethor_app_begin_one_shot_cleanup(
  * @param timestamp_us Current monotonic timestamp.
  * @return One when a terminal result was queued, otherwise zero while cleanup waits.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_start_one_shot_cleanup_disable(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us)
@@ -1203,6 +1280,7 @@ static uint8_t aethor_app_start_one_shot_cleanup_disable(
     }
     return 0U;
 }
+#endif
 
 /** @brief Converts selected same-model bench motor positions to LCD output-shaft coordinates. */
 static float aethor_app_lcd_position_ratio(uint8_t joint_index)
@@ -1218,14 +1296,17 @@ static float aethor_app_lcd_position_ratio(uint8_t joint_index)
 }
 
 /** @brief Applies mixed position/velocity units only to local LCD motion timing. */
+#if !AETHOR_ADRC_BENCH
 static float aethor_app_local_motion_position_ratio(uint8_t joint_index)
 {
     return application_action.command.origin == DEBUG_UI_ORIGIN_LOCAL_UI &&
         application_action.command.bench_relative_scope != 0U ?
         aethor_app_lcd_position_ratio(joint_index) : 1.0F;
 }
+#endif
 
 /** @brief Selects fixed endpoints only for LCD single-motor POS commissioning commands. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_one_shot_uses_local_pos_endpoint(void)
 {
     uint8_t motor_mask = application_action.command.motor_mask;
@@ -1234,8 +1315,10 @@ static uint8_t aethor_app_one_shot_uses_local_pos_endpoint(void)
         application_action.command.bench_relative_scope != 0U && motor_mask != 0U &&
         (motor_mask & (motor_mask - 1U)) == 0U);
 }
+#endif
 
 /** @brief Requires fresh stable endpoint feedback and bounds sustained lack of progress. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_local_pos_endpoint_arrived(
     const MotorFeedbackSnapshot *motor_snapshot, uint64_t timestamp_us, uint8_t *failed)
 {
@@ -1291,10 +1374,12 @@ static uint8_t aethor_app_local_pos_endpoint_arrived(
     }
     return 0U;
 }
+#endif
 
 /** @brief Validates LCD POS travel bounds or USB POS timestamped reference tracking.
  * The 0.5 degree envelope is a commissioning gate, not a calibrated mechanical limit.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_bench_pos_feedback_safe(
     const MotorFeedbackSnapshot *motor_snapshot, uint8_t joint_index, uint64_t timestamp_us)
 {
@@ -1349,6 +1434,7 @@ static uint8_t aethor_app_bench_pos_feedback_safe(
     }
     return 1U;
 }
+#endif
 
 /**
  * @brief Fails energized one-shot phases on the first selected stale or faulted motor.
@@ -1357,6 +1443,7 @@ static uint8_t aethor_app_bench_pos_feedback_safe(
  * @param failure_detected Destination set when cleanup or a terminal result started.
  * @return One when failure handling queued a terminal result, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_check_one_shot_motor_safety(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us,
@@ -1477,6 +1564,7 @@ static uint8_t aethor_app_check_one_shot_motor_safety(
     }
     return 0U;
 }
+#endif
 
 /**
  * @brief Validates fixed one-shot targets and begins the selected POS_VEL mode cycle.
@@ -1484,6 +1572,7 @@ static uint8_t aethor_app_check_one_shot_motor_safety(
  * @param timestamp_us Current monotonic timestamp.
  * @return One when validation queued a terminal failure, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_validate_one_shot_targets(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us)
@@ -1617,6 +1706,7 @@ static uint8_t aethor_app_validate_one_shot_targets(
                                      AETHOR_APP_ACTION_TIMEOUT_US;
     return 0U;
 }
+#endif
 
 /**
  * @brief Sends selected fail-safe disable frames before target validation.
@@ -1624,6 +1714,7 @@ static uint8_t aethor_app_validate_one_shot_targets(
  * @param timestamp_us Current monotonic timestamp.
  * @return One when batch setup queued a terminal failure, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_begin_one_shot_preflight_disable(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us)
@@ -1675,6 +1766,7 @@ static uint8_t aethor_app_begin_one_shot_preflight_disable(
     }
     return 0U;
 }
+#endif
 
 /**
  * @brief Validates fresh selected feedback or starts bounded acquisition.
@@ -1682,6 +1774,7 @@ static uint8_t aethor_app_begin_one_shot_preflight_disable(
  * @param timestamp_us Current monotonic timestamp.
  * @return One when setup queued a terminal failure, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_prepare_one_shot_validation(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us)
@@ -1709,8 +1802,10 @@ static uint8_t aethor_app_prepare_one_shot_validation(
     return aethor_app_begin_one_shot_preflight_disable(motor_snapshot,
                                                        timestamp_us);
 }
+#endif
 
 /** @brief Use an MCU reference for MIT moves and self-contained bench POS moves. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_one_shot_uses_reference_trajectory(void)
 {
     return (uint8_t)((application_action.command.type == PROTOCOL_COMMAND_MIT_ACTION) ||
@@ -1718,8 +1813,10 @@ static uint8_t aethor_app_one_shot_uses_reference_trajectory(void)
          (application_action.command.bench_relative_scope != 0U) &&
          !aethor_app_one_shot_uses_local_pos_endpoint()));
 }
+#endif
 
 /** @brief Sample shared quintic mathematics while preserving the selected wire protocol. */
+#if !AETHOR_ADRC_BENCH
 static MotorRuntimeStatus aethor_app_build_one_shot_reference(uint64_t timestamp_us)
 {
     JointMotionSample sample;
@@ -1753,6 +1850,7 @@ static MotorRuntimeStatus aethor_app_build_one_shot_reference(uint64_t timestamp
     }
     return runtime_status;
 }
+#endif
 
 /**
  * @brief Starts reference or fixed-target transmission with a bounded deadline.
@@ -1760,6 +1858,7 @@ static MotorRuntimeStatus aethor_app_build_one_shot_reference(uint64_t timestamp
  * @param timestamp_us Current monotonic timestamp.
  * @return One when a terminal result was queued, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_start_one_shot_motion(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us)
@@ -1948,12 +2047,14 @@ static uint8_t aethor_app_start_one_shot_motion(
     application_action.deadline_us = motion_deadline_us;
     return 0U;
 }
+#endif
 
 /**
  * @brief Checks 0.5 output degree for LCD moves, retaining raw degrees for USB.
  * @param motor_snapshot Current freshness-filtered motor feedback.
  * @return One when all selected motors have arrived, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_one_shot_targets_arrived(
     const MotorFeedbackSnapshot *motor_snapshot)
 {
@@ -1986,12 +2087,14 @@ static uint8_t aethor_app_one_shot_targets_arrived(
     }
     return 1U;
 }
+#endif
 
 /**
  * @brief Replaces motion targets with final-position zero-speed HOLD frames.
  * @param timestamp_us Current monotonic timestamp.
  * @return One when a terminal result was queued, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_start_one_shot_hold(uint64_t timestamp_us)
 {
     float hold_speed_rad_s[ARM_JOINT_COUNT] = {0.0F};
@@ -2039,6 +2142,7 @@ static uint8_t aethor_app_start_one_shot_hold(uint64_t timestamp_us)
     }
     return 0U;
 }
+#endif
 
 /**
  * @brief Starts selected POS_VEL disable after every HOLD frame was emitted.
@@ -2046,6 +2150,7 @@ static uint8_t aethor_app_start_one_shot_hold(uint64_t timestamp_us)
  * @param timestamp_us Current monotonic timestamp.
  * @return One when a terminal result was queued, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_start_one_shot_disable(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us)
@@ -2081,6 +2186,7 @@ static uint8_t aethor_app_start_one_shot_disable(
     }
     return 0U;
 }
+#endif
 
 /**
  * @brief Starts a fixed-capacity self-contained POS_VEL, MIT, or mode setup.
@@ -2089,6 +2195,7 @@ static uint8_t aethor_app_start_one_shot_disable(
  * @param timestamp_us Current monotonic timestamp.
  * @return One when admission queued a terminal failure, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_start_one_shot_move(
     const ProtocolCommand *command,
     const MotorFeedbackSnapshot *motor_snapshot,
@@ -2158,6 +2265,7 @@ static uint8_t aethor_app_start_one_shot_move(
                                      AETHOR_APP_DISCOVERY_TIMEOUT_US;
     return 0U;
 }
+#endif
 
 /**
  * @brief Advances discovery, validation, mode, clear, and enable for one one-shot move.
@@ -2165,6 +2273,7 @@ static uint8_t aethor_app_start_one_shot_move(
  * @param timestamp_us Current monotonic timestamp.
  * @return One when a terminal result was queued, otherwise zero.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_advance_one_shot_setup(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us)
@@ -2547,6 +2656,7 @@ static uint8_t aethor_app_advance_one_shot_setup(
     }
     return 0U;
 }
+#endif
 
 /** @brief Refreshes the protocol query context from coherent domain snapshots. */
 static void aethor_app_update_protocol_context(uint64_t timestamp_us)
@@ -2628,7 +2738,9 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
     memset(&application_debug_ui, 0, sizeof(application_debug_ui));
     application_debug_ui.epoch = 1U;
     debug_ui_mailbox_init(&application_debug_ui.mailbox);
+#if !AETHOR_ADRC_BENCH
     application_last_service_timestamp_us = 0U;
+#endif
     diagnostics_init(&application_diagnostics);
     arm_controller_init(&application_controller,
                         arm_config_get_production(),
@@ -2648,7 +2760,9 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
     memset(&application_emergency_disable_batch,
            0,
            sizeof(application_emergency_disable_batch));
+#if !AETHOR_ADRC_BENCH
     application_emergency_disable_read_index = 0U;
+#endif
     memset(&application_action, 0, sizeof(application_action));
     memset(application_deferred_results,
            0,
@@ -2662,6 +2776,12 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
     application_transport_fault_write_sequence = 0U;
     application_initialized =
         (uint8_t)(motor_status == MOTOR_RUNTIME_STATUS_OK);
+#if AETHOR_ADRC_BENCH
+    if (application_initialized != 0U && adrc_app_bridge_init(&application_adrc_bridge,
+        &application_motor_runtime, &application_protocol_engine,
+        adrc_generated_controller_step, NULL) != ADRC_RESULT_OK)
+    { application_initialized = 0U; }
+#endif
 }
 
 /**
@@ -2678,11 +2798,21 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
         return PROTOCOL_ENGINE_STATUS_INVALID_ARGUMENT;
     }
     aethor_app_update_protocol_context(timestamp_us);
+#if !AETHOR_ADRC_BENCH
     return protocol_engine_process_text_line(&application_protocol_engine,
                                              line,
                                              length,
                                              timestamp_us,
                                              output_batch);
+#else
+    {
+        ProtocolEngineStatus status;
+        aethor_app_enter_task_critical();
+        status = adrc_app_bridge_process_line(&application_adrc_bridge, line, length, timestamp_us, output_batch);
+        aethor_app_exit_task_critical();
+        return status;
+    }
+#endif
 }
 
 /**
@@ -2690,6 +2820,10 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
  */
 uint8_t aethor_app_pop_emergency_can_frame(CanFrame *frame)
 {
+#if AETHOR_ADRC_BENCH
+    (void)frame;
+    return 0U;
+#else
     if ((application_initialized == 0U) || (frame == NULL))
     {
         return 0U;
@@ -2706,6 +2840,7 @@ uint8_t aethor_app_pop_emergency_can_frame(CanFrame *frame)
         application_emergency_disable_read_index];
     ++application_emergency_disable_read_index;
     return 1U;
+#endif
 }
 
 /**
@@ -2714,6 +2849,10 @@ uint8_t aethor_app_pop_emergency_can_frame(CanFrame *frame)
 uint8_t aethor_app_pop_control_group(
     CanFrame frames[ARM_JOINT_COUNT])
 {
+#if AETHOR_ADRC_BENCH
+    (void)frames;
+    return 0U;
+#else
     if ((application_initialized == 0U) || (frames == NULL) ||
         (application_debug_ui.fallback_stop_mask != 0U) ||
         (application_action.control_group_ready == 0U))
@@ -2725,6 +2864,7 @@ uint8_t aethor_app_pop_control_group(
            sizeof(application_action.control_group));
     application_action.control_group_ready = 0U;
     return 1U;
+#endif
 }
 
 /**
@@ -2755,6 +2895,15 @@ MotorRuntimeStatus aethor_app_next_can_frame(uint64_t timestamp_us,
 {
     MotorRuntimeStatus runtime_status;
 
+#if AETHOR_ADRC_BENCH
+    if (application_initialized == 0U) { return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED; }
+    if (frame == NULL || priority == NULL) { return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT; }
+    aethor_app_enter_task_critical();
+    runtime_status = adrc_app_bridge_next_discovery(&application_adrc_bridge, timestamp_us, frame);
+    if (runtime_status == MOTOR_RUNTIME_STATUS_FRAME_READY) { *priority = CAN_TX_PRIORITY_PARAMETER; }
+    aethor_app_exit_task_critical();
+    return runtime_status;
+#else
     if (application_initialized == 0U)
     {
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
@@ -2866,6 +3015,7 @@ MotorRuntimeStatus aethor_app_next_can_frame(uint64_t timestamp_us,
     }
 #endif
     return runtime_status;
+#endif
 }
 
 /**
@@ -2878,9 +3028,19 @@ MotorRuntimeStatus aethor_app_receive_can_frame(const CanFrame *frame,
     {
         return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED;
     }
+#if AETHOR_ADRC_BENCH
+    {
+        MotorRuntimeStatus status;
+        aethor_app_enter_task_critical();
+        status = motor_runtime_accept_frame(&application_motor_runtime, frame, timestamp_us);
+        aethor_app_exit_task_critical();
+        return status;
+    }
+#else
     return motor_runtime_accept_frame(&application_motor_runtime,
                                       frame,
                                       timestamp_us);
+#endif
 }
 
 /**
@@ -2906,6 +3066,7 @@ bool aethor_app_get_motor_snapshot(uint64_t timestamp_us,
 }
 
 /** @brief Starts one motor-backed lifecycle command after protocol admission. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_start_lifecycle_action(
     const ProtocolCommand *command,
     const MotorFeedbackSnapshot *motor_snapshot,
@@ -3441,8 +3602,10 @@ static uint8_t aethor_app_start_lifecycle_action(
     result.detail = (uint16_t)runtime_status;
     return aethor_app_submit_or_defer_result(&result);
 }
+#endif
 
 /** @brief Advances one active motor-backed lifecycle action. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_service_active_action(
     const MotorFeedbackSnapshot *motor_snapshot,
     uint64_t timestamp_us)
@@ -3781,7 +3944,9 @@ static uint8_t aethor_app_service_active_action(
         {
             (void)arm_controller_force_stop_disable(&application_controller,
                                                      timestamp_us);
+#if !AETHOR_ADRC_BENCH
             application_emergency_disable_read_index = 0U;
+#endif
             (void)motor_runtime_build_emergency_disable(
                 &application_motor_runtime,
                 &application_emergency_disable_batch);
@@ -3797,6 +3962,7 @@ static uint8_t aethor_app_service_active_action(
     }
     return 0U;
 }
+#endif
 
 /**
  * @brief Executes one non-blocking Phase 0 application service cycle.
@@ -3805,8 +3971,17 @@ static uint8_t aethor_app_service_active_action(
 uint8_t aethor_app_service(uint64_t timestamp_us)
 {
     uint8_t result_generated = 0U;
+#if !AETHOR_ADRC_BENCH
     uint8_t deferred_result_flushed = 0U;
+#endif
 
+#if AETHOR_ADRC_BENCH
+    if (application_initialized == 0U) { return 0U; }
+    aethor_app_enter_task_critical();
+    result_generated = adrc_app_bridge_service(&application_adrc_bridge, timestamp_us);
+    aethor_app_exit_task_critical();
+    return result_generated;
+#else
     if (application_initialized != 0U)
     {
         MotorFeedbackSnapshot motor_snapshot;
@@ -3922,7 +4097,9 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                     runtime_fault,
                     runtime_fault_detail,
                     timestamp_us);
+#if !AETHOR_ADRC_BENCH
                 application_emergency_disable_read_index = 0U;
+#endif
                 (void)motor_runtime_build_emergency_disable(
                     &application_motor_runtime,
                     &application_emergency_disable_batch);
@@ -3965,7 +4142,9 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                                                      timestamp_us);
             protocol_engine_cancel_pending_normal_commands(
                 &application_protocol_engine);
+#if !AETHOR_ADRC_BENCH
             application_emergency_disable_read_index = 0U;
+#endif
             (void)motor_runtime_build_emergency_disable(
                 &application_motor_runtime,
                 &application_emergency_disable_batch);
@@ -4107,6 +4286,7 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
         }
     }
     return (uint8_t)(result_generated | deferred_result_flushed);
+#endif
 }
 
 /** @brief Advances epoch without making zero a valid authorization. Caller holds critical. */
@@ -4159,6 +4339,7 @@ static DebugUiReason aethor_app_debug_ui_recovery_reason(const MotorFeedbackSnap
  * id-free mask is consumed here, while old commands are cancelled only when storage exists.
  * The persistent recovery lock remains even after this bounded physical cleanup ends.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_debug_ui_service_stop_intent(uint64_t timestamp_us, uint8_t *result_generated)
 {
 #if !AETHOR_DEBUG_UI_ALLOW_MOTION
@@ -4240,6 +4421,7 @@ static uint8_t aethor_app_debug_ui_service_stop_intent(uint64_t timestamp_us, ui
     return 1U;
 #endif
 }
+#endif
 
 /** @brief Reports actual executor and published queues, including source-neutral STOP. */
 static bool aethor_app_debug_ui_executor_busy(void)
@@ -4255,6 +4437,7 @@ static bool aethor_app_debug_ui_executor_busy(void)
 }
 
 /** @brief Keeps USB disconnect from cancelling a local pending/active/cleanup lifecycle. */
+#if !AETHOR_ADRC_BENCH
 static bool aethor_app_debug_ui_owns_link_lifecycle(void)
 {
     bool owns_lifecycle;
@@ -4266,6 +4449,7 @@ static bool aethor_app_debug_ui_owns_link_lifecycle(void)
     aethor_app_exit_task_critical();
     return owns_lifecycle;
 }
+#endif
 
 /** @brief Validates explicit physical bounds without inventing commissioning defaults. */
 static bool aethor_app_debug_ui_profile_valid(const DebugUiMotorProfile *profile)
@@ -4395,8 +4579,18 @@ bool aethor_app_debug_ui_get_motor_profile(uint8_t motor_id, DebugUiMotorProfile
 /** @brief Reserves one immutable local request without touching the protocol command ring. */
 DebugUiReason aethor_app_debug_ui_submit(const DebugUiRequest *request)
 {
+#if !AETHOR_ADRC_BENCH
     DebugUiReason reason;
+#endif
     if (application_initialized == 0U) { return DEBUG_UI_REASON_NOT_READY; }
+#if AETHOR_ADRC_BENCH
+    if (request == NULL) { return DEBUG_UI_REASON_NOT_READY; }
+    if (request->operation != DEBUG_UI_OPERATION_STOP) { return DEBUG_UI_REASON_DISABLED; }
+    aethor_app_enter_task_critical();
+    adrc_app_bridge_request_stop(&application_adrc_bridge);
+    aethor_app_exit_task_critical();
+    return DEBUG_UI_REASON_STOP_LATCHED;
+#else
     aethor_app_enter_task_critical();
     reason = debug_ui_mailbox_submit(&application_debug_ui.mailbox, request);
     if ((reason == DEBUG_UI_REASON_STOP_LATCHED) && (AETHOR_DEBUG_UI_ALLOW_MOTION == 0U))
@@ -4408,6 +4602,7 @@ DebugUiReason aethor_app_debug_ui_submit(const DebugUiRequest *request)
     { ++application_debug_ui.diagnostics.result_backpressure_count; }
     aethor_app_exit_task_critical();
     return reason;
+#endif
 }
 
 /** @brief Consumes exactly one retained admission acknowledgement. */
@@ -4651,6 +4846,7 @@ bool aethor_app_debug_ui_get_snapshot(uint64_t timestamp_us, DebugUiSnapshot *sn
  * The queue TTL applies before Arm start. An in-flight bounded preflight retains ownership,
  * epoch, health and profile checks instead of expiring an already executing request.
  */
+#if !AETHOR_ADRC_BENCH
 static DebugUiReason aethor_app_debug_ui_validate_start(
     const ProtocolCommand *command, const MotorFeedbackSnapshot *snapshot, uint64_t timestamp_us,
     bool preflight_complete)
@@ -4720,6 +4916,7 @@ static DebugUiReason aethor_app_debug_ui_validate_start(
     aethor_app_exit_task_critical();
     return reason;
 }
+#endif
 
 /** @brief Captures source and fresh disable evidence at result creation, never later. */
 static void aethor_app_debug_ui_result_metadata(
@@ -4741,6 +4938,7 @@ static void aethor_app_debug_ui_result_metadata(
 }
 
 /** @brief Moves local result heads into their already reserved UI records. */
+#if !AETHOR_ADRC_BENCH
 static void aethor_app_debug_ui_route_results(void)
 {
     ProtocolCommandResult result;
@@ -4774,6 +4972,7 @@ static void aethor_app_debug_ui_route_results(void)
     }
     aethor_app_exit_task_critical();
 }
+#endif
 
 #if AETHOR_DEBUG_UI_ALLOW_MOTION
 /** @brief Builds a typed command; LCD never serializes text or impersonates a session. */
@@ -4838,6 +5037,7 @@ static void aethor_app_debug_ui_build_command(
 #endif
 
 /** @brief Validates and grants/revokes authority only after all prior cleanup/results finish. */
+#if !AETHOR_ADRC_BENCH
 static DebugUiReason aethor_app_debug_ui_admit_request(
     const DebugUiRequest *request, uint64_t timestamp_us, ProtocolCommand *command)
 {
@@ -4917,12 +5117,19 @@ static DebugUiReason aethor_app_debug_ui_admit_request(
     return reason;
 #endif
 }
+#endif
 
 /** @brief Runs at most one STOP and one ordinary admission in the sole ProtocolTask. */
 void aethor_app_debug_ui_process(uint64_t timestamp_us)
 {
+#if !AETHOR_ADRC_BENCH
     uint8_t pass;
+#endif
     if (application_initialized == 0U) { return; }
+#if AETHOR_ADRC_BENCH
+    (void)timestamp_us;
+    return;
+#else
     aethor_app_debug_ui_route_results();
     aethor_app_enter_task_critical();
     aethor_app_debug_ui_refresh_reference(timestamp_us);
@@ -4964,9 +5171,11 @@ void aethor_app_debug_ui_process(uint64_t timestamp_us)
         }
     }
     aethor_app_exit_task_critical();
+#endif
 }
 
 /** @brief ArmControlTask revokes unhealthy authority; healthy ownership lasts until manual release. */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_debug_ui_service_health(uint64_t timestamp_us)
 {
     bool unhealthy = false;
@@ -5011,6 +5220,7 @@ static uint8_t aethor_app_debug_ui_service_health(uint64_t timestamp_us)
     }
     return 0U;
 }
+#endif
 
 /**
  * @brief Formats one pending terminal command result for ProtocolTask.
@@ -5022,9 +5232,20 @@ uint8_t aethor_app_pop_protocol_result_output(
     {
         return 0U;
     }
+#if AETHOR_ADRC_BENCH
+    {
+        uint8_t available;
+        aethor_app_enter_task_critical();
+        available = adrc_protocol_pop_result_output(&application_adrc_bridge.bench.gateway,
+            &application_protocol_engine, output_batch);
+        aethor_app_exit_task_critical();
+        return available;
+    }
+#else
     aethor_app_debug_ui_route_results();
     return protocol_engine_pop_result_output(&application_protocol_engine,
                                              output_batch);
+#endif
 }
 
 /**
@@ -5038,10 +5259,16 @@ uint8_t aethor_app_generate_stream_output(
     {
         return 0U;
     }
+#if AETHOR_ADRC_BENCH
+    (void)timestamp_us;
+    memset(output_batch, 0, sizeof(*output_batch));
+    return 0U;
+#else
     aethor_app_update_protocol_context(timestamp_us);
     return protocol_engine_generate_stream_output(&application_protocol_engine,
                                                   timestamp_us,
                                                   output_batch);
+#endif
 }
 
 /**
@@ -5124,13 +5351,22 @@ void aethor_app_update_runtime_diagnostics(
 uint8_t aethor_app_report_transport_fault(uint32_t detail,
                                           uint64_t timestamp_us)
 {
+#if !AETHOR_ADRC_BENCH
     uint8_t used_count;
     uint8_t slot_index;
+#endif
 
     if ((application_initialized == 0U) || (detail == 0U))
     {
         return 0U;
     }
+#if AETHOR_ADRC_BENCH
+    (void)timestamp_us;
+    aethor_app_enter_task_critical();
+    adrc_app_bridge_report_fault(&application_adrc_bridge);
+    aethor_app_exit_task_critical();
+    return 1U;
+#else
     used_count = (uint8_t)(application_transport_fault_write_sequence -
                            application_transport_fault_read_sequence);
     if (used_count >= AETHOR_APP_TRANSPORT_FAULT_CAPACITY)
@@ -5144,11 +5380,13 @@ uint8_t aethor_app_report_transport_fault(uint32_t detail,
     aethor_app_compiler_barrier();
     ++application_transport_fault_write_sequence;
     return 1U;
+#endif
 }
 
 /**
  * @brief Latches one consumed transport fault and schedules all-axis disable.
  */
+#if !AETHOR_ADRC_BENCH
 static uint8_t aethor_app_apply_transport_fault(uint32_t detail,
                                                 uint64_t timestamp_us)
 {
@@ -5183,9 +5421,57 @@ static uint8_t aethor_app_apply_transport_fault(uint32_t detail,
                                              timestamp_us);
     protocol_engine_cancel_pending_normal_commands(
         &application_protocol_engine);
+#if !AETHOR_ADRC_BENCH
     application_emergency_disable_read_index = 0U;
+#endif
     (void)motor_runtime_build_emergency_disable(
         &application_motor_runtime,
         &application_emergency_disable_batch);
     return result_generated;
 }
+#endif
+
+#if AETHOR_ADRC_BENCH
+/** @brief Delivers the sole selected-axis output under the application task critical hooks. */
+uint8_t aethor_app_adrc_pop_frame(CanFrame *frame, uint8_t *kind, float *decoded_torque_nm)
+{
+    uint8_t available;
+    if (!application_initialized) { return 0U; }
+    aethor_app_enter_task_critical();
+    available = adrc_app_bridge_pop_frame(&application_adrc_bridge, frame, kind, decoded_torque_nm);
+    aethor_app_exit_task_critical();
+    return available;
+}
+
+/** @brief Matches a hardware TX receipt to the selected-axis owner without claiming motor execution. */
+void aethor_app_adrc_report_transmit(uint8_t kind, float decoded_torque_nm, uint8_t succeeded)
+{
+    if (!application_initialized) { return; }
+    aethor_app_enter_task_critical();
+    adrc_app_bridge_report_transmit(&application_adrc_bridge, kind, decoded_torque_nm, succeeded);
+    aethor_app_exit_task_critical();
+}
+
+/** @brief Installs locally measured commissioning evidence, retaining the supervisor's provenance checks. */
+AdrcExperimentResult aethor_app_adrc_set_evidence(const AdrcExperimentConfig *config,
+    const AdrcExperimentQualification *qualification, uint64_t timestamp_us)
+{
+    AdrcExperimentResult result;
+    if (!application_initialized) { return ADRC_RESULT_INVALID_STATE; }
+    aethor_app_enter_task_critical();
+    result = adrc_app_bridge_set_evidence(&application_adrc_bridge, config, qualification, timestamp_us);
+    aethor_app_exit_task_critical();
+    return result;
+}
+
+/** @brief Copies the supervisor state coherently without exposing mutable bridge storage. */
+uint8_t aethor_app_adrc_get_status(AdrcExperimentStatus *status)
+{
+    AdrcExperimentResult result;
+    if (!application_initialized || status == NULL) { return 0U; }
+    aethor_app_enter_task_critical();
+    result = adrc_experiment_get_status(&application_adrc_bridge.bench.experiment, status);
+    aethor_app_exit_task_critical();
+    return (uint8_t)(result == ADRC_RESULT_OK);
+}
+#endif

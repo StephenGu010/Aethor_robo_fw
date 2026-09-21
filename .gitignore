@@ -27,6 +27,10 @@ MDK-ARM/LCD-MIT/
 MDK-ARM/RTE/_LCD-*/
 MDK-ARM/DebugConfig/LCD-*.dbgconf
 output/
+# Separate ADRC experiment target products; maintained project and verified models remain tracked.
+MDK-ARM/ADRC-Bench/
+MDK-ARM/RTE/_ADRC-Bench/
+MDK-ARM/DebugConfig/ADRC-Bench*.dbgconf
 # Reproducible host binaries and unused upstream font samples.
 Tests/host/lcd_fakes/build/
 Tests/ui/artifacts/*.ppm

@@ -29,6 +29,10 @@
 #include "monotonic_time.h"
 #include "stm32_platform.h"
 #include "debug_ui_config.h"
+#include "adrc_build_config.h"
+#if AETHOR_ADRC_BENCH
+#include "stm32_adrc_channel.h"
+#endif
 #if AETHOR_DEBUG_UI_ENABLE
 #include "debug_ui_task.h"
 #endif
@@ -216,6 +220,10 @@ void StartArmControlTask(void const * argument)
   TickType_t lastWakeTime = xTaskGetTickCount();
 
   (void)argument;
+#if AETHOR_ADRC_BENCH
+  /* Dedicated buffer bookkeeping is owned only by this control task. */
+  stm32_adrc_channel_init();
+#endif
   for(;;)
   {
 #if AETHOR_DEBUG_UI_ENABLE
@@ -227,11 +235,32 @@ void StartArmControlTask(void const * argument)
     CanFrame controlGroup[ARM_JOINT_COUNT];
     CanTxPriority pendingPriority;
 
+#if AETHOR_ADRC_BENCH
+    AdrcCanReceipt adrcReceipt = stm32_adrc_channel_collect();
+    if (adrcReceipt.available != 0U)
+    {
+      aethor_app_adrc_report_transmit((uint8_t)adrcReceipt.kind,
+          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted);
+    }
+#endif
     if ((aethor_app_service(timestampUs) != 0U) &&
         (ProtocolTaskHandle != NULL))
     {
       (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
     }
+#if AETHOR_ADRC_BENCH
+    {
+      uint8_t adrcKind = 0U;
+      float decodedTorqueNm = 0.0F;
+      if (aethor_app_adrc_pop_frame(&pendingFrame, &adrcKind, &decodedTorqueNm) != 0U)
+      {
+        if (stm32_adrc_channel_submit(&pendingFrame, (AdrcCanKind)adrcKind, decodedTorqueNm) == 0U)
+        {
+          aethor_app_adrc_report_transmit(adrcKind, decodedTorqueNm, 0U);
+        }
+      }
+    }
+#endif
     while (aethor_app_pop_emergency_can_frame(&pendingFrame) != 0U)
     {
       (void)stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY,

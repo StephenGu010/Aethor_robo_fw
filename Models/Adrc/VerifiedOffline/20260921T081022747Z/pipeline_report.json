@@ -1,0 +1,577 @@
+{
+  "passed": true,
+  "stage": "completed",
+  "matlab": "26.1.0.3203278 (R2026a)",
+  "verificationHashesMatch": true,
+  "provenance": "offline_synthetic_example_not_motor_measurement",
+  "verificationSources": [
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\Models\\Adrc\\adrc_generated_replay.c",
+      "sha256": "37ff3f7829089659974d6f8825b1c1ade179a68e5b78ae604bb2bf7cb3e74538"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\Models\\Adrc\\adrc_simulation_parameters.m",
+      "sha256": "dc18c99218f7a1fc75380caa097d6eeadb17270d7f905167e5abc59eda6f0081"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\Models\\Adrc\\build_adrc_models.m",
+      "sha256": "16ec78474b4ac7cfccf0d2c7f91afca7b3325efb7ecb03509d384adb75c76637"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\Models\\Adrc\\run_adrc_pipeline.m",
+      "sha256": "1af75b9d223a3f93c0a6fd0e5b0f73078b0586d18d4bacadbbd8272d13c7cca5"
+    }
+  ],
+  "parameters": {
+    "sampleTime": 0.004,
+    "duration": 6,
+    "b0": 10,
+    "wc": 4,
+    "wo": 20,
+    "damping": 1,
+    "referenceAmplitude": 0.2,
+    "referenceAcceleration": 0.2,
+    "torqueLimit": 0.1,
+    "torqueSlew": 0.5,
+    "torqueQuantum": 0.001,
+    "velocityQuantum": 0.001,
+    "noiseAmplitude": 0.0002,
+    "disturbanceAcceleration": 0.3,
+    "seed": 3519,
+    "provenance": "offline_synthetic_example_not_motor_measurement"
+  },
+  "models": {
+    "adrc_controller": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\adrc_controller.slx",
+    "adrc_plant": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\adrc_plant.slx",
+    "adrc_validation": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\adrc_validation.slx"
+  },
+  "generatedBuild": {
+    "BuildDirectory": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\generated\\adrc_controller_ert_rtw",
+    "CacheFolder": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\cache",
+    "CodeGenFolder": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\generated",
+    "RelativeBuildDir": "adrc_controller_ert_rtw",
+    "BuildDirSuffix": "_ert_rtw",
+    "ModelRefRelativeRootSimDir": "slprj\\sim",
+    "ModelRefRelativeRootTgtDir": "slprj\\ert",
+    "ModelRefRelativeBuildDir": "slprj\\ert\\adrc_controller",
+    "ModelRefRelativeSimDir": "slprj\\sim\\adrc_controller",
+    "ModelRefRelativeHdlDir": "slprj\\hdl\\adrc_controller",
+    "ModelRefDirSuffix": "",
+    "SharedUtilsSimDir": "slprj\\sim\\_sharedutils",
+    "SharedUtilsTgtDir": "slprj\\ert\\_sharedutils"
+  },
+  "verificationArtifacts": [
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\adrc_controller.slx",
+      "sha256": "e5faf16210662496f66ee226e734f7761b2d79630c095c5a69f0a28a8c9f0213"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\adrc_plant.slx",
+      "sha256": "e507a9b9ca63e9676fc19f0fdf01e31024e7d3f0ac6b624c1c525d2408b9164f"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\adrc_validation.slx",
+      "sha256": "0f9eb4eb738ffe8eefdafd8560d8d05f9ba6c41971951e68dd611a878e0fd124"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\generated\\adrc_controller_ert_rtw\\adrc_controller.c",
+      "sha256": "c76a1eddbefe77e804accbf9407c1ddcf5992460e454a34a4699b440381e0b54"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\generated\\adrc_controller_ert_rtw\\adrc_controller.h",
+      "sha256": "c616ad4b91b0640fcc428b1b34ee02f0c43bcaa757493ca72b67308c34c49a5d"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\generated\\adrc_controller_ert_rtw\\adrc_controller_private.h",
+      "sha256": "f2debc4a0335064d05f1f16c7ec263e530382a5852fce94c620cf48173f05dc4"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\generated\\adrc_controller_ert_rtw\\adrc_controller_types.h",
+      "sha256": "466c45709128a145c1f1e071133d6f4cb2a801c0f63a3136d2612695f0e257fc"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\generated\\adrc_controller_ert_rtw\\rtmodel.h",
+      "sha256": "778bcaaf2dd771618d0d80f4ef3063d83cf256107f04b32f6e495ff6ad9271c5"
+    },
+    {
+      "path": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T081022747Z\\generated\\adrc_controller_ert_rtw\\rtwtypes.h",
+      "sha256": "0c70f1fc0fbed3e5cf5fe313910705b9204e31b0d0714dda9ee2841afb01925f"
+    }
+  ],
+  "controllerMil": {
+    "passed": true,
+    "samples": 2002,
+    "max_normalized_error": 4.8261424290263477E-7,
+    "tolerance": 0.0001,
+    "reset_drop_reverse_and_nonfinite_checks": true
+  },
+  "closedLoopMil": {
+    "passed": true,
+    "scenarios": 38,
+    "metrics": [
+      {
+        "mode": 1,
+        "b0_ratio": 0.5,
+        "delay_samples": 0,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0026102960109710693,
+        "peak_speed_rad_s": 0.24629762768745422,
+        "peak_raw_nm": 0.075983107089996338,
+        "peak_sent_nm": 0.076000005006790161,
+        "rms_tracking_error_rad_s": 0.026376921104848967
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 0.5,
+        "delay_samples": 0,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0025874674320220947,
+        "peak_speed_rad_s": 0.24629680812358856,
+        "peak_raw_nm": 0.076194718480110168,
+        "peak_sent_nm": 0.076000005006790161,
+        "rms_tracking_error_rad_s": 0.026372432787222056
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 0.5,
+        "delay_samples": 1,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0025099664926528931,
+        "peak_speed_rad_s": 0.24650973081588745,
+        "peak_raw_nm": 0.076322101056575775,
+        "peak_sent_nm": 0.076000005006790161,
+        "rms_tracking_error_rad_s": 0.026127241051661129
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 0.5,
+        "delay_samples": 1,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0025152862071990967,
+        "peak_speed_rad_s": 0.2464861273765564,
+        "peak_raw_nm": 0.076406203210353851,
+        "peak_sent_nm": 0.076000005006790161,
+        "rms_tracking_error_rad_s": 0.026111098419485643
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 0.5,
+        "delay_samples": 2,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0024223476648330688,
+        "peak_speed_rad_s": 0.24674247205257416,
+        "peak_raw_nm": 0.076827481389045715,
+        "peak_sent_nm": 0.077000007033348083,
+        "rms_tracking_error_rad_s": 0.025861955661926131
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 0.5,
+        "delay_samples": 2,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0024424046277999878,
+        "peak_speed_rad_s": 0.2467568963766098,
+        "peak_raw_nm": 0.0776003748178482,
+        "peak_sent_nm": 0.078000001609325409,
+        "rms_tracking_error_rad_s": 0.025868085476952993
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 1,
+        "delay_samples": 0,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0012732148170471191,
+        "peak_speed_rad_s": 0.22715339064598083,
+        "peak_raw_nm": 0.039893031120300293,
+        "peak_sent_nm": 0.040000002831220627,
+        "rms_tracking_error_rad_s": 0.013899304607414842
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 1,
+        "delay_samples": 0,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0010260641574859619,
+        "peak_speed_rad_s": 0.22710314393043518,
+        "peak_raw_nm": 0.0399080365896225,
+        "peak_sent_nm": 0.040000002831220627,
+        "rms_tracking_error_rad_s": 0.013896333288340413
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 1,
+        "delay_samples": 1,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0011947751045227051,
+        "peak_speed_rad_s": 0.22749368846416473,
+        "peak_raw_nm": 0.039986543357372284,
+        "peak_sent_nm": 0.040000002831220627,
+        "rms_tracking_error_rad_s": 0.013617083895288297
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 1,
+        "delay_samples": 1,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0010233074426651,
+        "peak_speed_rad_s": 0.2273632138967514,
+        "peak_raw_nm": 0.039992772042751312,
+        "peak_sent_nm": 0.040000002831220627,
+        "rms_tracking_error_rad_s": 0.013602223205666186
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 1,
+        "delay_samples": 2,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0011638551950454712,
+        "peak_speed_rad_s": 0.22763855755329132,
+        "peak_raw_nm": 0.040072854608297348,
+        "peak_sent_nm": 0.040000002831220627,
+        "rms_tracking_error_rad_s": 0.013348011090318719
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 1,
+        "delay_samples": 2,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0010335445404052734,
+        "peak_speed_rad_s": 0.22755873203277588,
+        "peak_raw_nm": 0.040874887257814407,
+        "peak_sent_nm": 0.041000001132488251,
+        "rms_tracking_error_rad_s": 0.013338374046910278
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 2,
+        "delay_samples": 0,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00084885954856872559,
+        "peak_speed_rad_s": 0.2155078649520874,
+        "peak_raw_nm": 0.020172661170363426,
+        "peak_sent_nm": 0.020000001415610313,
+        "rms_tracking_error_rad_s": 0.0071930620979980524
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 2,
+        "delay_samples": 0,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.000734180212020874,
+        "peak_speed_rad_s": 0.21534079313278198,
+        "peak_raw_nm": 0.020515672862529755,
+        "peak_sent_nm": 0.021000001579523087,
+        "rms_tracking_error_rad_s": 0.0071576821267433843
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 2,
+        "delay_samples": 1,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.000787198543548584,
+        "peak_speed_rad_s": 0.21569003164768219,
+        "peak_raw_nm": 0.020255997776985168,
+        "peak_sent_nm": 0.020000001415610313,
+        "rms_tracking_error_rad_s": 0.0068900449446372622
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 2,
+        "delay_samples": 1,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00076252222061157227,
+        "peak_speed_rad_s": 0.21555548906326294,
+        "peak_raw_nm": 0.020349485799670219,
+        "peak_sent_nm": 0.020000001415610313,
+        "rms_tracking_error_rad_s": 0.00686282714972691
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 2,
+        "delay_samples": 2,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00074978172779083252,
+        "peak_speed_rad_s": 0.21590127050876617,
+        "peak_raw_nm": 0.020294446498155594,
+        "peak_sent_nm": 0.020000001415610313,
+        "rms_tracking_error_rad_s": 0.00663843214457529
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 2,
+        "delay_samples": 2,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00070334970951080322,
+        "peak_speed_rad_s": 0.21602818369865417,
+        "peak_raw_nm": 0.02067507803440094,
+        "peak_sent_nm": 0.021000001579523087,
+        "rms_tracking_error_rad_s": 0.0066170098267669232
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 0.5,
+        "delay_samples": 0,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00038968026638031006,
+        "peak_speed_rad_s": 0.23111973702907562,
+        "peak_raw_nm": 0.0674901157617569,
+        "peak_sent_nm": 0.067000001668930054,
+        "rms_tracking_error_rad_s": 0.038218359847361133
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 0.5,
+        "delay_samples": 0,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00027683377265930176,
+        "peak_speed_rad_s": 0.23102910816669464,
+        "peak_raw_nm": 0.067662537097930908,
+        "peak_sent_nm": 0.068000003695487976,
+        "rms_tracking_error_rad_s": 0.038228944218386983
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 0.5,
+        "delay_samples": 1,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00037752091884613037,
+        "peak_speed_rad_s": 0.23152521252632141,
+        "peak_raw_nm": 0.067610085010528564,
+        "peak_sent_nm": 0.068000003695487976,
+        "rms_tracking_error_rad_s": 0.0377320808241103
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 0.5,
+        "delay_samples": 1,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00027804076671600342,
+        "peak_speed_rad_s": 0.23143438994884491,
+        "peak_raw_nm": 0.067717686295509338,
+        "peak_sent_nm": 0.068000003695487976,
+        "rms_tracking_error_rad_s": 0.037730065141043434
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 0.5,
+        "delay_samples": 2,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00017331540584564209,
+        "peak_speed_rad_s": 0.23166456818580627,
+        "peak_raw_nm": 0.0678461343050003,
+        "peak_sent_nm": 0.068000003695487976,
+        "rms_tracking_error_rad_s": 0.037214294582261234
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 0.5,
+        "delay_samples": 2,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 6.86347484588623E-5,
+        "peak_speed_rad_s": 0.23175030946731567,
+        "peak_raw_nm": 0.06803874671459198,
+        "peak_sent_nm": 0.068000003695487976,
+        "rms_tracking_error_rad_s": 0.037214636325935677
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 1,
+        "delay_samples": 0,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00093184411525726318,
+        "peak_speed_rad_s": 0.21772927045822144,
+        "peak_raw_nm": 0.0343555323779583,
+        "peak_sent_nm": 0.034000001847743988,
+        "rms_tracking_error_rad_s": 0.034218847088602559
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 1,
+        "delay_samples": 0,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00078421831130981445,
+        "peak_speed_rad_s": 0.217971533536911,
+        "peak_raw_nm": 0.034380767494440079,
+        "peak_sent_nm": 0.034000001847743988,
+        "rms_tracking_error_rad_s": 0.034229422943380473
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 1,
+        "delay_samples": 1,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00086030364036560059,
+        "peak_speed_rad_s": 0.21836379170417786,
+        "peak_raw_nm": 0.034371241927146912,
+        "peak_sent_nm": 0.034000001847743988,
+        "rms_tracking_error_rad_s": 0.033713674595746659
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 1,
+        "delay_samples": 1,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00086158514022827148,
+        "peak_speed_rad_s": 0.21841755509376526,
+        "peak_raw_nm": 0.034424595534801483,
+        "peak_sent_nm": 0.034000001847743988,
+        "rms_tracking_error_rad_s": 0.033693960030968188
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 1,
+        "delay_samples": 2,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00083583593368530273,
+        "peak_speed_rad_s": 0.21897846460342407,
+        "peak_raw_nm": 0.034451473504304886,
+        "peak_sent_nm": 0.034000001847743988,
+        "rms_tracking_error_rad_s": 0.033210827821219188
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 1,
+        "delay_samples": 2,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0009218752384185791,
+        "peak_speed_rad_s": 0.21914467215538025,
+        "peak_raw_nm": 0.034714382141828537,
+        "peak_sent_nm": 0.035000000149011612,
+        "rms_tracking_error_rad_s": 0.033221979097953318
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 2,
+        "delay_samples": 0,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0010492652654647827,
+        "peak_speed_rad_s": 0.21028375625610352,
+        "peak_raw_nm": 0.017179090529680252,
+        "peak_sent_nm": 0.017000000923871994,
+        "rms_tracking_error_rad_s": 0.032540871403889976
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 2,
+        "delay_samples": 0,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0010748803615570068,
+        "peak_speed_rad_s": 0.21011696755886078,
+        "peak_raw_nm": 0.01740504615008831,
+        "peak_sent_nm": 0.017000000923871994,
+        "rms_tracking_error_rad_s": 0.032555589316057336
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 2,
+        "delay_samples": 1,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.000997096300125122,
+        "peak_speed_rad_s": 0.21060086786746979,
+        "peak_raw_nm": 0.01738639734685421,
+        "peak_sent_nm": 0.017000000923871994,
+        "rms_tracking_error_rad_s": 0.032075309118692663
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 2,
+        "delay_samples": 1,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.0010796934366226196,
+        "peak_speed_rad_s": 0.21070362627506256,
+        "peak_raw_nm": 0.017556771636009216,
+        "peak_sent_nm": 0.018000001087784767,
+        "rms_tracking_error_rad_s": 0.032097238900291231
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 2,
+        "delay_samples": 2,
+        "noise_enabled": false,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00096301734447479248,
+        "peak_speed_rad_s": 0.21161684393882751,
+        "peak_raw_nm": 0.0174802765250206,
+        "peak_sent_nm": 0.017000000923871994,
+        "rms_tracking_error_rad_s": 0.031603358210221512
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 2,
+        "delay_samples": 2,
+        "noise_enabled": true,
+        "saturation_recovery_stress": false,
+        "final_error_rad_s": 0.00095166265964508057,
+        "peak_speed_rad_s": 0.2114625871181488,
+        "peak_raw_nm": 0.017502473667263985,
+        "peak_sent_nm": 0.018000001087784767,
+        "rms_tracking_error_rad_s": 0.03163570217271694
+      },
+      {
+        "mode": 1,
+        "b0_ratio": 1,
+        "delay_samples": 0,
+        "noise_enabled": false,
+        "saturation_recovery_stress": true,
+        "final_error_rad_s": 0.00037185996188782156,
+        "peak_speed_rad_s": 0.85236638784408569,
+        "peak_raw_nm": 0.79993140697479248,
+        "peak_sent_nm": 0.10000000149011612,
+        "rms_tracking_error_rad_s": 0.37869904266753207
+      },
+      {
+        "mode": 2,
+        "b0_ratio": 1,
+        "delay_samples": 0,
+        "noise_enabled": false,
+        "saturation_recovery_stress": true,
+        "final_error_rad_s": 0.00027170480461791158,
+        "peak_speed_rad_s": 0.85236638784408569,
+        "peak_raw_nm": 0.3968164324760437,
+        "peak_sent_nm": 0.10000000149011612,
+        "rms_tracking_error_rad_s": 0.37913472913216084
+      }
+    ],
+    "criterion": "finite/shared limits; nominal final error <= 0.01 rad/s; saturation recovery <= 0.02 rad/s"
+  },
+  "cReplay": {
+    "samples": 59040,
+    "max_normalized_error": 0,
+    "tolerance": 0.0001,
+    "passed": true
+  }
+}

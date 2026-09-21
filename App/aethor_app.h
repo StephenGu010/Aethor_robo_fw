@@ -15,6 +15,19 @@
 #include "motor_runtime.h"
 #include "protocol_engine.h"
 #include "DebugUi/debug_ui_contract.h"
+#include "Config/adrc_build_config.h"
+#if AETHOR_ADRC_BENCH
+#include "Adrc/adrc_experiment.h"
+/** @brief Pops the single current ADRC frame; kind is enable=0, nominal torque=1, disable=2. */
+uint8_t aethor_app_adrc_pop_frame(CanFrame *frame, uint8_t *kind, float *decoded_torque_nm);
+/** @brief Reports actual CAN transmission, never queue admission or measured physical torque. */
+void aethor_app_adrc_report_transmit(uint8_t kind, float decoded_torque_nm, uint8_t succeeded);
+/** @brief Supplies local measured hardware evidence; no USB path calls this hook. */
+AdrcExperimentResult aethor_app_adrc_set_evidence(const AdrcExperimentConfig *config,
+    const AdrcExperimentQualification *qualification, uint64_t timestamp_us);
+/** @brief Copies coherent supervisor status under the same task critical boundary. */
+uint8_t aethor_app_adrc_get_status(AdrcExperimentStatus *status);
+#endif
 
 /** @brief ProtocolTask-only bounded local STOP/admission and health service pass. */
 void aethor_app_debug_ui_process(uint64_t timestamp_us);

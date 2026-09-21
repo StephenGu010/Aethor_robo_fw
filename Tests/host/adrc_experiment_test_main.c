@@ -393,6 +393,56 @@ static void test_stop_confirmation_deadline(void)
             "stop outcome retains genuine disabled evidence and frozen trace");
     }
 }
+/** @brief Ends each identification pulse with disable at its exact deadline and rejects old disable samples. */
+static void test_identification_hard_deadlines(void)
+{
+    const uint32_t pulse_durations[] = { 20000U, 40000U, 80000U };
+    unsigned scenario;
+    unsigned step;
+    for (scenario = 0U; scenario < sizeof(pulse_durations) / sizeof(pulse_durations[0]); scenario++)
+    {
+        fixture(); configuration.mode = ADRC_MODE_IDENTIFY;
+        configuration.identify_pulse_us = pulse_durations[scenario];
+        start(); feedback.enabled = 1U;
+        for (step = 1U; step < pulse_durations[scenario] / 4000U; step++) { advance(4000ULL, 1); }
+        expect(action.send_torque && action.torque_nm > 0.0F && !action.disable_requested,
+            "identification excitation remains active before its finite deadline");
+        advance(4000ULL, 1);
+        expect(experiment.status.state == ADRC_STATE_STOPPING && action.disable_requested &&
+            action.send_torque && action.torque_nm == 0.0F && !experiment.status.disabled_confirmed,
+            "20/40/80ms pulse requests immediate disable without a torque tail");
+        feedback.enabled = 0U; advance(4000ULL, 0);
+        expect(experiment.status.state == ADRC_STATE_STOPPING && !experiment.status.disabled_confirmed &&
+            !experiment.status.trace_frozen, "pulse-deadline feedback cannot prove post-request disable");
+        advance(4000ULL, 1);
+        expect(experiment.status.state == ADRC_STATE_DISABLED && experiment.status.disabled_confirmed &&
+            experiment.status.trace_frozen, "newer real disabled feedback completes identification stop");
+    }
+}
+
+/** @brief Explicit STOP interrupts identification immediately while preserving its original 500ms deadline. */
+static void test_identification_early_stop(void)
+{
+    unsigned step;
+    uint64_t stop_timestamp;
+    fixture(); configuration.mode = ADRC_MODE_IDENTIFY; configuration.identify_pulse_us = 80000U;
+    start(); feedback.enabled = 1U; advance(4000ULL, 1);
+    stop_timestamp = feedback.now_us;
+    expect(adrc_experiment_stop(&experiment, stop_timestamp) == ADRC_RESULT_OK,
+        "explicit identification STOP accepted before pulse deadline");
+    advance(4000ULL, 1);
+    expect(experiment.status.state == ADRC_STATE_STOPPING && action.disable_requested &&
+        action.torque_nm == 0.0F, "early identification STOP immediately requests disable");
+    expect(adrc_experiment_stop(&experiment, feedback.now_us) == ADRC_RESULT_OK &&
+        experiment.stop_started_us == stop_timestamp, "replayed early STOP cannot extend identification deadline");
+    for (step = 1U; step < 125U; step++) { advance(4000ULL, 1); }
+    expect(experiment.status.state == ADRC_STATE_FAULT && experiment.status.fault == ADRC_FAULT_STOP_TIMEOUT &&
+        action.disable_requested && !experiment.status.disabled_confirmed,
+        "missing identification disable confirmation faults at 500ms");
+    feedback.enabled = 0U; advance(4000ULL, 1);
+    expect(experiment.status.state == ADRC_STATE_FAULT && experiment.status.disabled_confirmed &&
+        experiment.status.trace_frozen, "late identification disable evidence preserves timeout fault");
+}
 #endif
 
 /** @brief Runs contract tests and returns nonzero for any observable safety regression. */
@@ -404,6 +454,7 @@ int main(void)
     test_stop_and_disable_evidence(); test_deadlines_and_trace();
     test_additional_safety_boundaries();
     test_clock_fault_disable_watermark(); test_stop_confirmation_deadline();
+    test_identification_hard_deadlines(); test_identification_early_stop();
 #endif
     printf("ADRC supervisor: %u checks, %u failures; record=%u bytes\n",
         checks, failures, (unsigned)sizeof(AdrcExperimentTrace));

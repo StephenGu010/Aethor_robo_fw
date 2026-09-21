@@ -314,7 +314,7 @@ AdrcExperimentResult adrc_experiment_heartbeat(AdrcExperiment *experiment, uint6
     return ADRC_RESULT_OK;
 }
 
-/** @brief Enters STOPPING once; repeated stop calls cannot extend the bounded stop deadline. */
+/** @brief Enters STOPPING once; identification disables immediately and replay never extends its deadline. */
 AdrcExperimentResult adrc_experiment_stop(AdrcExperiment *experiment, uint64_t now_us)
 {
     if (!valid_context(experiment) || now_us < experiment->last_tick_us)
@@ -324,6 +324,8 @@ AdrcExperimentResult adrc_experiment_stop(AdrcExperiment *experiment, uint64_t n
         experiment->status.state = ADRC_STATE_STOPPING;
         experiment->stop_started_us = now_us;
         experiment->low_speed_tracking = 0U;
+        /* Quantized MIT zero is not physical zero; identification ends by requesting actual disable. */
+        if (experiment->config.mode == ADRC_MODE_IDENTIFY) { request_disable(experiment, now_us); }
     }
     else if (experiment->status.state == ADRC_STATE_PREPARED)
     { experiment->status.state = ADRC_STATE_DISABLED; }

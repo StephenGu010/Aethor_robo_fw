@@ -20,6 +20,11 @@ typedef struct {
     uint32_t spi_errors; /**< Cumulative platform count, never a current health flag. */
     uint32_t init_errors; /**< Cumulative initialization failures, retained after recovery. */
     uint32_t flush_ms;
+    uint32_t refresh_bytes;
+    uint32_t refresh_ms;
+    uint32_t refresh_fps_tenths;
+    uint32_t refresh_completed;
+    uint32_t refresh_failed;
     uint32_t stack_free_words;
     uint32_t control_execution_max_us;
     uint32_t control_period_max_us;

@@ -342,10 +342,10 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
             row(page, 0U, text);
             (void)snprintf(text, sizeof(text), "按键 %u  %s", (unsigned)diagnostics->key, diagnostics->input_valid ? "有效" : "输入未就绪"); row(page, 1U, text);
             (void)snprintf(text, sizeof(text), "输入故障 %lu", (unsigned long)diagnostics->input_fault); row(page, 2U, text);
-            (void)snprintf(text, sizeof(text), "DMA错误 %lu  块 %lums", (unsigned long)diagnostics->dma_errors, (unsigned long)diagnostics->flush_ms); row(page, 3U, text);
-            (void)snprintf(text, sizeof(text), "UI栈余量 %lu word", (unsigned long)diagnostics->stack_free_words); row(page, 4U, text);
-            (void)snprintf(text, sizeof(text), "控制耗时最大 %lu us", (unsigned long)diagnostics->control_execution_max_us); row(page, 5U, text);
-            (void)snprintf(text, sizeof(text), "控制周期最大 %lu us", (unsigned long)diagnostics->control_period_max_us); row(page, 6U, text);
+            (void)snprintf(text, sizeof(text), "DMA错 %lu  块 %lums", (unsigned long)diagnostics->dma_errors, (unsigned long)diagnostics->flush_ms); row(page, 3U, text);
+            (void)snprintf(text, sizeof(text), "REFRESH %luB  %lums", (unsigned long)diagnostics->refresh_bytes, (unsigned long)diagnostics->refresh_ms); row(page, 4U, text);
+            (void)snprintf(text, sizeof(text), "有效 %lu.%lu FPS  栈 %lu", (unsigned long)(diagnostics->refresh_fps_tenths / 10U), (unsigned long)(diagnostics->refresh_fps_tenths % 10U), (unsigned long)diagnostics->stack_free_words); row(page, 5U, text);
+            (void)snprintf(text, sizeof(text), "控制 %lu/%lu us", (unsigned long)diagnostics->control_execution_max_us, (unsigned long)diagnostics->control_period_max_us); row(page, 6U, text);
         } else if (model->diagnostic_page == 1U) {
             (void)snprintf(text, sizeof(text), "控制超期 %lu", (unsigned long)snapshot->diagnostics.control_deadline_miss_count); row(page, 0U, text);
             (void)snprintf(text, sizeof(text), "CAN丢弃 %lu", (unsigned long)snapshot->diagnostics.can_rx_drop_count); row(page, 1U, text);

@@ -33,7 +33,7 @@ $finalDisableCompleted = $false
 $finalStateSafe = $false
 $initialPositionDeg = $null
 $feedbackPollCount = 0
-$freshEnabledPollCount = 0
+$freshActivePollCount = 0
 $pilotFailed = $false
 $completedReplies = @{}
 $transcriptLines.Add('host_utc=' + [datetime]::UtcNow.ToString('o') +
@@ -128,8 +128,9 @@ function Record-PilotFeedback {
     if ($null -eq $script:initialPositionDeg -and $feedbackState -eq 'disabled' -and $ageMs -lt 100) {
         $script:initialPositionDeg = $positionDeg
     }
-    if ($feedbackState -eq 'enabled' -and $ageMs -lt 100) {
-        ++$script:freshEnabledPollCount
+    # The public text protocol labels enabled feedback as moving or holding.
+    if ($feedbackState -in @('moving', 'holding') -and $ageMs -lt 100) {
+        ++$script:freshActivePollCount
     }
     if ([math]::Abs($speedDegS) -gt 12.0 -or
         [math]::Abs($torqueNm) -gt 1.0 -or
@@ -279,7 +280,7 @@ finally {
     $outputName = 'motor7_enabled_feedback_' + [datetime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ') + '.txt'
     $transcriptLines.Add('hold_terminal=' + $holdTerminalReply)
     $transcriptLines.Add('feedback_polls=' + $feedbackPollCount +
-        ' fresh_enabled_polls=' + $freshEnabledPollCount +
+        ' fresh_active_polls=' + $freshActivePollCount +
         ' final_disable_completed=' + $finalDisableCompleted +
         ' mode_restored=' + $modeRestored +
         ' final_state_safe=' + $finalStateSafe)

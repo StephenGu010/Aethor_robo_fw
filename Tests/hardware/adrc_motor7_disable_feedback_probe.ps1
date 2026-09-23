@@ -30,7 +30,7 @@ function Invoke-ProbeRequest {
         [System.IO.Ports.SerialPort]$Port,
         [uint32]$RequestId,
         [ValidateSet('show state', 'show motor 7', 'show diag can', 'adrc status',
-            'adrc gate motor=7', 'adrc feedback', 'adrc discover motor=7',
+            'adrc gate motor=7', 'adrc discover motor=7',
             'bench disable 7')]
         [string]$Command
     )
@@ -95,17 +95,16 @@ try {
     if ($disableReply -notmatch '^ok 64000020 bench disable accepted=1') {
         throw "DISABLE not admitted: $disableReply"
     }
-    $freshDisabledSeen = $false
+    $shortLivedDisabledSeen = $false
     for ($sampleIndex = 0; $sampleIndex -lt 16; ++$sampleIndex) {
         $sample = Invoke-ProbeRequest $serialPort ([uint32](64000030 + $sampleIndex)) 'show motor 7'
         if ($sample -match 'state=disabled .*age_ms=(\d+)') {
             $feedbackAgeMs = [uint32]$Matches[1]
-            if ($feedbackAgeMs -lt 150) { $freshDisabledSeen = $true }
+            if ($feedbackAgeMs -lt 150) { $shortLivedDisabledSeen = $true }
         }
         Start-Sleep -Milliseconds 25
     }
     $gateAfter = Invoke-ProbeRequest $serialPort 64000050 'adrc gate motor=7'
-    $feedbackAfter = Invoke-ProbeRequest $serialPort 64000051 'adrc feedback'
     $canAfter = Invoke-ProbeRequest $serialPort 64000052 'show diag can'
     $stateAfter = Invoke-ProbeRequest $serialPort 64000053 'show state'
     $ownerAfter = Invoke-ProbeRequest $serialPort 64000054 'adrc status'
@@ -114,9 +113,8 @@ try {
         $canAfter -notmatch 'busoff=0') {
         throw 'Postflight stopped: state, owner, or CAN changed unexpectedly'
     }
-    Write-Output "ADRC_DISABLE_FEEDBACK_PROBE_COMPLETE port=$PortName disable_done=$disableCompleted fresh_disabled_seen=$freshDisabledSeen"
+    Write-Output "ADRC_DISABLE_FEEDBACK_PROBE_COMPLETE port=$PortName disable_done=$disableCompleted short_lived_disabled_seen=$shortLivedDisabledSeen"
     Write-Output $gateAfter
-    Write-Output $feedbackAfter
     Write-Output $canAfter
 }
 finally {

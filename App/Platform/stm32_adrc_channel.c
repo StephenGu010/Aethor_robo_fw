@@ -40,9 +40,13 @@ uint8_t stm32_adrc_channel_submit(const CanFrame *frame, AdrcCanKind kind, float
     if (frame == NULL || frame->identifier > CAN_STANDARD_MAX_IDENTIFIER ||
         (unsigned)kind > (unsigned)ADRC_CAN_PROBE ||
         (kind == ADRC_CAN_PROBE &&
-         (frame->identifier != 0x7FFU || frame->length != 4U ||
+         (frame->identifier != 0x7FFU ||
+          (frame->length != 4U && frame->length != 8U) ||
           frame->data[0] == 0U || frame->data[1] != 0U ||
           frame->data[2] != 0xCCU || frame->data[3] != 0U ||
+          (frame->length == 8U &&
+           (frame->data[4] != 0U || frame->data[5] != 0U ||
+            frame->data[6] != 0U || frame->data[7] != 0U)) ||
           decoded_torque_nm != 0.0F)) ||
         (kind != ADRC_CAN_PROBE && frame->length != 8U) ||
         decoded_torque_nm != decoded_torque_nm ||
@@ -56,7 +60,7 @@ uint8_t stm32_adrc_channel_submit(const CanFrame *frame, AdrcCanKind kind, float
     header.Identifier = frame->identifier;
     header.IdType = FDCAN_STANDARD_ID;
     header.TxFrameType = FDCAN_DATA_FRAME;
-    header.DataLength = kind == ADRC_CAN_PROBE ? FDCAN_DLC_BYTES_4 : FDCAN_DLC_BYTES_8;
+    header.DataLength = frame->length == 4U ? FDCAN_DLC_BYTES_4 : FDCAN_DLC_BYTES_8;
     header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
     header.BitRateSwitch = FDCAN_BRS_OFF;
     header.FDFormat = FDCAN_CLASSIC_CAN;

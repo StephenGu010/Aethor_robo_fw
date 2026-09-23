@@ -33,6 +33,7 @@ AdrcLcdOwnershipStatus adrc_lcd_ownership_submit_acquire(
     ownership->axis_index = axis_index;
     ownership->active_request_id = request_id;
     ownership->highest_request_id = request_id;
+    ownership->acquire_started_us = 0ULL;
     ownership->state = ADRC_LCD_OWNER_ACQUIRING;
     return ADRC_LCD_OWNERSHIP_OK;
 }
@@ -70,16 +71,36 @@ AdrcLcdOwnershipStatus adrc_lcd_ownership_service(
     if (ownership == NULL || evidence == NULL) { return ADRC_LCD_OWNERSHIP_BAD_ARGUMENT; }
     if (ownership->state == ADRC_LCD_OWNER_ACQUIRING)
     {
-        if (evidence->lcd_idle == 0U || evidence->can_idle == 0U ||
-            feedback_is_current(evidence) == 0U || evidence->disabled == 0U ||
-            evidence->no_fault == 0U || evidence->stationary == 0U ||
-            evidence->mit_discovered == 0U)
+        if (ownership->acquire_started_us == 0ULL)
+        { ownership->acquire_started_us = evidence->now_us; }
+        if (evidence->now_us == 0ULL || evidence->now_us < ownership->acquire_started_us ||
+            evidence->lcd_idle == 0U || evidence->can_idle == 0U ||
+            evidence->mit_discovered == 0U || evidence->probe_failed != 0U ||
+            (evidence->feedback_fresh != 0U && evidence->feedback_us > evidence->now_us) ||
+            (evidence->probe_transmitted != 0U &&
+             (evidence->probe_submitted_us < ownership->acquire_started_us ||
+              evidence->probe_submitted_us > evidence->now_us)) ||
+            (feedback_is_current(evidence) != 0U &&
+             (evidence->disabled == 0U || evidence->no_fault == 0U ||
+              evidence->stationary == 0U)))
         {
             ownership->state = ADRC_LCD_OWNER_LCD;
             return ADRC_LCD_OWNERSHIP_UNSAFE;
         }
-        ownership->state = ADRC_LCD_OWNER_ADRC;
-        return ADRC_LCD_OWNERSHIP_TRANSFERRED;
+        if (evidence->probe_transmitted != 0U && evidence->probe_submitted_us != 0ULL &&
+            feedback_is_current(evidence) != 0U &&
+            evidence->feedback_us > evidence->probe_submitted_us)
+        {
+            ownership->state = ADRC_LCD_OWNER_ADRC;
+            return ADRC_LCD_OWNERSHIP_TRANSFERRED;
+        }
+        if (evidence->now_us - ownership->acquire_started_us >
+            ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US)
+        {
+            ownership->state = ADRC_LCD_OWNER_LCD;
+            return ADRC_LCD_OWNERSHIP_TIMEOUT;
+        }
+        return ADRC_LCD_OWNERSHIP_WAITING;
     }
     if (ownership->state == ADRC_LCD_OWNER_RELEASING)
     {

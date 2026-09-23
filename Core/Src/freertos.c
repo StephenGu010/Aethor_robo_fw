@@ -240,8 +240,11 @@ void StartArmControlTask(void const * argument)
     if (adrcReceipt.available != 0U)
     {
 #if AETHOR_ADRC_LCD_INTEGRATED
-      aethor_app_adrc_report_transmit_at((uint8_t)adrcReceipt.kind,
-          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted, timestampUs);
+      if (adrcReceipt.kind == ADRC_CAN_PROBE)
+      { aethor_app_integrated_report_probe_transmit(adrcReceipt.transmitted, timestampUs); }
+      else
+      { aethor_app_adrc_report_transmit_at((uint8_t)adrcReceipt.kind,
+          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted, timestampUs); }
 #else
       aethor_app_adrc_report_transmit((uint8_t)adrcReceipt.kind,
           adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted);
@@ -260,6 +263,14 @@ void StartArmControlTask(void const * argument)
     {
       uint8_t adrcKind = 0U;
       float decodedTorqueNm = 0.0F;
+#if AETHOR_ADRC_LCD_INTEGRATED
+      if (aethor_app_integrated_pop_probe_frame(&pendingFrame, timestampUs) != 0U)
+      {
+        if (stm32_adrc_channel_submit(&pendingFrame, ADRC_CAN_PROBE, 0.0F) == 0U)
+        { aethor_app_integrated_report_probe_transmit(0U, timestampUs); }
+      }
+      else
+#endif
       if (aethor_app_adrc_pop_frame(&pendingFrame, &adrcKind, &decodedTorqueNm) != 0U)
       {
         if (stm32_adrc_channel_submit(&pendingFrame, (AdrcCanKind)adrcKind, decodedTorqueNm) == 0U)

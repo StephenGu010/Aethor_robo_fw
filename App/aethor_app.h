@@ -30,6 +30,10 @@ void aethor_app_adrc_report_transmit_at(uint8_t kind, float decoded_torque_nm,
 void aethor_app_integrated_set_can_idle(uint8_t idle, uint64_t timestamp_us);
 /** @brief Resets the handoff quiet window after any legacy CAN submission attempt. */
 void aethor_app_integrated_note_legacy_can_activity(void);
+/** @brief Emits one read-only motor-7 feedback probe while acquisition owns the handoff gate. */
+uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestamp_us);
+/** @brief Records the dedicated CAN probe transmission result, never motor execution. */
+void aethor_app_integrated_report_probe_transmit(uint8_t succeeded, uint64_t timestamp_us);
 #endif
 /** @brief Supplies local measured hardware evidence; no USB path calls this hook. */
 AdrcExperimentResult aethor_app_adrc_set_evidence(const AdrcExperimentConfig *config,

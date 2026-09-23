@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #define ADRC_LCD_OWNER_RELEASE_TIMEOUT_US (500000ULL)
+#define ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US (100000ULL)
 #define ADRC_LCD_OWNER_FEEDBACK_MAX_AGE_US (8000ULL)
 
 /** @brief Names the only control path allowed to produce ordinary motor frames. */
@@ -37,8 +38,11 @@ typedef struct
 {
     uint64_t now_us;
     uint64_t feedback_us;
+    uint64_t probe_submitted_us;
     uint8_t lcd_idle;
     uint8_t can_idle;
+    uint8_t probe_transmitted;
+    uint8_t probe_failed;
     uint8_t feedback_fresh;
     uint8_t disabled;
     uint8_t no_fault;
@@ -50,6 +54,7 @@ typedef struct
 typedef struct
 {
     AdrcLcdOwnerState state;
+    uint64_t acquire_started_us;
     uint64_t release_started_us;
     uint64_t disable_transmitted_us;
     uint32_t active_request_id;

@@ -17,6 +17,7 @@ typedef struct { uint32_t Identifier, IdType, TxFrameType, DataLength,
 #define FDCAN_STANDARD_ID 0U
 #define FDCAN_DATA_FRAME 0U
 #define FDCAN_DLC_BYTES_8 8U
+#define FDCAN_DLC_BYTES_4 4U
 #define FDCAN_ESI_ACTIVE 0U
 #define FDCAN_BRS_OFF 0U
 #define FDCAN_CLASSIC_CAN 0U

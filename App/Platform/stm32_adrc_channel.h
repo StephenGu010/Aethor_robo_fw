@@ -6,7 +6,8 @@
 #include "can_frame.h"
 
 /** @brief Identifies the one outstanding operation; torque receipts alone feed the observer. */
-typedef enum { ADRC_CAN_ENABLE = 0, ADRC_CAN_TORQUE, ADRC_CAN_DISABLE } AdrcCanKind;
+typedef enum { ADRC_CAN_ENABLE = 0, ADRC_CAN_TORQUE, ADRC_CAN_DISABLE,
+    ADRC_CAN_PROBE } AdrcCanKind;
 /** @brief Reports bus transmission, never mere queue acceptance or motor execution. */
 typedef struct
 {

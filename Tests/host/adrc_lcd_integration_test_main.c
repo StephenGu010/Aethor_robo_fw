@@ -16,10 +16,9 @@ int adrc_generated_controller_step(void *context, const AdrcControllerInput *inp
     return 0;
 }
 
-/** @brief Adds deterministic fresh disabled motor 7 feedback and verified MIT discovery. */
-static void fixture_disabled_motor7(uint64_t timestamp_us)
+/** @brief Provides verified MIT parameters without inventing a feedback sample. */
+static void fixture_discovered_motor7(void)
 {
-    MotorJointFeedback feedback;
     MotorDiscoveryResult *discovery = &application_motor_runtime.discovery.results[6];
     const JointConfig *joint = &arm_config_get_production()->joints[6];
     memset(discovery, 0, sizeof(*discovery));
@@ -33,6 +32,14 @@ static void fixture_disabled_motor7(uint64_t timestamp_us)
     application_motor_runtime.discovery.state = MOTOR_DISCOVERY_STATE_COMPLETE;
     application_motor_runtime.discovery.verified_joint_mask = 0x40U;
     application_motor_runtime.discovery_active = 0U;
+}
+
+/** @brief Adds deterministic fresh disabled motor 7 feedback after verified discovery. */
+static void fixture_disabled_motor7(uint64_t timestamp_us)
+{
+    MotorJointFeedback feedback;
+    const JointConfig *joint = &arm_config_get_production()->joints[6];
+    fixture_discovered_motor7();
     memset(&feedback, 0, sizeof(feedback));
     feedback.timestamp_us = timestamp_us;
     feedback.driver_state = S3519_DRIVER_STATE_DISABLED;
@@ -112,6 +119,16 @@ static void test_lcd_default_and_safe_acquire(void)
     assert(request("5 adrc acquire motor=7", 8001U, &output) == PROTOCOL_ENGINE_STATUS_OK);
     aethor_app_integrated_set_can_idle(1U, 8002U);
     (void)aethor_app_service(8002U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 8002U) == 1U);
+    assert(frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER && frame.length == 4U &&
+        frame.data[0] == 7U && frame.data[2] == 0xCCU);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 8002U) == 0U);
+    aethor_app_integrated_report_probe_transmit(1U, 8003U);
+    (void)aethor_app_service(8004U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
+    fixture_disabled_motor7(9000U);
+    (void)aethor_app_service(9001U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ADRC);
     assert(application_motor_runtime.discovery.target_joint_mask == 0x40U);
     assert(request("6 adrc status", 8003U, &output) == PROTOCOL_ENGINE_STATUS_OK);
@@ -121,6 +138,52 @@ static void test_lcd_default_and_safe_acquire(void)
     assert(application_adrc_bridge.bench.draft_config.axis_index == 6U);
     assert(request("7 bench move 7 1", 8004U, &output) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
     assert(request("5 adrc acquire motor=7", 8005U, &output) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+}
+
+/** @brief Completed register discovery without a post-probe sample cannot grant ADRC ownership. */
+static void test_no_feedback_after_probe_times_out(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    uint8_t kind;
+    float decoded;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    assert(request("1 adrc acquire motor=7", 6002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    (void)aethor_app_service(6003U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6003U) == 1U);
+    aethor_app_integrated_report_probe_transmit(1U, 6004U);
+    (void)aethor_app_service(100004U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
+    (void)aethor_app_service(106004U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+    assert(request("2 adrc status", 106005U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "handoff=timeout") != NULL);
+    assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 0U);
+}
+
+/** @brief A dedicated-buffer rejection cannot be promoted into disabled feedback evidence. */
+static void test_failed_probe_keeps_lcd_owner(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    assert(request("1 adrc acquire motor=7", 6002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    (void)aethor_app_service(6003U);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6003U) == 1U);
+    aethor_app_integrated_report_probe_transmit(0U, 6004U);
+    fixture_disabled_motor7(7000U);
+    (void)aethor_app_service(7001U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 7002U) == 0U);
+    assert(request("2 adrc status", 7003U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "handoff=unsafe") != NULL);
 }
 
 /** @brief Keeps LCD locked until actual disable transmit and newer disabled feedback. */
@@ -167,6 +230,10 @@ static void test_lcd_stop_during_adrc(void)
     aethor_app_integrated_set_can_idle(1U, 6001U);
     assert(request("1 adrc acquire motor=7", 6002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
     (void)aethor_app_service(6003U);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6003U) == 1U);
+    aethor_app_integrated_report_probe_transmit(1U, 6004U);
+    fixture_disabled_motor7(7000U);
+    (void)aethor_app_service(7001U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ADRC);
     assert(aethor_app_debug_ui_get_snapshot(6004U, &snapshot));
     assert(snapshot.motion_enabled == 0U && snapshot.mit_enabled == 0U);
@@ -192,6 +259,8 @@ int main(void)
     test_recent_lcd_can_rejects_acquire();
     test_lcd_default_and_safe_acquire();
     test_release_requires_new_feedback();
+    test_no_feedback_after_probe_times_out();
+    test_failed_probe_keeps_lcd_owner();
     test_lcd_stop_during_adrc();
     puts("ADRC_LCD_INTEGRATION_TESTS_PASSED");
     return 0;

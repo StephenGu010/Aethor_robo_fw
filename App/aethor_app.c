@@ -27,6 +27,10 @@ static AdrcAppBridge application_adrc_bridge;
 static AdrcLcdOwnership application_adrc_lcd_ownership;
 static uint8_t application_integrated_can_idle;
 static uint64_t application_integrated_can_quiet_since_us;
+/** @brief One read-only pre-handoff query must transmit before a newer disabled sample can count. */
+static uint64_t application_integrated_probe_submitted_us;
+static uint8_t application_integrated_probe_transmitted;
+static uint8_t application_integrated_probe_failed;
 static AdrcLcdOwnershipStatus application_integrated_handoff;
 #endif
 #endif
@@ -2796,6 +2800,9 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
     adrc_lcd_ownership_init(&application_adrc_lcd_ownership);
     application_integrated_can_idle = 0U;
     application_integrated_can_quiet_since_us = 0ULL;
+    application_integrated_probe_submitted_us = 0ULL;
+    application_integrated_probe_transmitted = 0U;
+    application_integrated_probe_failed = 0U;
     application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING;
     if (application_initialized != 0U && adrc_app_bridge_init_deferred(&application_adrc_bridge,
         &application_motor_runtime, &application_protocol_engine,
@@ -2924,6 +2931,9 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
             {
                 application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING;
                 application_adrc_bridge.bench.gateway.highest_admitted_request_id = request.request_id;
+                application_integrated_probe_submitted_us = 0ULL;
+                application_integrated_probe_transmitted = 0U;
+                application_integrated_probe_failed = 0U;
             }
             status = aethor_app_integrated_response(output,
                 admission == ADRC_LCD_OWNERSHIP_OK ? PROTOCOL_ENGINE_STATUS_OK :
@@ -4222,7 +4232,10 @@ static void aethor_app_integrated_build_evidence(uint64_t timestamp_us,
     memset(evidence, 0, sizeof(*evidence));
     memset(&snapshot, 0, sizeof(snapshot));
     evidence->now_us = timestamp_us;
-    evidence->can_idle = 0U;
+    evidence->can_idle = application_integrated_can_idle;
+    evidence->probe_submitted_us = application_integrated_probe_submitted_us;
+    evidence->probe_transmitted = application_integrated_probe_transmitted;
+    evidence->probe_failed = application_integrated_probe_failed;
     evidence->lcd_idle = (uint8_t)(!aethor_app_debug_ui_executor_busy() &&
         !debug_ui_mailbox_busy(&application_debug_ui.mailbox, true) &&
         application_debug_ui.authority == DEBUG_UI_AUTHORITY_REMOTE &&
@@ -4252,8 +4265,9 @@ static void aethor_app_integrated_build_evidence(uint64_t timestamp_us,
     feedback = &snapshot.joints[axis];
     evidence->feedback_us = feedback->timestamp_us;
     evidence->feedback_fresh = 1U;
-    evidence->can_idle = (uint8_t)(application_integrated_can_idle != 0U &&
-        feedback->timestamp_us > application_integrated_can_quiet_since_us);
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_RELEASING)
+    { evidence->can_idle = (uint8_t)(application_integrated_can_idle != 0U &&
+        feedback->timestamp_us > application_integrated_can_quiet_since_us); }
     evidence->disabled = (uint8_t)(feedback->driver_state == S3519_DRIVER_STATE_DISABLED);
     evidence->no_fault = (uint8_t)(feedback->fault_flags == 0U);
     evidence->stationary = (uint8_t)(isfinite(feedback->velocity_rad_s) &&
@@ -4313,6 +4327,51 @@ void aethor_app_integrated_note_legacy_can_activity(void)
     aethor_app_enter_task_critical();
     application_integrated_can_quiet_since_us = 0ULL;
     application_integrated_can_idle = 0U;
+    aethor_app_exit_task_critical();
+}
+
+/** @brief Issues at most one read-only disabled-feedback query after legacy CAN is quiet. */
+uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestamp_us)
+{
+    AdrcLcdOwnershipEvidence evidence;
+    uint8_t available = 0U;
+    if (!application_initialized || frame == NULL || timestamp_us == 0ULL) { return 0U; }
+    aethor_app_enter_task_critical();
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING &&
+        application_integrated_probe_submitted_us == 0ULL &&
+        application_integrated_probe_failed == 0U)
+    {
+        aethor_app_integrated_build_evidence(timestamp_us, &evidence);
+        if (evidence.lcd_idle != 0U && evidence.can_idle != 0U &&
+            evidence.mit_discovered != 0U)
+        {
+            const JointConfig *joint = &arm_config_get_production()->joints[
+                application_adrc_lcd_ownership.axis_index];
+            if (s3519_pack_feedback_query((uint8_t)joint->esc_id, frame) ==
+                S3519_CODEC_STATUS_OK)
+            {
+                application_integrated_probe_submitted_us = timestamp_us;
+                available = 1U;
+            }
+            else { application_integrated_probe_failed = 1U; }
+        }
+    }
+    aethor_app_exit_task_critical();
+    return available;
+}
+
+/** @brief Admits only a matching successful dedicated-buffer transmit as probe evidence. */
+void aethor_app_integrated_report_probe_transmit(uint8_t succeeded, uint64_t timestamp_us)
+{
+    if (!application_initialized) { return; }
+    aethor_app_enter_task_critical();
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING &&
+        application_integrated_probe_submitted_us != 0ULL)
+    {
+        if (succeeded != 0U && timestamp_us >= application_integrated_probe_submitted_us)
+        { application_integrated_probe_transmitted = 1U; }
+        else { application_integrated_probe_failed = 1U; }
+    }
     aethor_app_exit_task_critical();
 }
 #endif

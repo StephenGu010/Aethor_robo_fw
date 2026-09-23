@@ -23,6 +23,28 @@ static AdrcLcdOwnershipEvidence safe_evidence(uint64_t now_us)
     return evidence;
 }
 
+/** @brief Adds a successful read-only transmit and a newer synthetic feedback sample. */
+static AdrcLcdOwnershipEvidence probed_evidence(uint64_t now_us,
+    uint64_t probe_submitted_us)
+{
+    AdrcLcdOwnershipEvidence evidence = safe_evidence(now_us);
+    evidence.probe_submitted_us = probe_submitted_us;
+    evidence.probe_transmitted = 1U;
+    return evidence;
+}
+
+/** @brief Establishes an ADRC owner only after a post-probe disabled sample. */
+static void acquire_probed_owner(AdrcLcdOwnership *owner)
+{
+    AdrcLcdOwnershipEvidence evidence;
+    adrc_lcd_ownership_init(owner);
+    assert(adrc_lcd_ownership_submit_acquire(owner, 6U, 1U) == ADRC_LCD_OWNERSHIP_OK);
+    evidence = safe_evidence(6000ULL);
+    assert(adrc_lcd_ownership_service(owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+    evidence = probed_evidence(10000ULL, 6000ULL);
+    assert(adrc_lcd_ownership_service(owner, &evidence) == ADRC_LCD_OWNERSHIP_TRANSFERRED);
+}
+
 /** @brief Requires boot to remain LCD-owned until a control-task service accepts evidence. */
 static void test_acquire_requires_every_gate(void)
 {
@@ -34,6 +56,8 @@ static void test_acquire_requires_every_gate(void)
     assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 1U) == ADRC_LCD_OWNERSHIP_OK);
     assert(owner.state == ADRC_LCD_OWNER_ACQUIRING);
     evidence = safe_evidence(10000ULL);
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+    evidence = probed_evidence(14000ULL, 10000ULL);
     assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_TRANSFERRED);
     assert(owner.state == ADRC_LCD_OWNER_ADRC && owner.axis_index == 6U);
 
@@ -43,6 +67,8 @@ static void test_acquire_requires_every_gate(void)
         adrc_lcd_ownership_init(&owner);
         assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 1U) == ADRC_LCD_OWNERSHIP_OK);
         evidence = safe_evidence(10000ULL);
+        assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+        evidence = probed_evidence(14000ULL, 10000ULL);
         gates[0] = &evidence.lcd_idle;
         gates[1] = &evidence.can_idle;
         gates[2] = &evidence.feedback_fresh;
@@ -51,9 +77,51 @@ static void test_acquire_requires_every_gate(void)
         gates[5] = &evidence.stationary;
         gates[6] = &evidence.mit_discovered;
         *gates[gate_index] = 0U;
-        assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_UNSAFE);
-        assert(owner.state == ADRC_LCD_OWNER_LCD);
+        if (gate_index == 2U)
+        {
+            assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+            assert(owner.state == ADRC_LCD_OWNER_ACQUIRING);
+        }
+        else
+        {
+            assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_UNSAFE);
+            assert(owner.state == ADRC_LCD_OWNER_LCD);
+        }
     }
+}
+
+/** @brief Keeps a bounded acquire pending while a requested disabled sample has not arrived. */
+static void test_acquire_waits_for_feedback_probe(void)
+{
+    AdrcLcdOwnership owner;
+    AdrcLcdOwnershipEvidence evidence = safe_evidence(10000ULL);
+    adrc_lcd_ownership_init(&owner);
+    assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 5U) == ADRC_LCD_OWNERSHIP_OK);
+    evidence.feedback_fresh = 0U;
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+    assert(owner.state == ADRC_LCD_OWNER_ACQUIRING);
+    evidence = safe_evidence(14000ULL);
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+    evidence = probed_evidence(18000ULL, 14000ULL);
+    evidence.feedback_us = 14000ULL;
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+    evidence = probed_evidence(22000ULL, 14000ULL);
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_TRANSFERRED);
+
+    adrc_lcd_ownership_init(&owner);
+    assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 6U) == ADRC_LCD_OWNERSHIP_OK);
+    evidence = safe_evidence(10000ULL);
+    evidence.feedback_fresh = 0U;
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+    evidence.now_us = 10001ULL + ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US;
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_TIMEOUT);
+    assert(owner.state == ADRC_LCD_OWNER_LCD);
+
+    adrc_lcd_ownership_init(&owner);
+    assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 7U) == ADRC_LCD_OWNERSHIP_OK);
+    evidence = safe_evidence(10000ULL);
+    evidence.probe_failed = 1U;
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_UNSAFE);
 }
 
 /** @brief Rejects invalid axes, stale identifiers, future feedback and reentrant handoff. */
@@ -67,7 +135,9 @@ static void test_acquire_rejects_replay_and_bad_time(void)
     assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 1U) == ADRC_LCD_OWNERSHIP_OK);
     assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 2U) == ADRC_LCD_OWNERSHIP_BUSY);
     evidence = safe_evidence(10000ULL);
-    evidence.feedback_us = 10001ULL;
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+    evidence = probed_evidence(14000ULL, 10000ULL);
+    evidence.feedback_us = 14001ULL;
     assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_UNSAFE);
     assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 1U) == ADRC_LCD_OWNERSHIP_STALE_ID);
     assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 3U) == ADRC_LCD_OWNERSHIP_OK);
@@ -77,10 +147,8 @@ static void test_acquire_rejects_replay_and_bad_time(void)
 static void test_release_waits_for_physical_disable(void)
 {
     AdrcLcdOwnership owner;
-    AdrcLcdOwnershipEvidence evidence = safe_evidence(10000ULL);
-    adrc_lcd_ownership_init(&owner);
-    assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 1U) == ADRC_LCD_OWNERSHIP_OK);
-    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_TRANSFERRED);
+    AdrcLcdOwnershipEvidence evidence;
+    acquire_probed_owner(&owner);
     assert(adrc_lcd_ownership_submit_release(&owner, 2U, 12000ULL) == ADRC_LCD_OWNERSHIP_OK);
     assert(owner.state == ADRC_LCD_OWNER_RELEASING);
     evidence = safe_evidence(14000ULL);
@@ -104,10 +172,8 @@ static void test_release_waits_for_physical_disable(void)
 static void test_release_timeout_stays_locked(void)
 {
     AdrcLcdOwnership owner;
-    AdrcLcdOwnershipEvidence evidence = safe_evidence(10000ULL);
-    adrc_lcd_ownership_init(&owner);
-    assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 1U) == ADRC_LCD_OWNERSHIP_OK);
-    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_TRANSFERRED);
+    AdrcLcdOwnershipEvidence evidence;
+    acquire_probed_owner(&owner);
     assert(adrc_lcd_ownership_submit_release(&owner, 2U, 12000ULL) == ADRC_LCD_OWNERSHIP_OK);
     evidence = safe_evidence(512001ULL);
     assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_TIMEOUT);
@@ -119,6 +185,7 @@ static void test_release_timeout_stays_locked(void)
 int main(void)
 {
     test_acquire_requires_every_gate();
+    test_acquire_waits_for_feedback_probe();
     test_acquire_rejects_replay_and_bad_time();
     test_release_waits_for_physical_disable();
     test_release_timeout_stays_locked();

@@ -36,6 +36,7 @@
 - 已运行一次 `Tests/hardware/adrc_motor7_enabled_feedback_pilot.ps1`，原始记录为 `output/adrc/hardware/enabled_feedback_pilot/motor7_enabled_feedback_20260923T072542072Z.txt`。脚本记录的三个确认开关为 True，MIT HOLD 命令报告 `completed elapsed_ms=121`（配置的保持时间为 100 ms），7 条主机轮询看到 `state=moving` 且反馈年龄 0–4 ms；结束时模式 2 已恢复，最终 DISABLE 报告完成，`enabled=00 owner=lcd busoff=0`。但用户随后明确确认**脚本运行时 OUTPUT 已关闭**，并且未观察电机。因此该次不能证明带电使能、机械运动、输出电流、持续反馈或 4 ms 独立 CAN 更新周期；不能用日志中的 `power24v_confirmed=True` 替代实际供电证明。反馈帧的供能条件未查明，保留原始日志，不把这次计入实机闭环资格。用户已确认目前 24 V 关闭。
 - 原脚本汇总的 `fresh_enabled_polls=0` 是主机统计字段的错误：公开 `show motor` 将使能反馈显示为 `moving` 或 `holding`，不会显示 `enabled`。原始 7 条活动态轮询均为年龄小于 100 ms；脚本后续改为统计 `fresh_active_polls`。这仅修正日志解释，不改变上段供电状态结论。日志速度恒为 -2.799°/s，位置仅在约 ±0.011° 间变化；由 `vmax_deg_s=11459.156` 和 12 位速度编码计算，单码格约 5.597°/s（0.09768 rad/s），因此这些速度读数及文本 `moving` 不能独立证明轴在转动。
 - 当前离线仿真把速度量化设为 0.001 rad/s，约比上述原始反馈码格细 98 倍；固件资格要求 `velocity_quantum_rad_s <= 0.015`，同时又要求配置值不小于按发现量程计算的真实码格。默认坐标映射为 1 时，两项无法同时满足。这是**已验证的模型/资格不匹配**，不能通过仅调大 ESO 带宽或填写资格标志绕过。下一步应先确定可靠的供电状态记录、反馈帧实际到达间隔与位置/速度映射，再选定速度估计方法和控制周期，重建量化/延迟仿真及资格门限；只有通过后才设计新的带电限时试验。
+- 已离线加入电机运行时的**最新连续使能态反馈段**统计：只有通过解码和身份/时间戳检查的帧才计数，禁能或故障帧结束当前段；下一段从 1 重新计数。`adrc gate motor=7` 只读返回 `active_samples`、`active_intervals`、`active_min_us`、`active_max_us`，100 ms 试验脚本在最终失能后保存该结果。统计时间取自 STM32 CAN 接收任务解码时刻，反映控制软件实际接收节奏，不等同于总线物理到达时刻，也不能证明 24 V OUTPUT 状态。Motor 核心测试、LCD/ADRC 集成测试和 PowerShell 语法检查通过；集成 Keil 完整重建 0 错误、0 警告，日志为 `output/adrc/hardware/enabled_feedback_pilot/timing_build_20260923.log`。**本次仅离线构建，板上仍是 `a7d8e1a` 固件，没有这四个新字段；未烧录或再次上电试验。**
 
 ## 文件与版本
 

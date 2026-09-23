@@ -272,6 +272,11 @@ finally {
                 $ownerReply -match 'owner=lcd\b' -and $canReply -match 'busoff=0')
         }
         catch { $transcriptLines.Add('final_check_error=' + $_.Exception.Message) }
+        try {
+            $timingReply = Invoke-PilotRequest $serialPort 66000907 'adrc gate motor=7'
+            $transcriptLines.Add('final_timing_gate=' + $timingReply)
+        }
+        catch { $transcriptLines.Add('final_timing_error=' + $_.Exception.Message) }
         $serialPort.Close()
     }
     $serialPort.Dispose()

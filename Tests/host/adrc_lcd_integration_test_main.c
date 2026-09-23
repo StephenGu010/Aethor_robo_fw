@@ -68,12 +68,19 @@ static void test_read_only_handoff_gate_diagnostics(void)
     assert(strstr(output.messages[0].data, "motor=7") != NULL);
     assert(strstr(output.messages[0].data, "lcd_idle=1 can_idle=1 mit_ready=1") != NULL);
     assert(strstr(output.messages[0].data, "mode=1") != NULL);
+    assert(strstr(output.messages[0].data, "active_samples=0 active_intervals=0") != NULL);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
     assert(application_integrated_probe_submitted_us == 0ULL);
 
+    application_motor_runtime.feedback_timing[6].sample_count = 3U;
+    application_motor_runtime.feedback_timing[6].interval_count = 2U;
+    application_motor_runtime.feedback_timing[6].minimum_interval_us = 3900U;
+    application_motor_runtime.feedback_timing[6].maximum_interval_us = 4200U;
     application_motor_runtime.discovery.results[6].observed_control_mode = 2U;
     assert(request("2 adrc gate motor=7", 6003U, &output) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output.messages[0].data, "mit_ready=0 mode=2") != NULL);
+    assert(strstr(output.messages[0].data,
+        "active_samples=3 active_intervals=2 active_min_us=3900 active_max_us=4200") != NULL);
     assert(request("3 adrc gate motor=1", 6004U, &output) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
 }
 

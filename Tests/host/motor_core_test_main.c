@@ -2257,9 +2257,48 @@ static void test_position_register_reads(void)
     assert(runtime.position_read.pending == 0U);
 }
 
+/** @brief Measures only consecutive accepted enabled feedback and preserves the latest burst. */
+static void test_motor_runtime_records_enabled_feedback_intervals(void)
+{
+    static const uint8_t enabled_payload[8] = {
+        0x11U, 0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 42U, 40U
+    };
+    static const uint8_t disabled_payload[8] = {
+        0x01U, 0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 42U, 40U
+    };
+    MotorRuntime runtime;
+    CanFrame enabled_frame;
+    CanFrame disabled_frame;
+    MotorFeedbackTiming *timing;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(can_frame_init(&enabled_frame, 0x11U, enabled_payload,
+                          sizeof(enabled_payload)) == CAN_FRAME_STATUS_OK);
+    assert(can_frame_init(&disabled_frame, 0x11U, disabled_payload,
+                          sizeof(disabled_payload)) == CAN_FRAME_STATUS_OK);
+    timing = &runtime.feedback_timing[0];
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 1000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 1U && timing->interval_count == 0U);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 5000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 9500U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 3U && timing->interval_count == 2U);
+    assert(timing->minimum_interval_us == 4000U && timing->maximum_interval_us == 4500U);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 9500U) == MOTOR_RUNTIME_STATUS_STALE_FEEDBACK);
+    assert(timing->sample_count == 3U && timing->interval_count == 2U);
+    assert(motor_runtime_accept_frame(&runtime, &disabled_frame, 10000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 3U && timing->interval_count == 2U);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 20000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 1U && timing->interval_count == 0U);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 24000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 2U && timing->interval_count == 1U);
+    assert(timing->minimum_interval_us == 4000U && timing->maximum_interval_us == 4000U);
+    assert(runtime.feedback_timing[1].sample_count == 0U);
+}
+
 /** @brief Runs all seven-motor core assertions; returns zero on success. */
 int main(void)
 {
+    test_motor_runtime_records_enabled_feedback_intervals();
     test_position_register_reads();
     test_motor_runtime_reports_discovered_position_velocity_limits();
     test_motor_runtime_accepts_valid_position_velocity_move_limits();

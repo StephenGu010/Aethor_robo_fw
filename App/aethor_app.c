@@ -3137,12 +3137,14 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
             AdrcLcdOwnershipEvidence evidence;
             const MotorDiscoveryResult *discovery =
                 &application_motor_runtime.discovery.results[DEBUG_UI_INITIAL_MOTOR_ID - 1U];
-            char detail[320];
+            const MotorFeedbackTiming *feedback_timing =
+                &application_motor_runtime.feedback_timing[DEBUG_UI_INITIAL_MOTOR_ID - 1U];
+            char detail[384];
             int written;
             aethor_app_integrated_build_evidence(timestamp_us,
                 DEBUG_UI_INITIAL_MOTOR_ID - 1U, &evidence);
             written = snprintf(detail, sizeof(detail),
-                "gate motor=%u lcd_idle=%u can_idle=%u mit_ready=%u mode=%lu fields=%04x verified=%02x fb_fresh=%u disabled=%u no_fault=%u stationary=%u authority=%u action=%u ui_busy=%u ui_results=%u proto_results=%u discovery_active=%u",
+                "gate motor=%u lcd_idle=%u can_idle=%u mit_ready=%u mode=%lu fields=%04x verified=%02x fb_fresh=%u disabled=%u no_fault=%u stationary=%u authority=%u action=%u ui_busy=%u ui_results=%u proto_results=%u discovery_active=%u active_samples=%lu active_intervals=%lu active_min_us=%lu active_max_us=%lu",
                 (unsigned int)DEBUG_UI_INITIAL_MOTOR_ID,
                 (unsigned int)evidence.lcd_idle, (unsigned int)evidence.can_idle,
                 (unsigned int)evidence.mit_discovered,
@@ -3157,7 +3159,11 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 (unsigned int)debug_ui_mailbox_result_count(&application_debug_ui.mailbox),
                 (unsigned int)(uint8_t)(application_protocol_engine.result_write_sequence -
                     application_protocol_engine.result_read_sequence),
-                (unsigned int)application_motor_runtime.discovery_active);
+                (unsigned int)application_motor_runtime.discovery_active,
+                (unsigned long)feedback_timing->sample_count,
+                (unsigned long)feedback_timing->interval_count,
+                (unsigned long)feedback_timing->minimum_interval_us,
+                (unsigned long)feedback_timing->maximum_interval_us);
             status = written < 0 || (size_t)written >= sizeof(detail) ?
                 PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL :
                 aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_OK,

@@ -133,6 +133,90 @@ static void test_adrc_discover_requires_idle_sources(void)
     assert(application_motor_runtime.discovery_active == 0U);
 }
 
+/** @brief Sends one MIT feedback query for diagnosis without changing LCD ownership. */
+static void test_diagnostic_probe_requires_mit_and_preserves_lcd_owner(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    application_motor_runtime.discovery.results[6].observed_control_mode = 2U;
+    assert(request("1 adrc probe motor=7", 6002U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6003U) == 0U);
+    application_motor_runtime.discovery.results[6].observed_control_mode = 1U;
+    assert(request("2 adrc probe motor=1", 6004U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    fixture_disabled_motor7(6000U);
+    assert(request("3 adrc probe motor=7", 6005U, &output) ==
+        PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "probe=accepted") != NULL);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6006U) == 1U);
+    assert(frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER && frame.length == 4U &&
+        frame.data[0] == 7U && frame.data[2] == 0xCCU);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6007U) == 0U);
+    aethor_app_integrated_report_probe_transmit(1U, 6008U);
+    assert(request("4 adrc probe", 6009U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "state=transmitted") != NULL);
+    assert(strstr(output.messages[0].data, "sample_after_tx=0") != NULL);
+    assert(request("41 adrc acquire motor=7", 6010U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    fixture_disabled_motor7(7000U);
+    assert(request("5 adrc probe", 7001U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "state=feedback") != NULL);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+}
+
+/** @brief A failed CAN receipt or competing legacy submit invalidates diagnostic evidence. */
+static void test_diagnostic_probe_rejects_failed_or_competing_transmission(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    assert(request("1 adrc probe motor=7", 6002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6003U) == 1U);
+    aethor_app_integrated_report_probe_transmit(0U, 6004U);
+    fixture_disabled_motor7(7000U);
+    assert(request("2 adrc probe", 7001U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "state=failed") != NULL);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 7002U) == 0U);
+
+    assert(request("3 adrc probe motor=7", 106003U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    aethor_app_integrated_note_legacy_can_activity();
+    assert(request("4 adrc probe", 106004U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "state=failed") != NULL);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 106005U) == 0U);
+}
+
+/** @brief Missing post-query feedback stays diagnostic and cannot gain ADRC authority. */
+static void test_diagnostic_probe_times_out_without_feedback(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    assert(request("1 adrc probe motor=7", 6002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6003U) == 1U);
+    aethor_app_integrated_report_probe_transmit(1U, 6004U);
+    assert(request("2 adrc probe", 106005U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "state=timeout") != NULL);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 106006U) == 0U);
+    fixture_disabled_motor7(106010U);
+    assert(request("3 adrc probe", 106011U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "state=timeout") != NULL);
+    assert(strstr(output.messages[0].data, "sample_after_tx=1") != NULL);
+}
+
 /** @brief A drained CAN FIFO cannot override an unpublished LCD control group. */
 static void test_pending_lcd_control_rejects_acquire(void)
 {
@@ -335,6 +419,9 @@ int main(void)
     test_read_only_handoff_gate_diagnostics();
     test_adrc_discover_does_not_switch_motor_mode();
     test_adrc_discover_requires_idle_sources();
+    test_diagnostic_probe_requires_mit_and_preserves_lcd_owner();
+    test_diagnostic_probe_rejects_failed_or_competing_transmission();
+    test_diagnostic_probe_times_out_without_feedback();
     test_pending_lcd_control_rejects_acquire();
     test_recent_lcd_can_rejects_acquire();
     test_lcd_default_and_safe_acquire();

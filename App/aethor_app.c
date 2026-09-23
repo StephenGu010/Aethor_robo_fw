@@ -31,6 +31,9 @@ static uint64_t application_integrated_can_quiet_since_us;
 static uint64_t application_integrated_probe_submitted_us;
 static uint8_t application_integrated_probe_transmitted;
 static uint8_t application_integrated_probe_failed;
+/** @brief A separate LCD-owned diagnostic probe never participates in an ADRC handoff. */
+static uint64_t application_integrated_diag_requested_us;
+static uint64_t application_integrated_diag_transmitted_us;
 static AdrcLcdOwnershipStatus application_integrated_handoff;
 /** @brief Builds a read-only gate snapshot for an explicit axis without reserving ownership. */
 static void aethor_app_integrated_build_evidence(uint64_t timestamp_us, uint8_t axis,
@@ -2806,6 +2809,8 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
     application_integrated_probe_submitted_us = 0ULL;
     application_integrated_probe_transmitted = 0U;
     application_integrated_probe_failed = 0U;
+    application_integrated_diag_requested_us = 0ULL;
+    application_integrated_diag_transmitted_us = 0ULL;
     application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING;
     if (application_initialized != 0U && adrc_app_bridge_init_deferred(&application_adrc_bridge,
         &application_motor_runtime, &application_protocol_engine,
@@ -2925,7 +2930,11 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
             request.request_id, "code=bad_argument"); }
         else
         {
-            admission = request.request_id <=
+            admission = (application_integrated_diag_requested_us != 0ULL &&
+                timestamp_us >= application_integrated_diag_requested_us &&
+                timestamp_us - application_integrated_diag_requested_us <=
+                    ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US) ?
+                ADRC_LCD_OWNERSHIP_BUSY : request.request_id <=
                 application_adrc_bridge.bench.gateway.highest_admitted_request_id ?
                 ADRC_LCD_OWNERSHIP_STALE_ID :
                 adrc_lcd_ownership_submit_acquire(&application_adrc_lcd_ownership,
@@ -2937,6 +2946,8 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 application_integrated_probe_submitted_us = 0ULL;
                 application_integrated_probe_transmitted = 0U;
                 application_integrated_probe_failed = 0U;
+                application_integrated_diag_requested_us = 0ULL;
+                application_integrated_diag_transmitted_us = 0ULL;
             }
             status = aethor_app_integrated_response(output,
                 admission == ADRC_LCD_OWNERSHIP_OK ? PROTOCOL_ENGINE_STATUS_OK :
@@ -2990,6 +3001,90 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                     PROTOCOL_ENGINE_STATUS_BAD_REQUEST, request.request_id,
                 discovery_status == MOTOR_RUNTIME_STATUS_OK ? "discover=accepted" :
                     "code=owner_or_bus_busy");
+        }
+    }
+    else if (text_protocol_request_path_equals(&request, "adrc", "probe"))
+    {
+        if (request.positional_count == 0U && request.field_count == 0U)
+        {
+            MotorFeedbackSnapshot snapshot;
+            const MotorJointFeedback *feedback;
+            const char *probe_state = "idle";
+            uint64_t feedback_age_us = UINT64_MAX;
+            uint8_t after_transmit;
+            char detail[240];
+            int written;
+            memset(&snapshot, 0, sizeof(snapshot));
+            (void)motor_runtime_get_snapshot(&application_motor_runtime,
+                timestamp_us, UINT64_MAX, &snapshot);
+            feedback = &snapshot.joints[DEBUG_UI_INITIAL_MOTOR_ID - 1U];
+            after_transmit = (uint8_t)(application_integrated_diag_transmitted_us != 0ULL &&
+                (snapshot.valid_joint_mask &
+                    (uint8_t)(1U << (DEBUG_UI_INITIAL_MOTOR_ID - 1U))) != 0U &&
+                feedback->timestamp_us > application_integrated_diag_transmitted_us);
+            if (feedback->timestamp_us != 0ULL && timestamp_us >= feedback->timestamp_us)
+            { feedback_age_us = timestamp_us - feedback->timestamp_us; }
+            if (application_integrated_diag_requested_us != 0ULL)
+            {
+                if (application_integrated_probe_failed != 0U) { probe_state = "failed"; }
+                else if (timestamp_us < application_integrated_diag_requested_us ||
+                    timestamp_us - application_integrated_diag_requested_us >
+                        ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US)
+                { probe_state = "timeout"; }
+                else if (after_transmit != 0U) { probe_state = "feedback"; }
+                else if (application_integrated_diag_transmitted_us != 0ULL)
+                { probe_state = "transmitted"; }
+                else if (application_integrated_probe_submitted_us != 0ULL)
+                { probe_state = "submitted"; }
+                else { probe_state = "queued"; }
+            }
+            written = snprintf(detail, sizeof(detail),
+                "probe motor=%u state=%s tx=%u sample_after_tx=%u feedback_state=%u fault=%lu age_us=%llu owner=%s",
+                (unsigned int)DEBUG_UI_INITIAL_MOTOR_ID, probe_state,
+                (unsigned int)application_integrated_probe_transmitted,
+                (unsigned int)after_transmit, (unsigned int)feedback->driver_state,
+                (unsigned long)feedback->fault_flags,
+                (unsigned long long)feedback_age_us,
+                aethor_app_integrated_owner_name(owner));
+            status = written < 0 || (size_t)written >= sizeof(detail) ?
+                PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL :
+                aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_OK,
+                    request.request_id, detail);
+        }
+        else if (request.has_request_id == 0U || request.positional_count != 0U ||
+            request.field_count != 1U ||
+            !text_protocol_find_field(&request, "motor", &motor) ||
+            motor.length != 1U ||
+            motor.data[0] != (char)('0' + DEBUG_UI_INITIAL_MOTOR_ID))
+        { status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+            request.request_id, "code=bad_argument"); }
+        else
+        {
+            AdrcLcdOwnershipEvidence evidence;
+            uint8_t previous_probe_active = (uint8_t)(
+                application_integrated_diag_requested_us != 0ULL &&
+                timestamp_us >= application_integrated_diag_requested_us &&
+                timestamp_us - application_integrated_diag_requested_us <=
+                    ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US);
+            aethor_app_integrated_build_evidence(timestamp_us,
+                DEBUG_UI_INITIAL_MOTOR_ID - 1U, &evidence);
+            if (owner != ADRC_LCD_OWNER_LCD || previous_probe_active != 0U ||
+                evidence.lcd_idle == 0U || evidence.can_idle == 0U ||
+                evidence.mit_discovered == 0U ||
+                application_action.state != AETHOR_APP_ACTION_IDLE)
+            { status = aethor_app_integrated_response(output,
+                PROTOCOL_ENGINE_STATUS_BAD_REQUEST, request.request_id,
+                "code=owner_bus_or_mode_busy"); }
+            else
+            {
+                application_integrated_diag_requested_us = timestamp_us;
+                application_integrated_diag_transmitted_us = 0ULL;
+                application_integrated_probe_submitted_us = 0ULL;
+                application_integrated_probe_transmitted = 0U;
+                application_integrated_probe_failed = 0U;
+                status = aethor_app_integrated_response(output,
+                    PROTOCOL_ENGINE_STATUS_OK, request.request_id, "probe=accepted");
+            }
         }
     }
     else if (text_protocol_request_path_equals(&request, "adrc", "gate"))
@@ -4398,6 +4493,8 @@ void aethor_app_integrated_note_legacy_can_activity(void)
     aethor_app_enter_task_critical();
     application_integrated_can_quiet_since_us = 0ULL;
     application_integrated_can_idle = 0U;
+    if (application_integrated_diag_requested_us != 0ULL)
+    { application_integrated_probe_failed = 1U; }
     aethor_app_exit_task_critical();
 }
 
@@ -4406,19 +4503,27 @@ uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestam
 {
     AdrcLcdOwnershipEvidence evidence;
     uint8_t available = 0U;
+    uint8_t axis;
     if (!application_initialized || frame == NULL || timestamp_us == 0ULL) { return 0U; }
     aethor_app_enter_task_critical();
-    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING &&
+    if ((application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING ||
+        (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD &&
+         application_integrated_diag_requested_us != 0ULL &&
+         timestamp_us >= application_integrated_diag_requested_us &&
+         timestamp_us - application_integrated_diag_requested_us <=
+            ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US)) &&
         application_integrated_probe_submitted_us == 0ULL &&
         application_integrated_probe_failed == 0U)
     {
+        axis = application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING ?
+            application_adrc_lcd_ownership.axis_index :
+            (uint8_t)(DEBUG_UI_INITIAL_MOTOR_ID - 1U);
         aethor_app_integrated_build_evidence(timestamp_us,
-            application_adrc_lcd_ownership.axis_index, &evidence);
+            axis, &evidence);
         if (evidence.lcd_idle != 0U && evidence.can_idle != 0U &&
             evidence.mit_discovered != 0U)
         {
-            const JointConfig *joint = &arm_config_get_production()->joints[
-                application_adrc_lcd_ownership.axis_index];
+            const JointConfig *joint = &arm_config_get_production()->joints[axis];
             if (s3519_pack_feedback_query((uint8_t)joint->esc_id, frame) ==
                 S3519_CODEC_STATUS_OK)
             {
@@ -4437,11 +4542,17 @@ void aethor_app_integrated_report_probe_transmit(uint8_t succeeded, uint64_t tim
 {
     if (!application_initialized) { return; }
     aethor_app_enter_task_critical();
-    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING &&
+    if ((application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING ||
+        (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD &&
+         application_integrated_diag_requested_us != 0ULL)) &&
         application_integrated_probe_submitted_us != 0ULL)
     {
         if (succeeded != 0U && timestamp_us >= application_integrated_probe_submitted_us)
-        { application_integrated_probe_transmitted = 1U; }
+        {
+            application_integrated_probe_transmitted = 1U;
+            if (application_integrated_diag_requested_us != 0ULL)
+            { application_integrated_diag_transmitted_us = timestamp_us; }
+        }
         else { application_integrated_probe_failed = 1U; }
     }
     aethor_app_exit_task_critical();

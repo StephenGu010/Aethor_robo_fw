@@ -31,6 +31,12 @@ static uint64_t application_integrated_can_quiet_since_us;
 static uint64_t application_integrated_probe_submitted_us;
 static uint8_t application_integrated_probe_transmitted;
 static uint8_t application_integrated_probe_failed;
+/** @brief Raw receive evidence retained after one bounded acquisition challenge. */
+static uint32_t application_integrated_acquire_rx_count;
+static uint32_t application_integrated_acquire_valid_count;
+static uint32_t application_integrated_acquire_rejected_count;
+static uint16_t application_integrated_acquire_last_rx_id;
+static uint8_t application_integrated_acquire_last_rx_length;
 /** @brief A separate LCD-owned diagnostic probe never participates in an ADRC handoff. */
 static uint64_t application_integrated_diag_requested_us;
 static uint64_t application_integrated_diag_transmitted_us;
@@ -2817,6 +2823,11 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
     application_integrated_probe_submitted_us = 0ULL;
     application_integrated_probe_transmitted = 0U;
     application_integrated_probe_failed = 0U;
+    application_integrated_acquire_rx_count = 0U;
+    application_integrated_acquire_valid_count = 0U;
+    application_integrated_acquire_rejected_count = 0U;
+    application_integrated_acquire_last_rx_id = 0U;
+    application_integrated_acquire_last_rx_length = 0U;
     application_integrated_diag_requested_us = 0ULL;
     application_integrated_diag_transmitted_us = 0ULL;
     application_integrated_diag_query_length = 4U;
@@ -2962,6 +2973,11 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 application_integrated_probe_submitted_us = 0ULL;
                 application_integrated_probe_transmitted = 0U;
                 application_integrated_probe_failed = 0U;
+                application_integrated_acquire_rx_count = 0U;
+                application_integrated_acquire_valid_count = 0U;
+                application_integrated_acquire_rejected_count = 0U;
+                application_integrated_acquire_last_rx_id = 0U;
+                application_integrated_acquire_last_rx_length = 0U;
                 application_integrated_diag_requested_us = 0ULL;
                 application_integrated_diag_transmitted_us = 0ULL;
             }
@@ -3139,12 +3155,12 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 &application_motor_runtime.discovery.results[DEBUG_UI_INITIAL_MOTOR_ID - 1U];
             const MotorFeedbackTiming *feedback_timing =
                 &application_motor_runtime.feedback_timing[DEBUG_UI_INITIAL_MOTOR_ID - 1U];
-            char detail[384];
+            char detail[448];
             int written;
             aethor_app_integrated_build_evidence(timestamp_us,
                 DEBUG_UI_INITIAL_MOTOR_ID - 1U, &evidence);
             written = snprintf(detail, sizeof(detail),
-                "gate motor=%u lcd_idle=%u can_idle=%u mit_ready=%u mode=%lu fields=%04x verified=%02x fb_fresh=%u disabled=%u no_fault=%u stationary=%u authority=%u action=%u ui_busy=%u ui_results=%u proto_results=%u discovery_active=%u active_samples=%lu active_intervals=%lu active_min_us=%lu active_max_us=%lu",
+                "gate motor=%u lcd_idle=%u can_idle=%u mit_ready=%u mode=%lu fields=%04x verified=%02x fb_fresh=%u disabled=%u no_fault=%u stationary=%u authority=%u action=%u ui_busy=%u ui_results=%u proto_results=%u discovery_active=%u active_samples=%lu active_intervals=%lu active_min_us=%lu active_max_us=%lu acq_submit=%u acq_tx=%u acq_failed=%u acq_rx=%lu acq_valid=%lu acq_rejected=%lu acq_last_id=%u acq_last_len=%u",
                 (unsigned int)DEBUG_UI_INITIAL_MOTOR_ID,
                 (unsigned int)evidence.lcd_idle, (unsigned int)evidence.can_idle,
                 (unsigned int)evidence.mit_discovered,
@@ -3163,7 +3179,15 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 (unsigned long)feedback_timing->sample_count,
                 (unsigned long)feedback_timing->interval_count,
                 (unsigned long)feedback_timing->minimum_interval_us,
-                (unsigned long)feedback_timing->maximum_interval_us);
+                (unsigned long)feedback_timing->maximum_interval_us,
+                (unsigned int)(application_integrated_probe_submitted_us != 0ULL),
+                (unsigned int)application_integrated_probe_transmitted,
+                (unsigned int)application_integrated_probe_failed,
+                (unsigned long)application_integrated_acquire_rx_count,
+                (unsigned long)application_integrated_acquire_valid_count,
+                (unsigned long)application_integrated_acquire_rejected_count,
+                (unsigned int)application_integrated_acquire_last_rx_id,
+                (unsigned int)application_integrated_acquire_last_rx_length);
             status = written < 0 || (size_t)written >= sizeof(detail) ?
                 PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL :
                 aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_OK,
@@ -3506,6 +3530,23 @@ MotorRuntimeStatus aethor_app_receive_can_frame(const CanFrame *frame,
         uint32_t rejected_before = application_motor_runtime.rejected_feedback_count;
         MotorRuntimeStatus status = motor_runtime_accept_frame(
             &application_motor_runtime, frame, timestamp_us);
+        if (frame != NULL && application_adrc_lcd_ownership.state ==
+                ADRC_LCD_OWNER_ACQUIRING &&
+            application_integrated_probe_submitted_us != 0ULL &&
+            timestamp_us > application_integrated_probe_submitted_us &&
+            timestamp_us - application_integrated_probe_submitted_us <=
+                ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US)
+        {
+            aethor_app_enter_task_critical();
+            ++application_integrated_acquire_rx_count;
+            if (application_motor_runtime.accepted_feedback_count > accepted_before)
+            { ++application_integrated_acquire_valid_count; }
+            if (application_motor_runtime.rejected_feedback_count > rejected_before)
+            { ++application_integrated_acquire_rejected_count; }
+            application_integrated_acquire_last_rx_id = frame->identifier;
+            application_integrated_acquire_last_rx_length = frame->length;
+            aethor_app_exit_task_critical();
+        }
         if (frame != NULL && application_integrated_diag_transmitted_us != 0ULL &&
             timestamp_us > application_integrated_diag_transmitted_us &&
             timestamp_us >= application_integrated_diag_requested_us &&

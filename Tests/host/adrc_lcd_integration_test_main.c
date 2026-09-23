@@ -326,11 +326,23 @@ static void test_lcd_default_and_safe_acquire(void)
         frame.data[0] == 0xFFU && frame.data[6] == 0xFFU &&
         frame.data[7] == S3519_MODE_COMMAND_DISABLE);
     assert(aethor_app_integrated_pop_probe_frame(&frame, 8002U) == 0U);
-    fixture_disabled_motor7(8003U);
-    (void)aethor_app_service(8004U);
+    memset(&frame, 0, sizeof(frame));
+    frame.identifier = arm_config_get_production()->joints[6].master_id;
+    frame.length = 7U;
+    frame.data[0] = (uint8_t)arm_config_get_production()->joints[6].esc_id;
+    frame.data[1] = 0x80U; frame.data[2] = 0U;
+    frame.data[3] = 0x80U; frame.data[4] = 0x08U;
+    frame.data[6] = 25U; frame.data[7] = 25U;
+    assert(aethor_app_receive_can_frame(&frame, 8003U) == MOTOR_RUNTIME_STATUS_CODEC_ERROR);
+    frame.length = 8U;
+    assert(aethor_app_receive_can_frame(&frame, 8004U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(application_integrated_acquire_rx_count == 2U);
+    assert(application_integrated_acquire_valid_count == 1U);
+    assert(application_integrated_acquire_rejected_count == 1U);
+    (void)aethor_app_service(8005U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
-    aethor_app_integrated_report_probe_transmit(1U, 8005U);
-    (void)aethor_app_service(8006U);
+    aethor_app_integrated_report_probe_transmit(1U, 8006U);
+    (void)aethor_app_service(8007U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ADRC);
     assert(application_motor_runtime.discovery.target_joint_mask == 0x40U);
     assert(request("6 adrc status", 8003U, &output) == PROTOCOL_ENGINE_STATUS_OK);
@@ -364,6 +376,9 @@ static void test_no_feedback_after_probe_times_out(void)
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
     assert(request("2 adrc status", 106005U, &output) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output.messages[0].data, "handoff=timeout") != NULL);
+    assert(request("3 adrc gate motor=7", 106006U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data,
+        "acq_submit=1 acq_tx=1 acq_failed=0 acq_rx=0 acq_valid=0 acq_rejected=0") != NULL);
     assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 0U);
 }
 

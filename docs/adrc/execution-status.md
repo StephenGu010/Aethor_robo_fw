@@ -46,7 +46,11 @@
 
 - 离线复核发现释放也需按 DISABLE **提交时刻**而非下一周期回执采样时刻判断反馈新鲜度，否则一次快速禁能回复可能被误判为旧反馈，导致 LCD 控制权无法交还。现已新增专用缓冲区提交时间记录；交还仍要求匹配的实际发送成功、提交后的新鲜禁能/无故障/低速反馈和 CAN 空闲。所有权、集成、专用 CAN 通道、ADRC App 主机测试已通过，Keil 集成完整重建 0 错误、0 警告，构建日志为 `output/adrc/hardware/enabled_feedback_pilot/handoff_release_build_20260923.log`。释放修正版 `cc3bb3f` 已在 24 V 关闭时烧录：原 Flash 1 MiB 已备份，新镜像 320632 字节回读一致，复位运行；报告为 `output/adrc/hardware/enabled_feedback_pilot/20260923T163039/flash-result.json`。COM4 只读验收为 `enabled=00 moving=0 owner=lcd qualified=0 busoff=0`，原始记录在同目录 `postflash_usb_readonly.txt`。尚未带电实测接管/释放；即使通过，速度与转矩量化资格仍阻止 ADRC 运动。
 
-- 已准备 `Tests/hardware/adrc_motor7_handoff_window.ps1`，用于下一次**单次上电窗口**的非运动接管/释放验收。脚本只允许电机 7 参数发现、失能切模式、`adrc acquire`、`adrc release`、只读状态、模式 2 恢复及最终 DISABLE；无 ENABLE、转矩或速度命令。每步检查 LCD 控制权、MIT 模式和 CAN 状态，若释放后仍非 LCD 所有者，保持锁定、不尝试旧模式命令，并在原始记录中标记需要手动断电。脚本已通过 PowerShell 语法检查，尚未在带电电机上执行。
+- `Tests/hardware/adrc_motor7_handoff_window.ps1` 用于**单次上电窗口**的非运动接管/释放验收。脚本只允许电机 7 参数发现、失能切模式、`adrc acquire`、`adrc release`、只读状态、模式 2 恢复及最终 DISABLE；无 ENABLE、转矩或速度命令。每步检查 LCD 控制权、MIT 模式和 CAN 状态，若释放后仍非 LCD 所有者，保持锁定、不尝试旧模式命令，并在原始记录中标记需要手动断电。脚本已通过 PowerShell 语法检查；本次实际执行结果见下。
+
+- 用户确认 OUTPUT 为 24 V / 0.0960 A、CV/CC 未显示后，COM4 上电只读预检为 `enabled=00 moving=0 owner=lcd can_idle=1 busoff=0`，记录 `output/adrc/hardware/enabled_feedback_pilot/20260923T163039/powered_handoff_preflight.txt`。单窗口脚本首轮在模式 1 回读后立即看到 `can_idle=0`，按安全门退出，自动恢复模式 2 并最终 DISABLE；记录 `output/adrc/hardware/handoff_window_20260923/motor7_handoff_20260923T083826835Z.txt`。脚本随后改为等待 4 ms CAN 静默，不把这项暂态当成固件故障。
+
+- 同一上电窗口复测时，电机 7 原始模式 2 发现完成，失能切入模式 1 并等到 `lcd_idle=1 can_idle=1 mit_ready=1`；`adrc acquire motor=7` 被接受，但约 100 ms 后返回 `owner=lcd handoff=timeout`。脚本未发送 `adrc release`，而是在 LCD 持权下恢复模式 2、最终 DISABLE。记录 `output/adrc/hardware/handoff_window_20260923/motor7_handoff_20260923T083939471Z.txt`；随后只读状态仍为 `enabled=00 moving=0 owner=lcd busoff=0`，见同目录 `posttimeout_readonly.txt`。用户已确认关闭 24 V。断电后只读 STM32 SRAM：本次挑战 `probe_submitted_us=400298000`、`probe_transmitted=1`、`probe_failed=0`，记录为同目录 `probe_ram_after_timeout.json`；说明禁能挑战已提交且专用 FDCAN 确认实际发送，但在 100 ms 内**没有得到合格的新鲜禁能反馈**。这次没有按挑战窗口单独记录原始 RX/接收解码，所以不能断言驱动完全未回复，更不能放开接管或 ADRC 运动。现已离线补上挑战窗口的原始帧、有效帧和拒收帧计数，并让单窗口脚本在超时后保存 `adrc gate`；主机测试通过，Keil 完整重建 0 错误、0 警告，日志为 `output/adrc/hardware/handoff_window_20260923/acquire_rx_diagnostic_build_20260923.log`。诊断版尚未烧录或带电复测。
 
 ## 文件与版本
 
@@ -91,7 +95,7 @@ MATLAB 客户端已完成，入口见 `Models/AdrcClient/README.md`。9 月 21 �
 
 离线软件阶段已完成。硬件阶段仍需按顺序完成：
 
-1. 集成目标的既往烧录、回读、USB 检查，以及模式 2/模式 1 禁能反馈试验已完成。模式 1 能临时切入并恢复模式 2；4/8 字节 `0xCC` 查询均实际发帧，但禁能状态下没有新接收帧。首次 100 ms MIT HOLD 脚本运行时 OUTPUT 关闭，不计作带电证据；随后在用户确认 OUTPUT 为 24 V / 0.096 A 且可观察转子的条件下重做一次，测得 26 帧连续使能态反馈及 25 个 4000 μs 接收间隔，模式 2 恢复和最终失能完成。下一步先在 24 V 关闭时烧录新 DISABLE 接管版本并只读验收，再在一次受控上电窗口验证非运动接管和释放；不因此批准 ADRC 运动。
+1. 集成目标的烧录、回读、USB 检查，以及模式 2/模式 1 禁能反馈试验已完成。模式 1 能临时切入并恢复模式 2；4/8 字节 `0xCC` 查询均实际发帧，但禁能状态下没有新接收帧。首次 100 ms MIT HOLD 脚本运行时 OUTPUT 关闭，不计作带电证据；随后在确认 24 V 供电的条件下重做一次，测得 26 帧连续使能态反馈及 25 个 4000 μs 接收间隔，模式 2 恢复和最终失能完成。新 DISABLE 接管版本也已烧录并带电试验，帧发送成功却未取得合格禁能反馈，接管超时、安全恢复；先定位接管窗口 RX/反馈条件，不重复相同带电步骤。
 2. 分别核对位置、速度、转矩映射与量化；当前实测范围的速度、转矩码格与离线模型及固件资格门限不匹配。先解决测量链与模型/门限一致性，不把历史位置比例自动套用到速度或转矩。
 3. 经有限脉冲辨识 b0，重复及保留数据验证后，更新 plant 与控制参数并重新执行模型验收。
 4. 进行有限期 PI/LADRC 对照，保存速度、已发送名义转矩、ESO 状态、扰动恢复与最终失能证据。

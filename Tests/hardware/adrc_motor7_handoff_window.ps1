@@ -233,6 +233,10 @@ catch {
 finally {
     if ($serialPort.IsOpen -and $mitModeEntered) {
         try {
+            [void](Invoke-WindowRequest $serialPort 81000899 'adrc gate motor=7')
+        }
+        catch { $transcriptLines.Add('acquire_gate_read_error=' + $_.Exception.Message) }
+        try {
             $ownerReply = Invoke-WindowRequest $serialPort 81000900 'adrc status'
             $ownerReturnedToLcd = $ownerReply -match 'owner=lcd\b'
         }

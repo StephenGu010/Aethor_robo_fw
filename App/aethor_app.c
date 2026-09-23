@@ -27,7 +27,7 @@ static AdrcAppBridge application_adrc_bridge;
 static AdrcLcdOwnership application_adrc_lcd_ownership;
 static uint8_t application_integrated_can_idle;
 static uint64_t application_integrated_can_quiet_since_us;
-/** @brief One read-only pre-handoff query must transmit before a newer disabled sample can count. */
+/** @brief One dedicated-channel DISABLE must transmit before newer disabled feedback can count. */
 static uint64_t application_integrated_probe_submitted_us;
 static uint8_t application_integrated_probe_transmitted;
 static uint8_t application_integrated_probe_failed;
@@ -4570,7 +4570,7 @@ void aethor_app_integrated_note_legacy_can_activity(void)
     aethor_app_exit_task_critical();
 }
 
-/** @brief Issues at most one read-only disabled-feedback query after legacy CAN is quiet. */
+/** @brief Issues one acquisition DISABLE or LCD-owned diagnostic query after CAN is quiet. */
 uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestamp_us)
 {
     AdrcLcdOwnershipEvidence evidence;
@@ -4596,10 +4596,23 @@ uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestam
             evidence.mit_discovered != 0U)
         {
             const JointConfig *joint = &arm_config_get_production()->joints[axis];
-            if (s3519_pack_feedback_query_with_length((uint8_t)joint->esc_id,
-                    application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD ?
-                        application_integrated_diag_query_length : 4U, frame) ==
-                S3519_CODEC_STATUS_OK)
+            uint8_t packed = 0U;
+            if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING)
+            {
+                MotorEmergencyFrameBatch disable_batch;
+                if (motor_runtime_build_mode_command_batch(&application_motor_runtime,
+                        S3519_CONTROL_MODE_MIT, S3519_MODE_COMMAND_DISABLE,
+                        (uint8_t)(1U << axis), &disable_batch) == MOTOR_RUNTIME_STATUS_OK &&
+                    disable_batch.count == 1U)
+                {
+                    *frame = disable_batch.frames[0];
+                    packed = 1U;
+                }
+            }
+            else if (s3519_pack_feedback_query_with_length((uint8_t)joint->esc_id,
+                    application_integrated_diag_query_length, frame) == S3519_CODEC_STATUS_OK)
+            { packed = 1U; }
+            if (packed != 0U)
             {
                 application_integrated_probe_submitted_us = timestamp_us;
                 available = 1U;

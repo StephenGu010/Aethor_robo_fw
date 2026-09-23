@@ -10,6 +10,31 @@
 
 static AdrcCanReceipt pending_receipt;
 
+/** @brief Allows only the diagnosed four/eight-byte vendor feedback query. */
+static uint8_t valid_feedback_query(const CanFrame *frame)
+{
+    return (uint8_t)(frame->identifier == 0x7FFU &&
+        (frame->length == 4U || frame->length == 8U) &&
+        frame->data[0] != 0U && frame->data[1] == 0U &&
+        frame->data[2] == 0xCCU && frame->data[3] == 0U &&
+        (frame->length == 4U ||
+         (frame->data[4] == 0U && frame->data[5] == 0U &&
+          frame->data[6] == 0U && frame->data[7] == 0U)));
+}
+
+/** @brief Allows one exact motor-7 DISABLE challenge, never enable or torque. */
+static uint8_t valid_acquire_disable(const CanFrame *frame)
+{
+    uint8_t byte_index;
+    if (frame->identifier != 7U || frame->length != 8U || frame->data[7] != 0xFDU)
+    { return 0U; }
+    for (byte_index = 0U; byte_index < 7U; ++byte_index)
+    {
+        if (frame->data[byte_index] != 0xFFU) { return 0U; }
+    }
+    return 1U;
+}
+
 /** @brief Initializes bookkeeping only before control service begins. */
 void stm32_adrc_channel_init(void)
 {
@@ -40,13 +65,7 @@ uint8_t stm32_adrc_channel_submit(const CanFrame *frame, AdrcCanKind kind, float
     if (frame == NULL || frame->identifier > CAN_STANDARD_MAX_IDENTIFIER ||
         (unsigned)kind > (unsigned)ADRC_CAN_PROBE ||
         (kind == ADRC_CAN_PROBE &&
-         (frame->identifier != 0x7FFU ||
-          (frame->length != 4U && frame->length != 8U) ||
-          frame->data[0] == 0U || frame->data[1] != 0U ||
-          frame->data[2] != 0xCCU || frame->data[3] != 0U ||
-          (frame->length == 8U &&
-           (frame->data[4] != 0U || frame->data[5] != 0U ||
-            frame->data[6] != 0U || frame->data[7] != 0U)) ||
+         ((valid_feedback_query(frame) == 0U && valid_acquire_disable(frame) == 0U) ||
           decoded_torque_nm != 0.0F)) ||
         (kind != ADRC_CAN_PROBE && frame->length != 8U) ||
         decoded_torque_nm != decoded_torque_nm ||

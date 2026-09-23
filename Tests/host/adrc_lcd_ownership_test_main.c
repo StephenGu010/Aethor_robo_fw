@@ -23,7 +23,7 @@ static AdrcLcdOwnershipEvidence safe_evidence(uint64_t now_us)
     return evidence;
 }
 
-/** @brief Adds a successful read-only transmit and a newer synthetic feedback sample. */
+/** @brief Adds a successful disable transmit and a post-submission feedback sample. */
 static AdrcLcdOwnershipEvidence probed_evidence(uint64_t now_us,
     uint64_t probe_submitted_us)
 {
@@ -33,7 +33,7 @@ static AdrcLcdOwnershipEvidence probed_evidence(uint64_t now_us,
     return evidence;
 }
 
-/** @brief Establishes an ADRC owner only after a post-probe disabled sample. */
+/** @brief Establishes an ADRC owner only after confirmed send and fresh disabled feedback. */
 static void acquire_probed_owner(AdrcLcdOwnership *owner)
 {
     AdrcLcdOwnershipEvidence evidence;
@@ -90,7 +90,7 @@ static void test_acquire_requires_every_gate(void)
     }
 }
 
-/** @brief Keeps a bounded acquire pending while a requested disabled sample has not arrived. */
+/** @brief Keeps acquire pending until disabled feedback follows the queued challenge. */
 static void test_acquire_waits_for_feedback_probe(void)
 {
     AdrcLcdOwnership owner;
@@ -105,7 +105,7 @@ static void test_acquire_waits_for_feedback_probe(void)
     evidence = probed_evidence(18000ULL, 14000ULL);
     evidence.feedback_us = 14000ULL;
     assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
-    evidence = probed_evidence(22000ULL, 14000ULL);
+    evidence.feedback_us = 14001ULL;
     assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_TRANSFERRED);
 
     adrc_lcd_ownership_init(&owner);

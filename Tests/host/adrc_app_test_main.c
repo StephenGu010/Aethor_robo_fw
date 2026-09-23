@@ -443,6 +443,36 @@ static void test_deferred_bridge_discovery(void)
     assert(application_motor_runtime.discovery.target_joint_mask == 0x40U);
 }
 
+/** @brief Characterizes measured motor-7 mapping gates without creating hardware evidence. */
+static void test_motor7_mapping_quantization_characterization(void)
+{
+    AdrcExperimentConfig config;
+    AdrcExperimentQualification evidence;
+    MotorDiscoveryResult *discovery;
+
+    aethor_app_init(1000U, 777U);
+    fixture_feedback(0U, 4000U, 0U);
+    discovery = &application_motor_runtime.discovery.results[0];
+    discovery->ranges.position_max_rad = 12.5F;
+    discovery->ranges.velocity_max_rad_s = 200.0F;
+    discovery->ranges.torque_max_nm = 10.0F;
+    config = application_adrc_bridge.bench.draft_config;
+    config.velocity_quantum_rad_s = 0.0098F;
+    config.near_zero_rad_s = 0.02F;
+    memset(&evidence, 0, sizeof(evidence));
+    evidence.axis_index = 0U;
+    evidence.provenance = ADRC_ENV_HARDWARE;
+    evidence.verified_flags = ADRC_QUAL_IDENTIFY_REQUIRED;
+    evidence.position_max_rad = 12.5F;
+    evidence.velocity_max_rad_s = 20.0F;
+    evidence.torque_max_nm = 4.0F;
+    assert(aethor_app_adrc_set_evidence(&config, &evidence, 4000U) == ADRC_RESULT_UNQUALIFIED);
+    discovery->ranges.velocity_max_rad_s = 20.0F;
+    assert(aethor_app_adrc_set_evidence(&config, &evidence, 4000U) == ADRC_RESULT_UNQUALIFIED);
+    discovery->ranges.torque_max_nm = 4.0F;
+    assert(aethor_app_adrc_set_evidence(&config, &evidence, 4000U) == ADRC_RESULT_OK);
+}
+
 /** @brief Ensures opt-in ADRC builds reject legacy actuation and lack startup qualification. */
 int main(void)
 {
@@ -478,6 +508,7 @@ int main(void)
     test_readonly_feedback_query_pacing();
     test_readonly_hardware_diagnostics();
     test_deferred_bridge_discovery();
+    test_motor7_mapping_quantization_characterization();
     puts("ADRC_APP_TESTS_PASSED");
     return 0;
 }

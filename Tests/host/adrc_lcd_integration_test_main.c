@@ -322,14 +322,15 @@ static void test_lcd_default_and_safe_acquire(void)
     (void)aethor_app_service(8002U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
     assert(aethor_app_integrated_pop_probe_frame(&frame, 8002U) == 1U);
-    assert(frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER && frame.length == 4U &&
-        frame.data[0] == 7U && frame.data[2] == 0xCCU);
+    assert(frame.identifier == 7U && frame.length == 8U &&
+        frame.data[0] == 0xFFU && frame.data[6] == 0xFFU &&
+        frame.data[7] == S3519_MODE_COMMAND_DISABLE);
     assert(aethor_app_integrated_pop_probe_frame(&frame, 8002U) == 0U);
-    aethor_app_integrated_report_probe_transmit(1U, 8003U);
+    fixture_disabled_motor7(8003U);
     (void)aethor_app_service(8004U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
-    fixture_disabled_motor7(9000U);
-    (void)aethor_app_service(9001U);
+    aethor_app_integrated_report_probe_transmit(1U, 8005U);
+    (void)aethor_app_service(8006U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ADRC);
     assert(application_motor_runtime.discovery.target_joint_mask == 0x40U);
     assert(request("6 adrc status", 8003U, &output) == PROTOCOL_ENGINE_STATUS_OK);

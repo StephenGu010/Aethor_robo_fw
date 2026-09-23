@@ -56,6 +56,27 @@ static ProtocolEngineStatus request(const char *line, uint64_t timestamp_us,
     return aethor_app_process_protocol_line(line, strlen(line), timestamp_us, output);
 }
 
+/** @brief Exposes each pre-handoff gate without changing owner or requesting a CAN frame. */
+static void test_read_only_handoff_gate_diagnostics(void)
+{
+    ProtocolOutputBatch output;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    assert(request("1 adrc gate motor=7", 6002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "motor=7") != NULL);
+    assert(strstr(output.messages[0].data, "lcd_idle=1 can_idle=1 mit_ready=1") != NULL);
+    assert(strstr(output.messages[0].data, "mode=1") != NULL);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+    assert(application_integrated_probe_submitted_us == 0ULL);
+
+    application_motor_runtime.discovery.results[6].observed_control_mode = 2U;
+    assert(request("2 adrc gate motor=7", 6003U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "mit_ready=0 mode=2") != NULL);
+    assert(request("3 adrc gate motor=1", 6004U, &output) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+}
+
 /** @brief A drained CAN FIFO cannot override an unpublished LCD control group. */
 static void test_pending_lcd_control_rejects_acquire(void)
 {
@@ -255,6 +276,7 @@ static void test_lcd_stop_during_adrc(void)
 /** @brief Runs one deterministic integrated handoff without USB or CAN hardware. */
 int main(void)
 {
+    test_read_only_handoff_gate_diagnostics();
     test_pending_lcd_control_rejects_acquire();
     test_recent_lcd_can_rejects_acquire();
     test_lcd_default_and_safe_acquire();

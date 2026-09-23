@@ -32,6 +32,9 @@ static uint64_t application_integrated_probe_submitted_us;
 static uint8_t application_integrated_probe_transmitted;
 static uint8_t application_integrated_probe_failed;
 static AdrcLcdOwnershipStatus application_integrated_handoff;
+/** @brief Builds a read-only gate snapshot for an explicit axis without reserving ownership. */
+static void aethor_app_integrated_build_evidence(uint64_t timestamp_us, uint8_t axis,
+    AdrcLcdOwnershipEvidence *evidence);
 #endif
 #endif
 
@@ -2960,6 +2963,45 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 PROTOCOL_ENGINE_STATUS_BAD_REQUEST, request.request_id,
             admission == ADRC_LCD_OWNERSHIP_OK ? "release=accepted" : "code=owner_busy_or_stale");
     }
+    else if (text_protocol_request_path_equals(&request, "adrc", "gate"))
+    {
+        if (request.positional_count != 0U || request.field_count != 1U ||
+            !text_protocol_find_field(&request, "motor", &motor) ||
+            motor.length != 1U || motor.data[0] != (char)('0' + DEBUG_UI_INITIAL_MOTOR_ID))
+        { status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+            request.request_id, "code=bad_argument"); }
+        else
+        {
+            AdrcLcdOwnershipEvidence evidence;
+            const MotorDiscoveryResult *discovery =
+                &application_motor_runtime.discovery.results[DEBUG_UI_INITIAL_MOTOR_ID - 1U];
+            char detail[320];
+            int written;
+            aethor_app_integrated_build_evidence(timestamp_us,
+                DEBUG_UI_INITIAL_MOTOR_ID - 1U, &evidence);
+            written = snprintf(detail, sizeof(detail),
+                "gate motor=%u lcd_idle=%u can_idle=%u mit_ready=%u mode=%lu fields=%04x verified=%02x fb_fresh=%u disabled=%u no_fault=%u stationary=%u authority=%u action=%u ui_busy=%u ui_results=%u proto_results=%u discovery_active=%u",
+                (unsigned int)DEBUG_UI_INITIAL_MOTOR_ID,
+                (unsigned int)evidence.lcd_idle, (unsigned int)evidence.can_idle,
+                (unsigned int)evidence.mit_discovered,
+                (unsigned long)discovery->observed_control_mode,
+                (unsigned int)discovery->verified_fields_mask,
+                (unsigned int)application_motor_runtime.discovery.verified_joint_mask,
+                (unsigned int)evidence.feedback_fresh, (unsigned int)evidence.disabled,
+                (unsigned int)evidence.no_fault, (unsigned int)evidence.stationary,
+                (unsigned int)application_debug_ui.authority,
+                (unsigned int)application_action.state,
+                (unsigned int)debug_ui_mailbox_busy(&application_debug_ui.mailbox, true),
+                (unsigned int)debug_ui_mailbox_result_count(&application_debug_ui.mailbox),
+                (unsigned int)(uint8_t)(application_protocol_engine.result_write_sequence -
+                    application_protocol_engine.result_read_sequence),
+                (unsigned int)application_motor_runtime.discovery_active);
+            status = written < 0 || (size_t)written >= sizeof(detail) ?
+                PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL :
+                aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_OK,
+                    request.request_id, detail);
+        }
+    }
     else if (aethor_app_integrated_is_adrc(&request))
     {
         uint8_t read_only = (uint8_t)(text_protocol_request_path_equals(&request, "adrc", NULL) ||
@@ -4220,14 +4262,13 @@ static uint8_t aethor_app_service_active_action(
 
 #if AETHOR_ADRC_LCD_INTEGRATED
 /** @brief Captures only fresh physical feedback and drained legacy sources for handoff. */
-static void aethor_app_integrated_build_evidence(uint64_t timestamp_us,
+static void aethor_app_integrated_build_evidence(uint64_t timestamp_us, uint8_t axis,
     AdrcLcdOwnershipEvidence *evidence)
 {
     MotorFeedbackSnapshot snapshot;
     const MotorDiscoveryResult *discovery;
     const MotorJointFeedback *feedback;
     const JointConfig *joint;
-    uint8_t axis = application_adrc_lcd_ownership.axis_index;
     uint8_t bit;
     memset(evidence, 0, sizeof(*evidence));
     memset(&snapshot, 0, sizeof(snapshot));
@@ -4284,7 +4325,8 @@ static uint8_t aethor_app_integrated_service(uint64_t timestamp_us)
     if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ADRC ||
         application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_RELEASING)
     { result_generated = adrc_app_bridge_service(&application_adrc_bridge, timestamp_us); }
-    aethor_app_integrated_build_evidence(timestamp_us, &evidence);
+    aethor_app_integrated_build_evidence(timestamp_us,
+        application_adrc_lcd_ownership.axis_index, &evidence);
     transition = adrc_lcd_ownership_service(&application_adrc_lcd_ownership, &evidence);
     if (transition != ADRC_LCD_OWNERSHIP_WAITING)
     { application_integrated_handoff = transition; }
@@ -4341,7 +4383,8 @@ uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestam
         application_integrated_probe_submitted_us == 0ULL &&
         application_integrated_probe_failed == 0U)
     {
-        aethor_app_integrated_build_evidence(timestamp_us, &evidence);
+        aethor_app_integrated_build_evidence(timestamp_us,
+            application_adrc_lcd_ownership.axis_index, &evidence);
         if (evidence.lcd_idle != 0U && evidence.can_idle != 0U &&
             evidence.mit_discovered != 0U)
         {

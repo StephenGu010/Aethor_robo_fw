@@ -2963,6 +2963,35 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 PROTOCOL_ENGINE_STATUS_BAD_REQUEST, request.request_id,
             admission == ADRC_LCD_OWNERSHIP_OK ? "release=accepted" : "code=owner_busy_or_stale");
     }
+    else if (text_protocol_request_path_equals(&request, "adrc", "discover"))
+    {
+        /* An explicit ADRC discovery reads registers through the normal CAN
+         * scheduler but never runs bench init's POS_VEL mode-write phase. */
+        AdrcLcdOwnershipEvidence evidence;
+        MotorRuntimeStatus discovery_status = MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+        if (request.has_request_id == 0U || request.positional_count != 0U ||
+            request.field_count != 1U ||
+            !text_protocol_find_field(&request, "motor", &motor) ||
+            motor.length != 1U ||
+            motor.data[0] != (char)('0' + DEBUG_UI_INITIAL_MOTOR_ID))
+        { status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+            request.request_id, "code=bad_argument"); }
+        else
+        {
+            aethor_app_integrated_build_evidence(timestamp_us,
+                DEBUG_UI_INITIAL_MOTOR_ID - 1U, &evidence);
+            if (owner == ADRC_LCD_OWNER_LCD && evidence.lcd_idle != 0U &&
+                evidence.can_idle != 0U &&
+                application_action.state == AETHOR_APP_ACTION_IDLE)
+            { discovery_status = motor_runtime_begin_discovery(&application_motor_runtime,
+                (uint8_t)(1U << (DEBUG_UI_INITIAL_MOTOR_ID - 1U))); }
+            status = aethor_app_integrated_response(output,
+                discovery_status == MOTOR_RUNTIME_STATUS_OK ? PROTOCOL_ENGINE_STATUS_OK :
+                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST, request.request_id,
+                discovery_status == MOTOR_RUNTIME_STATUS_OK ? "discover=accepted" :
+                    "code=owner_or_bus_busy");
+        }
+    }
     else if (text_protocol_request_path_equals(&request, "adrc", "gate"))
     {
         if (request.positional_count != 0U || request.field_count != 1U ||
@@ -4733,6 +4762,9 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
                                                       timestamp_us));
             }
             else if ((aethor_app_deferred_result_count() == 0U) &&
+#if AETHOR_ADRC_LCD_INTEGRATED
+                     (application_motor_runtime.discovery_active == 0U) &&
+#endif
                      (protocol_engine_pop_command(&application_protocol_engine,
                                                   &command) != 0U))
             {
@@ -4886,6 +4918,9 @@ static uint8_t aethor_app_debug_ui_service_stop_intent(uint64_t timestamp_us, ui
 static bool aethor_app_debug_ui_executor_busy(void)
 {
     return (application_action.state != AETHOR_APP_ACTION_IDLE) ||
+#if AETHOR_ADRC_LCD_INTEGRATED
+        (application_motor_runtime.discovery_active != 0U) ||
+#endif
         (application_debug_ui.fallback_stop_mask != 0U) ||
         (application_debug_ui.mailbox.stop_intent_mask != 0U) ||
         (application_protocol_engine.command_write_sequence != application_protocol_engine.command_read_sequence) ||

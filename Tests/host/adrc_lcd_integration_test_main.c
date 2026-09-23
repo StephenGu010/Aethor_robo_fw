@@ -77,6 +77,62 @@ static void test_read_only_handoff_gate_diagnostics(void)
     assert(request("3 adrc gate motor=1", 6004U, &output) == PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
 }
 
+/** @brief Requires a separate discovery command to emit parameter reads without rewriting mode. */
+static void test_adrc_discover_does_not_switch_motor_mode(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    CanTxPriority priority;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    assert(request("1 adrc discover motor=1", 6002U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(request("2 adrc discover motor=7", 6003U, &output) ==
+        PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "discover=accepted") != NULL);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+    assert(application_action.state == AETHOR_APP_ACTION_IDLE);
+    assert(application_motor_runtime.discovery_active == 1U);
+    assert(aethor_app_debug_ui_executor_busy());
+    assert(aethor_app_next_can_frame(6004U, &frame, &priority) ==
+        MOTOR_RUNTIME_STATUS_FRAME_READY);
+    assert(frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER);
+    assert(frame.data[2] == 0x33U);
+    assert(priority == CAN_TX_PRIORITY_PARAMETER);
+    assert(request("3 adrc discover motor=7", 6005U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(request("4 bench init 7", 6006U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    (void)aethor_app_service(6007U);
+    assert(application_action.state == AETHOR_APP_ACTION_IDLE);
+    assert(application_motor_runtime.discovery_active == 1U);
+}
+
+/** @brief Refuses diagnostic discovery while ownership or a control source is busy. */
+static void test_adrc_discover_requires_idle_sources(void)
+{
+    ProtocolOutputBatch output;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    assert(request("1 adrc discover motor=7", 2000U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    aethor_app_integrated_set_can_idle(1U, 2001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    application_debug_ui.authority = DEBUG_UI_AUTHORITY_LOCAL_ARMED;
+    assert(request("2 adrc discover motor=7", 6002U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    application_debug_ui.authority = DEBUG_UI_AUTHORITY_REMOTE;
+    application_action.state = AETHOR_APP_ACTION_MOTION;
+    assert(request("3 adrc discover motor=7", 6003U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    application_action.state = AETHOR_APP_ACTION_IDLE;
+    application_adrc_lcd_ownership.state = ADRC_LCD_OWNER_ADRC;
+    assert(request("4 adrc discover motor=7", 6004U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(application_motor_runtime.discovery_active == 0U);
+}
+
 /** @brief A drained CAN FIFO cannot override an unpublished LCD control group. */
 static void test_pending_lcd_control_rejects_acquire(void)
 {
@@ -277,6 +333,8 @@ static void test_lcd_stop_during_adrc(void)
 int main(void)
 {
     test_read_only_handoff_gate_diagnostics();
+    test_adrc_discover_does_not_switch_motor_mode();
+    test_adrc_discover_requires_idle_sources();
     test_pending_lcd_control_rejects_acquire();
     test_recent_lcd_can_rejects_acquire();
     test_lcd_default_and_safe_acquire();

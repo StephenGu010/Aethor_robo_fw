@@ -217,6 +217,39 @@ static void test_diagnostic_probe_times_out_without_feedback(void)
     assert(strstr(output.messages[0].data, "sample_after_tx=1") != NULL);
 }
 
+/** @brief A padded query records accepted and rejected raw replies without ADRC ownership. */
+static void test_diagnostic_probe_padded_query_and_rx_evidence(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    const JointConfig *joint = &arm_config_get_production()->joints[6];
+    const uint8_t malformed_payload[4] = {0x17U, 0U, 0U, 0U};
+    const uint8_t feedback_payload[8] = {0x17U, 0U, 0U, 0U, 0U, 0U, 25U, 25U};
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    assert(request("1 adrc probe motor=7 len=5", 6002U, &output) ==
+        PROTOCOL_ENGINE_STATUS_BAD_REQUEST);
+    assert(request("2 adrc probe motor=7 len=8", 6003U, &output) ==
+        PROTOCOL_ENGINE_STATUS_OK);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6004U) == 1U);
+    assert(frame.identifier == S3519_PARAMETER_COMMAND_IDENTIFIER && frame.length == 8U);
+    assert(frame.data[0] == 7U && frame.data[2] == 0xCCU && frame.data[7] == 0U);
+    aethor_app_integrated_report_probe_transmit(1U, 6005U);
+    assert(can_frame_init(&frame, joint->master_id, malformed_payload,
+        sizeof(malformed_payload)) == CAN_FRAME_STATUS_OK);
+    assert(aethor_app_receive_can_frame(&frame, 6006U) == MOTOR_RUNTIME_STATUS_CODEC_ERROR);
+    assert(can_frame_init(&frame, joint->master_id, feedback_payload,
+        sizeof(feedback_payload)) == CAN_FRAME_STATUS_OK);
+    assert(aethor_app_receive_can_frame(&frame, 6007U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(request("3 adrc probe", 6008U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    assert(strstr(output.messages[0].data, "state=feedback") != NULL);
+    assert(strstr(output.messages[0].data, "query_len=8") != NULL);
+    assert(strstr(output.messages[0].data, "rx_after_tx=2 rx_valid=1 rx_rejected=1") != NULL);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
+}
+
 /** @brief A drained CAN FIFO cannot override an unpublished LCD control group. */
 static void test_pending_lcd_control_rejects_acquire(void)
 {
@@ -422,6 +455,7 @@ int main(void)
     test_diagnostic_probe_requires_mit_and_preserves_lcd_owner();
     test_diagnostic_probe_rejects_failed_or_competing_transmission();
     test_diagnostic_probe_times_out_without_feedback();
+    test_diagnostic_probe_padded_query_and_rx_evidence();
     test_pending_lcd_control_rejects_acquire();
     test_recent_lcd_can_rejects_acquire();
     test_lcd_default_and_safe_acquire();

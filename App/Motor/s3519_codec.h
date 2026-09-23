@@ -155,6 +155,17 @@ S3519CodecStatus s3519_pack_control_mode_write(uint8_t esc_id,
 S3519CodecStatus s3519_pack_feedback_query(uint8_t esc_id, CanFrame *frame);
 
 /**
+ * @brief Packs the vendor status query in either the four- or eight-byte SDK form.
+ * @param esc_id Target motor receive identifier.
+ * @param frame_length Exact Classic CAN payload length, four or eight bytes.
+ * @param frame Destination Classic CAN frame.
+ * @return Detailed codec status.
+ */
+S3519CodecStatus s3519_pack_feedback_query_with_length(uint8_t esc_id,
+                                                       uint8_t frame_length,
+                                                       CanFrame *frame);
+
+/**
  * @brief Packs one MIT command using discovered motor ranges.
  */
 S3519CodecStatus s3519_pack_mit(uint8_t esc_id,

@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-Checks disabled motor-7 feedback in MIT mode during one 24 V power window.
+Compares disabled motor-7 four- and eight-byte feedback queries in one window.
 
 .DESCRIPTION
 Requires a user-confirmed 24 V supply and the LCD-MIT-ADRC firmware with
 `adrc probe`. It discovers parameters, changes only the volatile control mode,
-sends one feedback query, restores POS_VEL, and disables motor 7. It never
+sends one query of each vendor SDK length, restores POS_VEL, and disables motor 7. It never
 sends ENABLE, MIT torque, ADRC acquire, or motion commands. A transcript is
 saved even if the serial link or a safety gate fails.
 #>
@@ -48,7 +48,8 @@ function Invoke-BenchRequest {
         [uint32]$RequestId,
         [ValidateSet('show state', 'show motor 7', 'show diag can',
             'adrc status', 'adrc gate motor=7', 'adrc discover motor=7',
-            'adrc probe motor=7', 'adrc probe', 'bench mode 7 mode=mit',
+            'adrc probe motor=7', 'adrc probe motor=7 len=8', 'adrc probe',
+            'bench mode 7 mode=mit',
             'bench mode 7 mode=pos_vel', 'bench disable 7')]
         [string]$Command
     )
@@ -113,14 +114,18 @@ try {
         $gateReply -notmatch 'discovery_active=0') {
         throw 'Preflight stopped: LCD, CAN, or discovery is busy'
     }
-    $discoveryReply = Invoke-BenchRequest $serialPort 65000004 'adrc discover motor=7'
-    if ($discoveryReply -notmatch '^ok 65000004 adrc discover=accepted') {
+    $probeCapability = Invoke-BenchRequest $serialPort 65000004 'adrc probe'
+    if ($probeCapability -notmatch 'state=idle .*query_len=4 rx_after_tx=0') {
+        throw 'Preflight stopped: raw-RX diagnostic firmware is not running'
+    }
+    $discoveryReply = Invoke-BenchRequest $serialPort 65000005 'adrc discover motor=7'
+    if ($discoveryReply -notmatch '^ok 65000005 adrc discover=accepted') {
         throw "Discovery rejected: $discoveryReply"
     }
     $discoveryComplete = $false
     for ($pollIndex = 0; $pollIndex -lt 20; ++$pollIndex) {
         Start-Sleep -Milliseconds 50
-        $gateReply = Invoke-BenchRequest $serialPort ([uint32](65000005 + $pollIndex)) 'adrc gate motor=7'
+        $gateReply = Invoke-BenchRequest $serialPort ([uint32](65000006 + $pollIndex)) 'adrc gate motor=7'
         if ($gateReply -match 'discovery_active=0') {
             $discoveryComplete = $true
             break
@@ -156,28 +161,44 @@ try {
         if ($probeStatus -match 'state=(feedback|timeout|failed)\b') { break }
         Start-Sleep -Milliseconds 20
     }
+    $fourByteSummary = if ($probeStates.Count -gt 0) { $probeStates[-1] } else { 'none' }
+    Start-Sleep -Milliseconds 110
     Assert-DisabledLcdState $serialPort 65000070
+    $paddedReply = Invoke-BenchRequest $serialPort 65000073 'adrc probe motor=7 len=8'
+    if ($paddedReply -notmatch '^ok 65000073 adrc probe=accepted') {
+        throw "Eight-byte diagnostic query rejected: $paddedReply"
+    }
+    $paddedStates = [System.Collections.Generic.List[string]]::new()
+    for ($sampleIndex = 0; $sampleIndex -lt 12; ++$sampleIndex) {
+        $probeStatus = Invoke-BenchRequest $serialPort ([uint32](65000074 + 2 * $sampleIndex)) 'adrc probe'
+        $motorStatus = Invoke-BenchRequest $serialPort ([uint32](65000075 + 2 * $sampleIndex)) 'show motor 7'
+        $paddedStates.Add($probeStatus)
+        if ($probeStatus -match 'state=(feedback|timeout|failed)\b') { break }
+        Start-Sleep -Milliseconds 20
+    }
+    $eightByteSummary = if ($paddedStates.Count -gt 0) { $paddedStates[-1] } else { 'none' }
+    Assert-DisabledLcdState $serialPort 65000098
 
-    $restoreReply = Invoke-BenchRequest $serialPort 65000080 'bench mode 7 mode=pos_vel'
-    if ($restoreReply -notmatch '^ok 65000080 bench mode accepted=1') {
+    $restoreReply = Invoke-BenchRequest $serialPort 65000101 'bench mode 7 mode=pos_vel'
+    if ($restoreReply -notmatch '^ok 65000101 bench mode accepted=1') {
         throw "POS_VEL restore rejected: $restoreReply"
     }
-    [void](Wait-BenchCompletion $serialPort 65000080 'mode')
+    [void](Wait-BenchCompletion $serialPort 65000101 'mode')
     $modeRestored = $true
-    $gateReply = Invoke-BenchRequest $serialPort 65000081 'adrc gate motor=7'
+    $gateReply = Invoke-BenchRequest $serialPort 65000102 'adrc gate motor=7'
     if ($gateReply -notmatch 'mode=2 fields=1fff verified=40') {
         throw 'POS_VEL mode restore readback failed'
     }
-    $disableReply = Invoke-BenchRequest $serialPort 65000082 'bench disable 7'
-    if ($disableReply -notmatch '^ok 65000082 bench disable accepted=1') {
+    $disableReply = Invoke-BenchRequest $serialPort 65000103 'bench disable 7'
+    if ($disableReply -notmatch '^ok 65000103 bench disable accepted=1') {
         throw "Final DISABLE rejected: $disableReply"
     }
-    [void](Wait-BenchCompletion $serialPort 65000082 'disable')
+    [void](Wait-BenchCompletion $serialPort 65000103 'disable')
     $finalDisableCompleted = $true
-    Assert-DisabledLcdState $serialPort 65000083
-    $probeSummary = if ($probeStates.Count -gt 0) { $probeStates[-1] } else { 'none' }
+    Assert-DisabledLcdState $serialPort 65000104
     Write-Output "ADRC_MODE_FEEDBACK_WINDOW_COMPLETE port=$PortName mode_restored=$modeRestored"
-    Write-Output $probeSummary
+    Write-Output $fourByteSummary
+    Write-Output $eightByteSummary
     Write-Output $gateReply
 }
 catch {
@@ -188,9 +209,9 @@ catch {
 finally {
     if ($serialPort.IsOpen -and $modeSwitchAttempted -and -not $modeRestored) {
         try {
-            $restoreReply = Invoke-BenchRequest $serialPort 65000090 'bench mode 7 mode=pos_vel'
-            if ($restoreReply -match '^ok 65000090 bench mode accepted=1') {
-                [void](Wait-BenchCompletion $serialPort 65000090 'mode')
+            $restoreReply = Invoke-BenchRequest $serialPort 65000900 'bench mode 7 mode=pos_vel'
+            if ($restoreReply -match '^ok 65000900 bench mode accepted=1') {
+                [void](Wait-BenchCompletion $serialPort 65000900 'mode')
                 $modeRestored = $true
             }
         }
@@ -198,9 +219,9 @@ finally {
     }
     if ($serialPort.IsOpen -and $modeSwitchAttempted -and -not $finalDisableCompleted) {
         try {
-            $disableReply = Invoke-BenchRequest $serialPort 65000091 'bench disable 7'
-            if ($disableReply -match '^ok 65000091 bench disable accepted=1') {
-                [void](Wait-BenchCompletion $serialPort 65000091 'disable')
+            $disableReply = Invoke-BenchRequest $serialPort 65000901 'bench disable 7'
+            if ($disableReply -match '^ok 65000901 bench disable accepted=1') {
+                [void](Wait-BenchCompletion $serialPort 65000901 'disable')
             }
         }
         catch { $transcriptLines.Add('disable_error=' + $_.Exception.Message) }

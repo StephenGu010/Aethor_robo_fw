@@ -1,6 +1,6 @@
 # ADRC 实施状态与续接入口
 
-更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成；集成目标已三次烧录并通过回读与复位后的 USB 检查。当前版本的上电纯只读发现已确认电机 7 原始模式为 2，参数读取正常；单轴 DISABLE 后取得一次短暂禁能反馈，但没有持续控制反馈。尚未进行运动验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
+更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成；集成目标已四次烧录并通过回读与复位后的 USB 检查。电机 7 原始模式为 2，失能状态可临时切入模式 1 并恢复模式 2；4 字节状态查询已发送，但未取得查询后的新鲜反馈。尚未进行 ADRC 接管或运动验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
 
 ## LCD-MIT/ADRC 单固件集成（2026-09-23）
 
@@ -24,7 +24,9 @@
 - 用户重新开启 24 V 后，当前版本执行一次 `adrc discover motor=7`。上电前置检查为 `enabled=00 moving=0 fault=none owner=lcd`，LCD/CAN 空闲；发现后 CAN 计数由 `rx=0 tx=4` 增至 `rx=13 tx=17`，`adrc gate motor=7` 为 `mode=2 fields=1fff verified=40 fb_fresh=0`，`show motor 7 state=absent age_ms=4294967295`，最终仍为 `enabled=00 moving=0 owner=lcd qualified=0`。这次只发送 13 个参数读请求，故模式 2 是原始实测值，并非 `bench init` 写入的结果。记录为 `output/adrc/hardware/integrated_discover_flash_20260923/powered_discover_motor7_20260923.txt`；没有发送接管、模式写入、使能或运动指令。测试结束后用户确认 24 V 已关闭。
 - 历史上电记录 `output/can_id_commissioning_20260909/lcd-status-refresh-4byte-no-response.log` 与 `lcd-status-refresh-8byte-no-response.log` 显示：`bench init` 和 `bench disable` 后曾取得短暂的 `state=disabled` 反馈，但 4/8 字节 `0xCC` 查询都未持续刷新。当前版本已用 `Tests/hardware/adrc_motor7_disable_feedback_probe.ps1` 在用户确认 24 V 开启后复测：前置 `enabled=00 moving=0 fault=none owner=lcd`，重新只读发现后仍为 `mode=2 fields=1fff`；`bench disable 7` 一次返回 `done ... result=completed enabled=00`。其后 `show motor 7` 在反馈年龄 35、66、97 ms 时为 `state=disabled`，129 ms 时已为 `absent`，直至 475 ms 未再刷新。CAN `rx=13 tx=17` 增至 `rx=27 tx=31`，`error=0 busoff=0`；最终 `enabled=00 moving=0 owner=lcd qualified=0`。原始记录为 `output/adrc/hardware/disable_feedback_probe_20260923/motor7_disable_feedback_20260923T054951769Z.txt`。原脚本末尾的 `adrc feedback` 报 `motor=1`，因为 ADRC 草稿轴尚未配置为 7，不是本次电机 7 的反馈证据；脚本随后移除此无关查询。本轮没有模式写入、使能、运动或 ADRC 接管，用户结束后确认 24 V 已关闭。
 - 当前硬件资格仍为空，USB 不能自行授权 ADRC 运动；集成版尚无由实测辨识结果驱动的本地资格注入路径。烧录和 USB 启动通过不等于单电机 ADRC 验收。当前阻塞项是原始模式 2 与缺少持续的新鲜标准反馈。新增 LCD 持有控制权时的 `adrc probe motor=7`：仅在模式 1 已回读、LCD/CAN 空闲时经独立缓冲区发送一次 `0x7FF/0xCC`，`adrc probe` 可区分已发送、新反馈、超时和失败；诊断不接管 ADRC。`Tests/hardware/adrc_motor7_mode_feedback_window.ps1` 已离线准备：一次上电内完成只读发现、失能切到模式 1、单次查询、恢复模式 2 和最终失能，任何异常保留日志并尝试恢复/失能。集成、所有权、ADRC App、Phase 0 和文本协议主机测试通过，Keil 集成目标构建 0 错误、0 警告。即便模式 1 读回成功，也需实测禁能及运行状态下的反馈更新间隔、速度分辨率和延迟，不能凭单帧放开 4 ms 闭环。之后才进行映射、b0 实测、模型重验和有限期运动。
-- 上述 `adrc probe` 固件随后在用户最近确认 24 V 关闭状态下完成烧录。烧录前 COM4 只读为 `enabled=00 moving=0 fault=none owner=lcd`；新目标提交 `b838bc3`，HEX SHA-256 为 `233AB1FFCC593E39A67720939FA38F1B8DD335E3E4F28DF885A23C4EB2EFBE24`，Keil 完整重建 0 错误、0 警告。旧 Flash 1 MiB 备份 SHA-256 为 `3FC7C287B7033C422975E9BF9BB951BC144B3E8741F5C3F3A1CB93573414143A`，新映像 319560 字节独立回读全部一致，复位后核心为 `State.RUNNING`。报告、备份与构建日志位于 `output/adrc/hardware/mode_feedback_probe_20260923/20260923T142711/`。复位后 COM4 返回 `enabled=00 moving=0 fault=none owner=lcd`、`adrc probe motor=7 state=idle tx=0`，错误轴请求得到 `code=bad_argument`，CAN `rx=0 tx=4 busoff=0`；记录见同目录上级的 `postflash_usb_readonly.txt`。新版本尚未在 24 V 上电时做模式/反馈试验，也没有发送使能或运动命令。
+- 上述 `adrc probe` 固件随后在用户确认 24 V 关闭状态下完成烧录。烧录前 COM4 只读为 `enabled=00 moving=0 fault=none owner=lcd`；目标提交 `b838bc3`，HEX SHA-256 为 `233AB1FFCC593E39A67720939FA38F1B8DD335E3E4F28DF885A23C4EB2EFBE24`，Keil 完整重建 0 错误、0 警告。旧 Flash 1 MiB 备份 SHA-256 为 `3FC7C287B7033C422975E9BF9BB951BC144B3E8741F5C3F3A1CB93573414143A`，新映像 319560 字节独立回读全部一致，复位后核心为 `State.RUNNING`。报告、备份与构建日志位于 `output/adrc/hardware/mode_feedback_probe_20260923/20260923T142711/`。复位后 COM4 返回 `enabled=00 moving=0 fault=none owner=lcd`、`adrc probe motor=7 state=idle tx=0`，错误轴请求得到 `code=bad_argument`，CAN `rx=0 tx=4 busoff=0`；记录见同目录上级的 `postflash_usb_readonly.txt`。烧录阶段没有发送使能或运动命令。
+- 用户随后开启 24 V，执行一次 `adrc_motor7_mode_feedback_window.ps1` 并已再次关闭 24 V。原始模式 2 的只读发现完成；`bench mode 7 mode=mit` 在 13 ms 内完成并回读模式 1，`enabled=00 moving=0 owner=lcd`。`adrc probe motor=7` 的专用 CAN 发送回执为 `tx=1`，但 `sample_after_tx=0`，100 ms 内超时；原有禁能反馈的年龄从 25、57、95 ms 增到 135 ms 时变为 `absent`。随后 `bench mode 7 mode=pos_vel` 在 15 ms 内完成并回读模式 2，最终 `bench disable 7` 返回 `completed enabled=00`，收尾仍为 LCD 控制权、无故障和 bus-off。原始记录是 `output/adrc/hardware/mode_feedback_probe_20260923/motor7_mode_feedback_20260923T063141935Z.txt`；断电后 COM4 只读记录是同目录的 `post_window_poweroff_readonly.txt`。这证明当前 4 字节 `0xCC` 路径在模式 1 的禁能状态也没有取得可用新反馈，不证明驱动完全没有发帧，因为 `show diag can` 经 100 ms 诊断任务采样。未使能或运动，未取得 ADRC 接管资格。
+- 对照随附厂商 H7 SDK 与 Python u2canfd SDK，4 字节 `0x7FF/{07,00,CC,00}` 与当前固件一致；另一份 Python u2can SDK 使用同前缀的 8 字节零填充帧。厂商 V1.4 协议手册第 32 页说明普通控制反馈应为 8 字节、以 Master ID 发出，但未明确当前固件在禁能时对 `0xCC` 的应答条件。下一版离线改动加入 8 字节查询选项，以及查询发送后直接进入 STM32 接收路径的帧数、有效反馈数和拒绝数；同一上电窗口对照 4/8 字节，避免继续用延迟更新的 `show diag can` 计数判断即时收帧。相关主机测试通过，Keil 完整重建 0 错误、0 警告；新改动尚未烧录或实测。
 
 ## 文件与版本
 
@@ -69,7 +71,7 @@ MATLAB 客户端已完成，入口见 `Models/AdrcClient/README.md`。9 月 21 �
 
 离线软件阶段已完成。硬件阶段仍需按顺序完成：
 
-1. 集成目标的四次烧录、回读、USB 检查，以及旧版本的上电纯只读发现与单轴 DISABLE 反馈寿命试验已完成。原始模式为 2，DISABLE 后只取得约 100 ms 内的短暂禁能反馈。新固件已在板上，一次供电窗口脚本已准备；下一步由用户手动开启 24 V 后运行失能状态下的模式 1 临时切换、单次查询、恢复模式 2 与最终失能。只有持续反馈、控制周期及门限证据完整才重试非运动接管/释放。
+1. 集成目标的四次烧录、回读、USB 检查，以及模式 2/模式 1 禁能反馈试验已完成。模式 1 能临时切入并恢复模式 2，但 4 字节状态查询后没有新鲜反馈。下一步先离线完成 4/8 字节对照和实时收帧证据的新固件、脚本、构建与烧录，再由用户手动开启 24 V 做一次失能试验。只有持续反馈、控制周期及门限证据完整才重试非运动接管/释放。
 2. 分别核对位置、速度、转矩映射与量化，不把历史位置比例自动套用到速度或转矩。
 3. 经有限脉冲辨识 b0，重复及保留数据验证后，更新 plant 与控制参数并重新执行模型验收。
 4. 进行有限期 PI/LADRC 对照，保存速度、已发送名义转矩、ESO 状态、扰动恢复与最终失能证据。

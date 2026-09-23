@@ -320,9 +320,17 @@ S3519CodecStatus s3519_pack_control_mode_write(uint8_t esc_id,
  */
 S3519CodecStatus s3519_pack_feedback_query(uint8_t esc_id, CanFrame *frame)
 {
-    uint8_t payload[4] = {0U};
+    return s3519_pack_feedback_query_with_length(esc_id, 4U, frame);
+}
 
-    if (frame == NULL)
+/** @brief Encodes only the four- and eight-byte read-only vendor query variants. */
+S3519CodecStatus s3519_pack_feedback_query_with_length(uint8_t esc_id,
+                                                       uint8_t frame_length,
+                                                       CanFrame *frame)
+{
+    uint8_t payload[8] = {0U};
+
+    if (frame == NULL || (frame_length != 4U && frame_length != 8U))
     {
         return S3519_CODEC_STATUS_INVALID_ARGUMENT;
     }
@@ -336,7 +344,7 @@ S3519CodecStatus s3519_pack_feedback_query(uint8_t esc_id, CanFrame *frame)
     if (can_frame_init(frame,
                        S3519_PARAMETER_COMMAND_IDENTIFIER,
                        payload,
-                       sizeof(payload)) != CAN_FRAME_STATUS_OK)
+                       frame_length) != CAN_FRAME_STATUS_OK)
     {
         return S3519_CODEC_STATUS_INVALID_FRAME;
     }

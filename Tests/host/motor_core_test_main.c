@@ -1767,6 +1767,16 @@ static void test_s3519_command_encoding(void)
     assert(frame.data[0] == 3U);
     assert(frame.data[2] == 0xCCU);
     assert(frame.data[3] == 0U);
+    assert(s3519_pack_feedback_query_with_length(3U, 8U, &frame) ==
+           S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x7FFU);
+    assert(frame.length == 8U);
+    assert(frame.data[0] == 3U && frame.data[1] == 0U &&
+           frame.data[2] == 0xCCU && frame.data[3] == 0U &&
+           frame.data[4] == 0U && frame.data[5] == 0U &&
+           frame.data[6] == 0U && frame.data[7] == 0U);
+    assert(s3519_pack_feedback_query_with_length(3U, 5U, &frame) ==
+           S3519_CODEC_STATUS_INVALID_ARGUMENT);
 
     assert(s3519_pack_mit(3U,
                           &ranges,

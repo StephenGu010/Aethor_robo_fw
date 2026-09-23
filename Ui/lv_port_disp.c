@@ -22,6 +22,36 @@ static lv_disp_drv_t display_driver;
 static lv_disp_drv_t *volatile owned_driver;
 static volatile uint8_t display_fault;
 static uint8_t recovery_attempted;
+static volatile LvPortDispRefreshStatus refresh_status;
+static volatile uint32_t refresh_sequence;
+static volatile uint32_t refresh_started_ms, refresh_pending_bytes;
+static volatile uint8_t refresh_active, refresh_last_chunk;
+
+/** @brief Publish one complete refresh from ISR/task context under a sequence lock. */
+static void refresh_publish_success(uint32_t completed_ms)
+{
+    uint32_t duration_ms = completed_ms - refresh_started_ms;
+    ++refresh_sequence;
+    refresh_status.last_bytes = refresh_pending_bytes;
+    refresh_status.last_duration_ms = duration_ms;
+    refresh_status.fps_tenths = duration_ms != 0U ? 10000U / duration_ms : 0U;
+    ++refresh_status.completed;
+    ++refresh_sequence;
+    refresh_active = 0U;
+    refresh_pending_bytes = 0U;
+    refresh_last_chunk = 0U;
+}
+
+/** @brief Discard an incomplete refresh and retain a cumulative failure count. */
+static void refresh_publish_failure(void)
+{
+    ++refresh_sequence;
+    ++refresh_status.failed;
+    ++refresh_sequence;
+    refresh_active = 0U;
+    refresh_pending_bytes = 0U;
+    refresh_last_chunk = 0U;
+}
 
 /** @brief Called exactly once by the owner after it releases DMA; may run in ISR. */
 static void transfer_done(void *context, uint32_t token, LcdTransferResult result)
@@ -29,7 +59,12 @@ static void transfer_done(void *context, uint32_t token, LcdTransferResult resul
     lv_disp_drv_t *driver = owned_driver;
     (void)context;
     (void)token;
-    if (result != LCD_TRANSFER_OK) display_fault = 1U;
+    if (result != LCD_TRANSFER_OK) {
+        display_fault = 1U;
+        refresh_publish_failure();
+    } else if (refresh_active && refresh_last_chunk) {
+        refresh_publish_success(DebugUiNowMs());
+    }
     owned_driver = NULL;
     if (driver != NULL) lv_disp_flush_ready(driver);
 }
@@ -43,16 +78,25 @@ static void display_flush(lv_disp_drv_t *driver, const lv_area_t *area, lv_color
     if (area->x1 < 0 || area->y1 < 0 || area->x2 >= 280 || area->y2 >= 240 ||
         area->x1 > area->x2 || area->y1 > area->y2 || display_fault || !debug_ui_view_healthy()) {
         display_fault = 1U;
+        refresh_publish_failure();
         lv_disp_flush_ready(driver);
         return;
     }
     window.x1 = (uint16_t)area->x1; window.y1 = (uint16_t)area->y1;
     window.x2 = (uint16_t)area->x2; window.y2 = (uint16_t)area->y2;
     bytes = (uint32_t)lv_area_get_width(area) * (uint32_t)lv_area_get_height(area) * sizeof(lv_color_t);
+    if (!refresh_active) {
+        refresh_active = 1U;
+        refresh_started_ms = DebugUiNowMs();
+        refresh_pending_bytes = 0U;
+    }
+    refresh_pending_bytes += bytes;
+    refresh_last_chunk = (uint8_t)lv_disp_flush_is_last(driver);
     owned_driver = driver; /* Must precede start: completion may be synchronous. */
     if (!lcd_st7789_begin_flush(&window, pixels, bytes, DebugUiNowMs())) {
         owned_driver = NULL;
         display_fault = 1U;
+        refresh_publish_failure();
         lv_disp_flush_ready(driver); /* Rejected: ownership was never acquired. */
     }
 }
@@ -98,6 +142,24 @@ uint8_t lv_port_disp_healthy(void)
 
 /** @brief Delegate the coherent diagnostic copy to the platform owner. */
 void lv_port_disp_status(LcdSt7789Status *status) { lcd_st7789_get_status(status); }
+
+/** @brief Copy refresh diagnostics only when the ISR publication sequence is stable. */
+void lv_port_disp_refresh_status(LvPortDispRefreshStatus *status)
+{
+    uint32_t sequence_before, sequence_after;
+    if (status == NULL) return;
+    for (;;) {
+        sequence_before = refresh_sequence;
+        if ((sequence_before & 1U) != 0U) continue;
+        status->last_bytes = refresh_status.last_bytes;
+        status->last_duration_ms = refresh_status.last_duration_ms;
+        status->fps_tenths = refresh_status.fps_tenths;
+        status->completed = refresh_status.completed;
+        status->failed = refresh_status.failed;
+        sequence_after = refresh_sequence;
+        if (sequence_before == sequence_after && (sequence_after & 1U) == 0U) return;
+    }
+}
 
 /** @brief Attempt one idle recovery only after platform and LVGL ownership return. */
 uint8_t lv_port_disp_try_recover(uint32_t now_ms)

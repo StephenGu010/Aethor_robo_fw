@@ -36,7 +36,7 @@ static void panel_ready(void)
     CHECK(status.state == LCD_ST7789_READY && !status.backlight_on);
     CHECK(fake_hal.spi->Init.CLKPolarity == SPI_POLARITY_LOW);
     CHECK(fake_hal.spi->Init.CLKPhase == SPI_PHASE_1EDGE);
-    CHECK(fake_hal.spi->Init.BaudRatePrescaler == SPI_BAUDRATEPRESCALER_16);
+    CHECK(fake_hal.spi->Init.BaudRatePrescaler == SPI_BAUDRATEPRESCALER_8);
     CHECK(fake_hal.colmod == 0x55U && fake_hal.madctl == 0x70U);
 }
 /** Exercise the real IRQ/EOT guard, AXI range, cache clean and stop ownership. */

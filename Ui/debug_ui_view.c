@@ -3,6 +3,7 @@
  * Semantic rows retain evidence, while bounded display slots implement templates.
  */
 #include "debug_ui_view.h"
+#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -35,6 +36,50 @@ static void text_set(lv_obj_t *label, char *storage, size_t capacity, const char
     if (strcmp(storage, text) == 0) return;
     (void)snprintf(storage, capacity, "%s", text);
     lv_label_set_text_static(label, storage);
+}
+
+/** @brief Move an object only when its requested coordinates changed. */
+static void object_set_pos(lv_obj_t *object, int x, int y)
+{
+    /* LVGL compares the local X/Y style values before refreshing coordinates. */
+    lv_obj_set_pos(object, (lv_coord_t)x, (lv_coord_t)y);
+}
+
+/** @brief Resize an object only when its requested dimensions changed. */
+static void object_set_size(lv_obj_t *object, int width, int height)
+{
+    /* LVGL compares the local width/height style values before invalidating. */
+    lv_obj_set_size(object, (lv_coord_t)width, (lv_coord_t)height);
+}
+
+/** @brief Change one numeric local style property only when its value changed. */
+static void style_set_number(lv_obj_t *object, lv_style_prop_t property, int32_t number)
+{
+    lv_style_value_t current, requested;
+    requested.num = number;
+    if (lv_obj_get_local_style_prop(object, property, &current, 0) == LV_STYLE_RES_FOUND &&
+        current.num == requested.num) return;
+    lv_obj_set_local_style_prop(object, property, requested, 0);
+}
+
+/** @brief Change one pointer local style property only when its value changed. */
+static void style_set_pointer(lv_obj_t *object, lv_style_prop_t property, const void *pointer)
+{
+    lv_style_value_t current, requested;
+    requested.ptr = pointer;
+    if (lv_obj_get_local_style_prop(object, property, &current, 0) == LV_STYLE_RES_FOUND &&
+        current.ptr == requested.ptr) return;
+    lv_obj_set_local_style_prop(object, property, requested, 0);
+}
+
+/** @brief Change one color local style property only when its RGB565 value changed. */
+static void style_set_color(lv_obj_t *object, lv_style_prop_t property, lv_color_t color)
+{
+    lv_style_value_t current, requested;
+    requested.color = color;
+    if (lv_obj_get_local_style_prop(object, property, &current, 0) == LV_STYLE_RES_FOUND &&
+        lv_color_to16(current.color) == lv_color_to16(requested.color)) return;
+    lv_obj_set_local_style_prop(object, property, requested, 0);
 }
 /** @brief Create one bounded, non-scrolling label. */
 static lv_obj_t *label_create(lv_obj_t *parent, int x, int y, int width, int height)
@@ -171,8 +216,9 @@ static void row(DebugUiViewPage *page, unsigned index, const char *text)
 /** @brief Change visibility only when needed, avoiding needless full-screen refresh. */
 static void show(lv_obj_t *object, uint8_t visible)
 {
-    if (visible) lv_obj_clear_flag(object, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+    uint8_t hidden = (uint8_t)lv_obj_has_flag(object, LV_OBJ_FLAG_HIDDEN);
+    if (visible && hidden) lv_obj_clear_flag(object, LV_OBJ_FLAG_HIDDEN);
+    else if (!visible && !hidden) lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
 }
 
 /** @brief Render one bounded slot; symbols use LVGL's bundled font, not the CJK font. */
@@ -182,27 +228,28 @@ static void slot(DebugUiViewPage *page, unsigned index, int x, int y, int width,
 {
     lv_obj_t *label = page->rows[index];
     lv_obj_t *glyph = page->icons[index];
-    lv_obj_set_pos(label, (lv_coord_t)x, (lv_coord_t)y);
-    lv_obj_set_size(label, (lv_coord_t)width, (lv_coord_t)height);
-    lv_obj_set_style_text_font(label, font, 0);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_pad_left(label, symbol != NULL ? 34 : 4, 0);
-    lv_obj_set_style_pad_top(label, height < 23 ? 0 : 2, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(selected ? 0x000000U : color), 0);
-    lv_obj_set_style_bg_color(label, lv_color_hex(selected ? 0xFFFFFFU : 0x000000U), 0);
-    lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(label, lv_color_white(), 0);
-    lv_obj_set_style_border_width(label, 0, 0);
-    lv_obj_set_style_radius(label, selected ? 5 : 0, 0);
+    assert(index < DEBUG_UI_VIEW_ROWS);
+    page->layout_row_mask |= (uint8_t)(1U << index);
+    if (symbol != NULL) page->layout_icon_mask |= (uint8_t)(1U << index);
+    object_set_pos(label, x, y);
+    object_set_size(label, width, height);
+    style_set_pointer(label, LV_STYLE_TEXT_FONT, font);
+    style_set_number(label, LV_STYLE_TEXT_ALIGN, LV_TEXT_ALIGN_LEFT);
+    style_set_number(label, LV_STYLE_PAD_LEFT, symbol != NULL ? 34 : 4);
+    style_set_number(label, LV_STYLE_PAD_TOP, height < 23 ? 0 : 2);
+    style_set_color(label, LV_STYLE_TEXT_COLOR, lv_color_hex(selected ? 0x000000U : color));
+    style_set_color(label, LV_STYLE_BG_COLOR, lv_color_hex(selected ? 0xFFFFFFU : 0x000000U));
+    style_set_number(label, LV_STYLE_BG_OPA, LV_OPA_COVER);
+    style_set_color(label, LV_STYLE_BORDER_COLOR, lv_color_white());
+    style_set_number(label, LV_STYLE_BORDER_WIDTH, 0);
+    style_set_number(label, LV_STYLE_RADIUS, selected ? 5 : 0);
     text_set(label, page->display_text[index], sizeof(page->display_text[index]), value);
-    show(label, 1U);
-    show(glyph, (uint8_t)(symbol != NULL));
     if (symbol != NULL) {
-        lv_obj_set_pos(glyph, (lv_coord_t)(x + 5), (lv_coord_t)(y + 1));
-        lv_obj_set_height(glyph, (lv_coord_t)(height < 30 ? height - 1 : 29));
-        lv_obj_set_style_text_font(glyph, height < 26 ? &lv_font_montserrat_16 : &lv_font_montserrat_20, 0);
-        lv_obj_set_style_pad_top(glyph, 0, 0);
-        lv_obj_set_style_text_color(glyph, lv_color_hex(selected ? 0x000000U : color), 0);
+        object_set_pos(glyph, x + 5, y + 1);
+        object_set_size(glyph, lv_obj_get_width(glyph), height < 30 ? height - 1 : 29);
+        style_set_pointer(glyph, LV_STYLE_TEXT_FONT, height < 26 ? &lv_font_montserrat_16 : &lv_font_montserrat_20);
+        style_set_number(glyph, LV_STYLE_PAD_TOP, 0);
+        style_set_color(glyph, LV_STYLE_TEXT_COLOR, lv_color_hex(selected ? 0x000000U : color));
         if (strcmp(lv_label_get_text(glyph), symbol) != 0) lv_label_set_text_static(glyph, symbol);
     }
 }
@@ -222,14 +269,14 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
     const char *heading = "总览";
     unsigned index;
     int focus_row = -1;
+    uint8_t page_changed;
     if (view == NULL || model == NULL || diagnostics == NULL || !view->initialized || !debug_ui_view_healthy()) return;
     if ((unsigned)model->page >= DEBUG_UI_PAGE_COUNT) return;
     page = &view->page;
     snapshot = &model->snapshot;
     motor = &snapshot->motors[model->selected_motor < DEBUG_UI_MOTOR_COUNT ? model->selected_motor : 0U];
-    if (view->visible != model->page) {
-        view->visible = model->page;
-    }
+    page_changed = (uint8_t)(!page->layout_initialized || view->visible != model->page);
+    view->visible = model->page;
     for (index = 0U; index < DEBUG_UI_VIEW_ROWS; ++index) page->row_text[index][0] = '\0';
     /* Compose into a bounded local row matrix, then update only changed strings. */
     switch (model->page) {
@@ -342,10 +389,10 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
             row(page, 0U, text);
             (void)snprintf(text, sizeof(text), "按键 %u  %s", (unsigned)diagnostics->key, diagnostics->input_valid ? "有效" : "输入未就绪"); row(page, 1U, text);
             (void)snprintf(text, sizeof(text), "输入故障 %lu", (unsigned long)diagnostics->input_fault); row(page, 2U, text);
-            (void)snprintf(text, sizeof(text), "DMA错误 %lu  块 %lums", (unsigned long)diagnostics->dma_errors, (unsigned long)diagnostics->flush_ms); row(page, 3U, text);
-            (void)snprintf(text, sizeof(text), "UI栈余量 %lu word", (unsigned long)diagnostics->stack_free_words); row(page, 4U, text);
-            (void)snprintf(text, sizeof(text), "控制耗时最大 %lu us", (unsigned long)diagnostics->control_execution_max_us); row(page, 5U, text);
-            (void)snprintf(text, sizeof(text), "控制周期最大 %lu us", (unsigned long)diagnostics->control_period_max_us); row(page, 6U, text);
+            (void)snprintf(text, sizeof(text), "DMA错 %lu  块 %lums", (unsigned long)diagnostics->dma_errors, (unsigned long)diagnostics->flush_ms); row(page, 3U, text);
+            (void)snprintf(text, sizeof(text), "REFRESH %luB  %lums", (unsigned long)diagnostics->refresh_bytes, (unsigned long)diagnostics->refresh_ms); row(page, 4U, text);
+            (void)snprintf(text, sizeof(text), "有效 %lu.%lu FPS  栈 %lu", (unsigned long)(diagnostics->refresh_fps_tenths / 10U), (unsigned long)(diagnostics->refresh_fps_tenths % 10U), (unsigned long)diagnostics->stack_free_words); row(page, 5U, text);
+            (void)snprintf(text, sizeof(text), "控制 %lu/%lu us", (unsigned long)diagnostics->control_execution_max_us, (unsigned long)diagnostics->control_period_max_us); row(page, 6U, text);
         } else if (model->diagnostic_page == 1U) {
             (void)snprintf(text, sizeof(text), "控制超期 %lu", (unsigned long)snapshot->diagnostics.control_deadline_miss_count); row(page, 0U, text);
             (void)snprintf(text, sizeof(text), "CAN丢弃 %lu", (unsigned long)snapshot->diagnostics.can_rx_drop_count); row(page, 1U, text);
@@ -471,7 +518,7 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
         break;
     default: break;
     }
-    layout(page, model, focus_row);
+    layout(page, model, focus_row, page_changed);
     if (model->page == DEBUG_UI_PAGE_NUMBER) heading = "数值编辑";
     else if (model->page == DEBUG_UI_PAGE_MODES) { heading = "工作模式"; footer = "左 返回  中/右 确认切模"; }
     else if (model->page == DEBUG_UI_PAGE_RECOVERY) heading = "恢复与失能";
@@ -501,20 +548,28 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
         astra_popup_label(page->title,&ui_font_popup_17,page->title_text,12,8,218,LV_TEXT_ALIGN_LEFT);
         astra_popup_label(page->footer,&ui_font_popup_12,page->footer_text,0,219,280,LV_TEXT_ALIGN_CENTER);
         if (diagnostics->simulated) {
-            lv_label_set_text_static(page->icons[6],"SIM");
+            if (strcmp(lv_label_get_text(page->icons[6]), "SIM") != 0)
+                lv_label_set_text_static(page->icons[6],"SIM");
             astra_popup_label(page->icons[6],&ui_font_popup_11,"SIM",240,11,28,LV_TEXT_ALIGN_RIGHT);
-            lv_obj_set_style_text_color(page->icons[6],lv_color_white(),0);
+            style_set_color(page->icons[6],LV_STYLE_TEXT_COLOR,lv_color_white());
+            page->layout_icon_mask |= (uint8_t)(1U << 6U);
             show(page->icons[6],1U);
         }
     } else {
-        lv_obj_set_pos(page->title,8,2); lv_obj_set_size(page->title,264,26);
-        lv_obj_set_pos(page->footer,8,212); lv_obj_set_size(page->footer,264,26);
-        lv_obj_set_style_text_font(page->title,&ui_font_16,0);
-        lv_obj_set_style_text_font(page->footer,&ui_font_16,0);
-        lv_obj_set_style_text_align(page->footer,LV_TEXT_ALIGN_LEFT,0);
-        lv_obj_set_style_pad_left(page->title,4,0); lv_obj_set_style_pad_top(page->title,2,0);
-        lv_obj_set_style_pad_left(page->footer,4,0); lv_obj_set_style_pad_top(page->footer,2,0);
+        object_set_pos(page->title,8,2); object_set_size(page->title,264,26);
+        object_set_pos(page->footer,8,212); object_set_size(page->footer,264,26);
+        style_set_pointer(page->title,LV_STYLE_TEXT_FONT,&ui_font_16);
+        style_set_pointer(page->footer,LV_STYLE_TEXT_FONT,&ui_font_16);
+        style_set_number(page->footer,LV_STYLE_TEXT_ALIGN,LV_TEXT_ALIGN_LEFT);
+        style_set_number(page->title,LV_STYLE_PAD_LEFT,4); style_set_number(page->title,LV_STYLE_PAD_TOP,2);
+        style_set_number(page->footer,LV_STYLE_PAD_LEFT,4); style_set_number(page->footer,LV_STYLE_PAD_TOP,2);
     }
+    for (index = 0U; index < DEBUG_UI_VIEW_ROWS; ++index) {
+        show(page->rows[index], (uint8_t)((page->layout_row_mask & (1U << index)) != 0U));
+        show(page->icons[index], (uint8_t)((page->layout_icon_mask & (1U << index)) != 0U));
+    }
+    show(page->overlay, page->layout_overlay_visible);
+    show(page->confirm_bar, page->layout_confirm_visible);
 }
 
 /** @brief Count missing bitmap descriptors across every decoded UTF-8 codepoint. */

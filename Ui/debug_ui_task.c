@@ -27,7 +27,7 @@ static DebugUiSnapshot task_snapshot;
 static uint32_t last_health_ms, last_snapshot_ms, last_view_ms, last_tick_ms;
 static uint32_t health_sequence;
 static uint8_t graphics_initialized, graphics_running;
-static uint8_t redraw_after_recovery;
+static uint8_t redraw_after_recovery, view_dirty;
 
 /** @brief Use the same HAL millisecond domain as platform ADC acquisition stamps. */
 uint32_t DebugUiNowMs(void) { return HAL_GetTick(); }
@@ -39,7 +39,10 @@ static void dispatch_requests(void)
     DebugUiRequest request;
     for (index = 0U; index < 2U && debug_ui_model_take_request(&task_model, &request); ++index) {
         DebugUiReason reason = aethor_app_debug_ui_submit(&request);
-        if (reason != DEBUG_UI_REASON_NONE) debug_ui_model_submit_failed(&task_model, &request, reason);
+        if (reason != DEBUG_UI_REASON_NONE) {
+            debug_ui_model_submit_failed(&task_model, &request, reason);
+            view_dirty = 1U;
+        }
         AethorNotifyProtocolTask();
     }
 }
@@ -66,13 +69,23 @@ static void service_control_io(void)
             debug_ui_model_update(&task_model, &task_snapshot, now_us, task_input.valid, display_valid);
         else debug_ui_model_update(&task_model, NULL, now_us, task_input.valid, display_valid);
     } else debug_ui_model_update(&task_model, NULL, now_us, task_input.valid, display_valid);
-    if (debug_ui_input_emergency_event(&task_input, &event)) lv_port_indev_event(&task_model, &event);
-    while (debug_ui_input_event(&task_input, &event)) lv_port_indev_event(&task_model, &event);
+    if (debug_ui_input_emergency_event(&task_input, &event)) {
+        lv_port_indev_event(&task_model, &event);
+        view_dirty = 1U;
+    }
+    while (debug_ui_input_event(&task_input, &event)) {
+        lv_port_indev_event(&task_model, &event);
+        view_dirty = 1U;
+    }
     dispatch_requests();
-    if (aethor_app_debug_ui_poll_admission(&admission)) debug_ui_model_admission(&task_model, &admission);
+    if (aethor_app_debug_ui_poll_admission(&admission)) {
+        debug_ui_model_admission(&task_model, &admission);
+        view_dirty = 1U;
+    }
     for (result_index = 0U; result_index < DEBUG_UI_RESULT_CAPACITY; ++result_index) {
         if (!aethor_app_debug_ui_poll_completion(&completion)) break;
         debug_ui_model_completion(&task_model, &completion);
+        view_dirty = 1U;
     }
     task_diagnostics.adc_raw = sample.raw;
     task_diagnostics.adc_seen = (uint8_t)(sample.seq != 0U || sample.valid);
@@ -83,8 +96,10 @@ static void service_control_io(void)
     if ((uint32_t)(now_ms - last_health_ms) >= 50U) {
         DebugUiHealth health;
         LcdSt7789Status display_status;
+        LvPortDispRefreshStatus refresh_status;
         memset(&health, 0, sizeof(health));
         lv_port_disp_status(&display_status);
+        lv_port_disp_refresh_status(&refresh_status);
         health.ui_timestamp_us = now_us;
         health.ui_sequence = ++health_sequence;
         health.input_valid = task_input.valid;
@@ -105,6 +120,11 @@ static void service_control_io(void)
         task_diagnostics.spi_errors = display_status.spi_errors;
         task_diagnostics.init_errors = display_status.init_errors;
         task_diagnostics.flush_ms = display_status.transfer.last_duration_ms;
+        task_diagnostics.refresh_bytes = refresh_status.last_bytes;
+        task_diagnostics.refresh_ms = refresh_status.last_duration_ms;
+        task_diagnostics.refresh_fps_tenths = refresh_status.fps_tenths;
+        task_diagnostics.refresh_completed = refresh_status.completed;
+        task_diagnostics.refresh_failed = refresh_status.failed;
         task_diagnostics.stack_free_words = health.ui_stack_min_words;
         AethorGetControlTiming(&task_diagnostics.control_execution_max_us, &task_diagnostics.control_period_max_us);
         last_health_ms = now_ms;
@@ -127,9 +147,10 @@ static void graphics_initialize(void *context)
     if (!debug_ui_view_init(&task_view)) return;
     if (!lv_port_indev_init(task_view.group)) return;
     graphics_initialized = 1U;
+    view_dirty = 1U;
 }
 
-/** @brief Advance tick, refresh values at 100ms and service bounded idle decorations. */
+/** @brief Render model events immediately, refresh telemetry at 100 ms, and animate. */
 static void graphics_service(void *context)
 {
     uint32_t now_ms = DebugUiNowMs();
@@ -140,9 +161,10 @@ static void graphics_service(void *context)
         lv_obj_invalidate(task_view.page.root);
         redraw_after_recovery = 0U;
     }
-    if (task_view.visible != task_model.page || (uint32_t)(now_ms - last_view_ms) >= 100U) {
+    if (view_dirty || task_view.visible != task_model.page || (uint32_t)(now_ms - last_view_ms) >= 100U) {
         debug_ui_view_update(&task_view, &task_model, &task_diagnostics);
         last_view_ms = now_ms;
+        view_dirty = 0U;
     }
     debug_ui_view_animate(&task_view);
     (void)lv_timer_handler();
@@ -169,7 +191,10 @@ void StartDebugUiTask(void const *argument)
         if (!task_model.snapshot.active && !task_model.snapshot.pending && !task_model.snapshot.stop_pending &&
             !task_model.awaiting_result && !task_model.stop_waiting &&
             task_model.stop_latch_state != DEBUG_UI_STOP_LATCH_WAITING &&
-            lv_port_disp_try_recover(DebugUiNowMs())) redraw_after_recovery = 1U;
+            lv_port_disp_try_recover(DebugUiNowMs())) {
+            redraw_after_recovery = 1U;
+            view_dirty = 1U;
+        }
         if (graphics_initialized && graphics_running && lv_port_disp_healthy())
             graphics_running = debug_ui_graphics_run(graphics_service, NULL);
         (void)osDelay(5U);

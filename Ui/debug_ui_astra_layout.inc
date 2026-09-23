@@ -184,6 +184,7 @@ static void astra_draw(lv_event_t *event)
 /** @brief Advance a 140 ms idle Tile transition with a maximum 20 ms update rate. */
 void debug_ui_view_animate(DebugUiView *view)
 {
+    static const lv_area_t home_animation_area = {12, 58, 268, 180};
     DebugUiViewPage *page;
     uint32_t now, elapsed;
     if (view == NULL || !view->initialized || !debug_ui_view_healthy()) return;
@@ -195,7 +196,7 @@ void debug_ui_view_animate(DebugUiView *view)
     elapsed = now - page->animation_start;
     if (elapsed >= 140U) { page->animation_active = 0U; page->tile_offset = 0; }
     else page->tile_offset = (int16_t)(page->animation_from * (int32_t)(140U-elapsed) / 140);
-    lv_obj_invalidate(page->root);
+    lv_obj_invalidate_area(page->root, &home_animation_area);
 }
 /** @brief Format one actual draft field in display units with no hard-coded bounds. */
 static void astra_number(char *value, size_t capacity, const DebugUiRequest *action, unsigned field)
@@ -239,6 +240,16 @@ static unsigned astra_count(const DebugUiModel *model, DebugUiPage kind)
     if (kind == DEBUG_UI_PAGE_DIAGNOSTIC_MENU) return 3U;
     return 0U;
 }
+
+/** @brief Replace one retained root-drawn background row only when bytes changed. */
+static void astra_background_set(DebugUiViewPage *page, unsigned index, const char background[80])
+{
+    assert(index < 5U);
+    if (memcmp(page->background_text[index], background, sizeof(page->background_text[index])) == 0) return;
+    memcpy(page->background_text[index], background, sizeof(page->background_text[index]));
+    page->layout_custom_changed = 1U;
+}
+
 /** @brief Keep a dim, reconstructed parent menu behind the shared popup. */
 static void astra_parent(DebugUiViewPage *page, const DebugUiModel *model, DebugUiPage parent)
 {
@@ -246,34 +257,45 @@ static void astra_parent(DebugUiViewPage *page, const DebugUiModel *model, Debug
     unsigned first = parent < DEBUG_UI_PAGE_COUNT ? model->page_first[parent] : 0U;
     page->decoration = 2U;
     for (index = 0U; index < 5U; ++index) {
-        page->background_text[index][0] = '\0';
-        if (index + first < count) astra_entry(page->background_text[index], sizeof(page->background_text[index]), model, parent, index + first);
+        char background[80] = {0};
+        if (index + first < count) astra_entry(background, sizeof(background), model, parent, index + first);
+        astra_background_set(page, index, background);
     }
-    show(page->overlay, 1U);
+    page->layout_overlay_visible = 1U;
 }
 /** @brief Align a stable popup label to the reference ink box without another object. */
 static void astra_popup_label(lv_obj_t *label, const lv_font_t *font, const char *text,
                               int x, int top, int width, lv_text_align_t align)
 {
-    lv_obj_set_pos(label, (lv_coord_t)x, (lv_coord_t)(top-astra_ink_top(font,text)));
-    lv_obj_set_size(label, (lv_coord_t)width, font->line_height);
-    lv_obj_set_style_text_font(label,font,0);
-    lv_obj_set_style_pad_left(label,0,0); lv_obj_set_style_pad_top(label,0,0);
-    lv_obj_set_style_text_align(label,align,0);
+    object_set_pos(label, x, top-astra_ink_top(font,text));
+    object_set_size(label, width, font->line_height);
+    style_set_pointer(label,LV_STYLE_TEXT_FONT,font);
+    style_set_number(label,LV_STYLE_PAD_LEFT,0); style_set_number(label,LV_STYLE_PAD_TOP,0);
+    style_set_number(label,LV_STYLE_TEXT_ALIGN,align);
 }
 /** @brief Apply shared Tile/List/Overlay templates without model mutation or allocations. */
-static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_row)
+static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_row, uint8_t page_changed)
 {
+    static const lv_area_t home_area = {12,58,268,180};
+    static const lv_area_t custom_area = {0,32,279,211};
+    static const lv_area_t scrollbar_area = {270,38,274,198};
     unsigned index, count = astra_count(model, model->page);
     uint8_t old_decoration = page->decoration;
+    uint8_t old_tile_focus = page->tile_focus;
+    int16_t old_tile_offset = page->tile_offset;
+    uint8_t old_scrollbar_count = page->scrollbar_count;
+    uint8_t old_scrollbar_first = page->scrollbar_first;
+    uint8_t old_popup_focus = page->popup_focus;
+    int16_t old_popup_marker = page->popup_marker;
     char value[160];
     const DebugUiMotorView *motor = &model->snapshot.motors[model->selected_motor < 7U ? model->selected_motor : 0U];
     (void)focus_row;
+    page->layout_row_mask = 0U; page->layout_icon_mask = 0U;
+    page->layout_overlay_visible = 0U; page->layout_confirm_visible = 0U;
+    page->layout_custom_changed = 0U;
     page->decoration = 0U; page->scrollbar_count = 0U;
-    show(page->overlay, 0U); show(page->confirm_bar, 0U);
-    lv_obj_set_style_bg_opa(page->overlay, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(page->overlay, 2, 0);
-    for (index = 0U; index < 7U; ++index) { show(page->rows[index], 0U); show(page->icons[index], 0U); }
+    style_set_number(page->overlay, LV_STYLE_BG_OPA, LV_OPA_COVER);
+    style_set_number(page->overlay, LV_STYLE_BORDER_WIDTH, 2);
     if (model->page != DEBUG_UI_PAGE_OVERVIEW || model->snapshot.active || model->snapshot.pending || model->stop_requested || model->snapshot.arm_fault || !model->input_valid || !model->display_valid) {
         page->animation_active = 0U; page->tile_offset = 0;
     }
@@ -284,7 +306,7 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
         for (index = 0U; index < 5U && first + index < count; ++index) {
             astra_entry(value, sizeof(value), model, model->page, first + index);
             slot(page, index, 12, 38+(int)index*32, 252, 30, value, NULL, (uint8_t)(first+index == model->focus), 0xFFFFFFU, &ui_font_16);
-            lv_obj_set_style_pad_left(page->rows[index], 10, 0); lv_obj_set_style_pad_top(page->rows[index], 7, 0);
+            style_set_number(page->rows[index], LV_STYLE_PAD_LEFT, 10); style_set_number(page->rows[index], LV_STYLE_PAD_TOP, 7);
         }
     } else switch (model->page) {
     case DEBUG_UI_PAGE_OVERVIEW:
@@ -308,15 +330,16 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
             (uint8_t)(model->page_focus[DEBUG_UI_PAGE_EDIT]-first) : 255U;
         page->popup_marker = -1;
         for (index=0U; index<5U; ++index) {
-            memset(page->background_text[index],0,sizeof(page->background_text[index]));
+            char background[80] = {0};
             if (first+index < fields) {
                 unsigned parent_field = debug_ui_model_parameter_field(model,(uint8_t)(first+index));
-                (void)snprintf(page->background_text[index],40,"%s",astra_fields[parent_field]);
-                astra_number(page->background_text[index]+40,40,&model->draft,parent_field);
+                (void)snprintf(background,40,"%s",astra_fields[parent_field]);
+                astra_number(background+40,40,&model->draft,parent_field);
             } else if (first+index == fields) {
-                (void)snprintf(page->background_text[index],40,"预览并执行");
-                (void)snprintf(page->background_text[index]+40,40,">");
+                (void)snprintf(background,40,"预览并执行");
+                (void)snprintf(background+40,40,">");
             }
+            astra_background_set(page,index,background);
         }
         slot(page, 0U, 28, 59, 224, 24, field == 1U ? "输出轴速度" : astra_fields[field], NULL, 0U, 0xFFFFFFU, &ui_font_popup_17);
         astra_popup_label(page->rows[0],&ui_font_popup_17,page->display_text[0],28,59,224,LV_TEXT_ALIGN_CENTER);
@@ -347,13 +370,15 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
     }
     case DEBUG_UI_PAGE_REVIEW:
         astra_parent(page, model, model->review_return_page);
-        lv_obj_set_pos(page->overlay, 16, 38); lv_obj_set_size(page->overlay, 248, 170);
+        object_set_pos(page->overlay, 16, 38); object_set_size(page->overlay, 248, 170);
         for (index = 0U; index < 6U; ++index)
             slot(page, index, 24, 44+(int)index*22, 232, 22, page->row_text[index], NULL, 0U, 0xFFFFFFU, &ui_font_16);
         slot(page, 6U, 24, 179, 232, 24, page->row_text[6], NULL, 1U, 0xFFFFFFU, &ui_font_16);
         if (model->review_released && model->confirm_elapsed_ms > 0U) {
             uint32_t elapsed = model->confirm_elapsed_ms > 800U ? 800U : model->confirm_elapsed_ms;
-            lv_obj_set_pos(page->confirm_bar, 24, 204); lv_obj_set_width(page->confirm_bar, (lv_coord_t)(232U*elapsed/800U)); show(page->confirm_bar, 1U);
+            object_set_pos(page->confirm_bar, 24, 204);
+            object_set_size(page->confirm_bar, (int)(232U*elapsed/800U), lv_obj_get_height(page->confirm_bar));
+            page->layout_confirm_visible = 1U;
         }
         break;
     case DEBUG_UI_PAGE_NOTICE:
@@ -405,6 +430,16 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
         for (index = 0U; index < 7U; ++index) slot(page, index, 12, 36+(int)index*24, 256, 23, page->row_text[index], NULL, 0U, 0xFFFFFFU, &ui_font_16);
         break;
     }
-    if (model->page != DEBUG_UI_PAGE_REVIEW) { lv_obj_set_pos(page->overlay, 16, 48); lv_obj_set_size(page->overlay, 248, 160); }
-    lv_obj_invalidate(page->root);
+    if (model->page != DEBUG_UI_PAGE_REVIEW) { object_set_pos(page->overlay, 16, 48); object_set_size(page->overlay, 248, 160); }
+    if (page_changed || old_decoration != page->decoration) {
+        lv_obj_invalidate(page->root);
+    } else {
+        if (old_tile_focus != page->tile_focus || old_tile_offset != page->tile_offset)
+            lv_obj_invalidate_area(page->root, &home_area);
+        if (old_scrollbar_count != page->scrollbar_count || old_scrollbar_first != page->scrollbar_first)
+            lv_obj_invalidate_area(page->root, &scrollbar_area);
+        if (page->layout_custom_changed || old_popup_focus != page->popup_focus || old_popup_marker != page->popup_marker)
+            lv_obj_invalidate_area(page->root, &custom_area);
+    }
+    page->layout_initialized = 1U;
 }

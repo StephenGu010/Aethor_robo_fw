@@ -81,6 +81,21 @@ classdef AdrcClient < handle
             end
         end
 
+        function snapshot = acquireMotor(obj, motor, timeoutSeconds)
+            %ACQUIREMOTOR Explicitly reserve integrated motor 7 after measured firmware gates pass.
+            if nargin < 3, timeoutSeconds = 1.0; end
+            validateattributes(motor, {'numeric'}, {'real','finite','scalar','integer','>=',1,'<=',7});
+            snapshot = obj.transitionOwner(sprintf('adrc acquire motor=%d', motor), ...
+                'acquire', 'lcd', 'adrc', 'transferred', timeoutSeconds);
+        end
+
+        function snapshot = releaseMotor(obj, timeoutSeconds)
+            %RELEASEMOTOR Explicitly request DISABLE and await newer feedback before LCD handback.
+            if nargin < 2, timeoutSeconds = 1.0; end
+            snapshot = obj.transitionOwner('adrc release', ...
+                'release', 'adrc', 'lcd', 'released', timeoutSeconds);
+        end
+
         function terminal = configure(obj, group, fields)
             %CONFIGURE Send an explicit whitelisted patch; firmware remains the final admission authority.
             body = obj.configurationBody(group, fields);
@@ -110,7 +125,8 @@ classdef AdrcClient < handle
             if nargin < 2, timeoutSeconds = 4.0; end
             obj.validateTimeout(timeoutSeconds);
             snapshot = obj.status();
-            if snapshot.state ~= 1 || snapshot.qualified ~= 1 || snapshot.disabled ~= 1 || snapshot.active_id ~= 0
+            if snapshot.state ~= 1 || snapshot.qualified ~= 1 || snapshot.disabled ~= 1 || snapshot.active_id ~= 0 || ...
+                    (isfield(snapshot, 'owner') && ~strcmp(snapshot.owner, 'adrc'))
                 error('AdrcClient:NotReady', 'Firmware does not report qualified, prepared and physically disabled.');
             end
             obj.Busy = true; obj.RunActive = true; obj.StopRequested = false;
@@ -207,6 +223,68 @@ classdef AdrcClient < handle
         end
     end
     methods (Access = private)
+        function snapshot = transitionOwner(obj, body, acknowledgementField, initialOwner, ...
+                finalOwner, finalHandoff, timeoutSeconds)
+            %TRANSITIONOWNER Send once, match the ACK, then poll measured owner status.
+            obj.validateTimeout(timeoutSeconds); obj.requireIdle(); obj.requireSynchronized();
+            obj.Busy = true; cleanup = onCleanup(@()obj.releaseBusy()); %#ok<NASGU>
+            try
+                snapshot = obj.readStatus();
+                if ~isfield(snapshot, 'owner')
+                    error('AdrcClient:OwnerUnsupported', 'Firmware does not expose integrated ownership.');
+                end
+                if ~strcmp(snapshot.owner, initialOwner)
+                    error('AdrcClient:OwnerState', 'Firmware owner is %s, expected %s.', snapshot.owner, initialOwner);
+                end
+                deadline = obj.now() + timeoutSeconds;
+                identifier = obj.sendMutation(body);
+                ackDeadline = min(deadline, obj.now() + obj.AckTimeout);
+                acknowledged = false;
+                for iteration = 1:256
+                    remaining = ackDeadline - obj.now();
+                    if remaining <= 0, break; end
+                    message = obj.readMessage(min(obj.PollInterval, remaining));
+                    if isempty(message) || message.Id ~= identifier, continue; end
+                    obj.requireAdrc(message);
+                    if strcmp(message.Kind, 'error'), obj.rejectMessage(message); end
+                    if ~strcmp(message.Kind, 'ok') || ~isfield(message.Fields, acknowledgementField) || ...
+                            ~strcmp(message.Fields.(acknowledgementField), 'accepted')
+                        error('AdrcClient:ProtocolError', 'Ownership request did not receive its matching ACK.');
+                    end
+                    acknowledged = true; break;
+                end
+                if ~acknowledged
+                    error('AdrcClient:AckTimeout', 'No ownership ACK for request %.0f.', identifier);
+                end
+                for iteration = 1:3000
+                    snapshot = obj.readStatus();
+                    if strcmp(snapshot.owner, finalOwner) && strcmp(snapshot.handoff, finalHandoff)
+                        return;
+                    end
+                    if strcmp(acknowledgementField, 'acquire') && strcmp(snapshot.handoff, 'unsafe')
+                        error('AdrcClient:OwnerRejected', 'Firmware rejected the measured ADRC handoff.');
+                    end
+                    if strcmp(acknowledgementField, 'release') && strcmp(snapshot.handoff, 'timeout')
+                        error('AdrcClient:OwnerReleaseUnconfirmed', 'LCD handback lacks new disabled feedback.');
+                    end
+                    remaining = deadline - obj.now();
+                    if remaining <= 0, break; end
+                    obj.sleep(min(0.02, remaining));
+                end
+                if strcmp(acknowledgementField, 'release')
+                    error('AdrcClient:OwnerReleaseUnconfirmed', 'LCD handback was not confirmed before timeout.');
+                end
+                error('AdrcClient:OwnerTransitionTimeout', 'ADRC ownership was not confirmed before timeout.');
+            catch failure
+                recoverable = {'AdrcClient:OwnerUnsupported','AdrcClient:OwnerState', ...
+                    'AdrcClient:OwnerRejected','AdrcClient:OwnerReleaseUnconfirmed', ...
+                    'AdrcClient:OwnerTransitionTimeout','AdrcClient:FirmwareRejected', ...
+                    'AdrcClient:IdExhausted'};
+                if ~any(strcmp(failure.identifier, recoverable)), obj.invalidateLink(); end
+                rethrow(failure);
+            end
+        end
+
         function terminal = mutate(obj, body, timeoutSeconds)
             %MUTATE Send one ID once and retain precise terminal errors without automatic retries.
             obj.requireIdle(); obj.requireSynchronized(); obj.Busy = true;
@@ -300,6 +378,15 @@ classdef AdrcClient < handle
             maxima = [4 11 7 1 1 1 1024 double(intmax('uint32')) double(intmax('uint32')) double(intmax('uint32'))];
             for index = 1:numel(names), obj.integerField(snapshot, names{index}, minima(index), maxima(index)); end
             if snapshot.active_id > snapshot.last_id, error('AdrcClient:ProtocolError', 'Active ID exceeds admitted ID.'); end
+            if xor(isfield(snapshot, 'owner'), isfield(snapshot, 'handoff'))
+                error('AdrcClient:ProtocolError', 'Incomplete integrated ownership status.');
+            end
+            if isfield(snapshot, 'owner') && ...
+                    (~ischar(snapshot.owner) || ~ischar(snapshot.handoff) || ...
+                     ~any(strcmp(snapshot.owner, {'lcd','acquiring','adrc','releasing'})) || ...
+                     ~any(strcmp(snapshot.handoff, {'pending','transferred','released','unsafe','timeout'})))
+                error('AdrcClient:ProtocolError', 'Invalid integrated ownership status.');
+            end
             obj.LastIssuedId = max(obj.LastIssuedId, snapshot.last_id);
             obj.LastStatus = snapshot; obj.Synchronized = true;
         end

@@ -1,6 +1,6 @@
 # 单电机 ADRC MATLAB 客户端
 
-`AdrcClient`、`AdrcSerialTransport` 的实例化均不会连接设备、使能电机或启动实验。`AdrcMemoryTransport` 仅用于无硬件测试。客户端不提供资格写入接口，不推断或生成电机标定证据；固件默认无资格时 `prepare`/`run` 仍被拒绝。
+`AdrcClient`、`AdrcSerialTransport` 的实例化均不会连接设备、使能电机或启动实验。`AdrcMemoryTransport` 仅用于无硬件测试。客户端不提供资格写入接口，不推断或生成电机标定证据；固件默认无资格时 `prepare`/`run` 仍被拒绝。集成版的控制权取得与交还也必须显式调用，不由连接或运行方法自动完成。
 
 客户端依据 `App/Adrc/adrc_protocol.c` 的文本契约实现，面向独占一个协议连接的单个客户端。MATLAB 需要支持 `serialport`、`string`、`table`；离线测试不调用 `serialport`。
 
@@ -30,6 +30,7 @@ link = AdrcSerialTransport('COM7', 115200); % 仅保存明确指定的设置
 配置、准备和运行分别是独立方法，示例值应来自已批准且实际测量的实验参数，不由客户端生成：
 
 ```matlab
+% owner = client.acquireMotor(7, 1); % 仅集成版：等待 owner=adrc/handoff=transferred
 % client.configure('control', measuredControlFields);
 % client.configure('mapping', measuredMappingFields);
 % client.configure('limits', approvedLimitFields);
@@ -37,6 +38,7 @@ link = AdrcSerialTransport('COM7', 115200); % 仅保存明确指定的设置
 % client.prepare(selectedMotor);  % 对外轴号 1..7；固件仍验证资格和反馈
 % terminal = client.run(4);       % 必须已有 qualified/prepared/disabled 快照
 % stopped = client.stop(1);       % 等待实际失能的最新状态
+% owner = client.releaseMotor(1); % 仅集成版：等待新的 DISABLE 回执和禁能反馈
 % client.clearFault();            % 显式请求固件故障清除，不绕过失能门限
 ```
 
@@ -56,6 +58,8 @@ mode 为 identify/pi/ladrc；数值请求按 float32 精度转换为不含指数
 每个变更命令先递增非零 uint32 ID，再仅写一次。连接和显式 `status()` 使用 `last_id` 同步最高已接受 ID，ID 不回绕。只读 status/trace 不携带 ID，避免进入重放缓存；因此一个连接只允许一个客户端且一次一个查询。命令超时不会自动换 ID 重发 RUN。明确错误、超时或未知连接状态会通过异常交给调用方。
 
 `run()` 同步等待，使用可注入时钟，每 100ms 发送独立 ID 的 heartbeat；ACK 最多等待 200ms，heartbeat DONE 最多等待 200ms，RUN 总期限默认 4 秒且可显式设置（最多 60 秒）。这是 MATLAB 调度目标，不是硬实时保证；长时间阻塞 MATLAB 的回调可能错过期限，固件自身仍负责失联停机。
+
+`acquireMotor()`/`releaseMotor()` 只适用于返回 `owner`、`handoff` 的 LCD-MIT/ADRC 集成固件。两者都先读取状态、发送一次带单调 ID 的请求、核对 ACK，再轮询所有权结果。取得失败不会继续运行；交还超时抛出 `OwnerReleaseUnconfirmed` 并保持连接，便于继续查询状态或显式 STOP，不会把请求已发送误报为 LCD 已可运动。旧独立 ADRC-Bench 固件没有所有权字段，调用这两个方法会在发送变更命令前以 `OwnerUnsupported` 拒绝。
 
 `run()` 等待期间可从 GUI/timer 回调调用 `client.requestStop()`，由循环发送 STOP。直接 `stop()` 用于客户端空闲时。STOP 自己的 DONE 仅表示已处理请求；`stop()` 还轮询 `disabled=1`、`state=disabled/fault`、`active_id=0` 才报告确认。`run()` 请求停止后，以 RUN 终端的 disabled 标志作为确认。
 

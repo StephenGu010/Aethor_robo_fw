@@ -20,6 +20,29 @@ expectError(@()client.prepare(1), 'AdrcClient:ExecutionFailed'); checks = checks
 assert(client.LastTerminal.Fields.result == 3); checks = checks + 1;
 client.disconnect();
 
+% The integrated image requires explicit ownership before ordinary ADRC commands.
+fake = makeIntegratedFixture();
+client = AdrcClient(); client.connect(fake.callbacks());
+acquired = client.acquireMotor(7, 0.3);
+assert(strcmp(acquired.owner, 'adrc') && strcmp(acquired.handoff, 'transferred')); checks = checks + 1;
+assert(strcmp(fake.WrittenLines{end - 1}, '41 adrc acquire motor=7')); checks = checks + 1;
+released = client.releaseMotor(0.3);
+assert(strcmp(released.owner, 'lcd') && strcmp(released.handoff, 'released')); checks = checks + 1;
+assert(any(contains(fake.WrittenLines, '42 adrc release')) && client.LastIssuedId == 42); checks = checks + 1;
+client.disconnect();
+fake = makeFixture(); client = AdrcClient(); client.connect(fake.callbacks());
+expectError(@()client.acquireMotor(7), 'AdrcClient:OwnerUnsupported'); checks = checks + 1;
+assert(numel(fake.WrittenLines) == 2 && ~any(contains(fake.WrittenLines, ' adrc acquire'))); checks = checks + 1;
+fake = makeIntegratedFixture(); fake.State.fail_acquire = true;
+client = AdrcClient(); client.connect(fake.callbacks());
+expectError(@()client.acquireMotor(7, 0.3), 'AdrcClient:OwnerRejected'); checks = checks + 1;
+assert(~any(contains(fake.WrittenLines, ' adrc run'))); checks = checks + 1;
+fake = makeIntegratedFixture(); fake.State.owner = 'adrc'; fake.State.hold_release = true;
+client = AdrcClient(); client.connect(fake.callbacks());
+expectError(@()client.releaseMotor(0.05), 'AdrcClient:OwnerReleaseUnconfirmed'); checks = checks + 1;
+afterReleaseTimeout = client.status();
+assert(client.Connected && strcmp(afterReleaseTimeout.owner, 'releasing')); checks = checks + 1;
+
 % A successful finite run keeps the 100 ms lease using separate increasing IDs.
 fake = makeFixture(); fake.State.qualified = 1; fake.State.state = 1;
 client = AdrcClient(); client.connect(fake.callbacks());
@@ -105,6 +128,16 @@ fake.State = struct('last_id', 40, 'state', 0, 'fault', 0, 'motor', 1, ...
 fake.OnWrite = @firmwareReply;
 end
 
+function fake = makeIntegratedFixture()
+%MAKEINTEGRATEDFIXTURE Add ownership responses while retaining synthetic qualification.
+fake = makeFixture();
+fake.State.motor = 7;
+fake.State.owner = 'lcd';
+fake.State.handoff = 'pending';
+fake.State.fail_acquire = false;
+fake.State.hold_release = false;
+end
+
 function firmwareReply(fake, line)
 %FIRMWAREREPLY Emit the real firmware's response grammar without emulating hardware qualification.
 words = strsplit(line);
@@ -114,10 +147,14 @@ if fake.Clock >= min(fake.State.done_at, fake.State.disabled_at)
     fake.State.state = 0; fake.State.disabled = 1; fake.State.frozen = 1; fake.State.active_id = 0;
 end
 if strcmp(action, 'status')
-    fake.schedule(0, sprintf(['ok 0 adrc status state=%d fault=%d motor=%d qualified=%d disabled=%d ' ...
+    response = sprintf(['ok 0 adrc status state=%d fault=%d motor=%d qualified=%d disabled=%d ' ...
         'frozen=%d count=%d overflow=%d active_id=%d last_id=%.0f'], fake.State.state, fake.State.fault, ...
         fake.State.motor, fake.State.qualified, fake.State.disabled, fake.State.frozen, fake.State.count, ...
-        fake.State.overflow, fake.State.active_id, fake.State.last_id));
+        fake.State.overflow, fake.State.active_id, fake.State.last_id);
+    if isfield(fake.State, 'owner')
+        response = sprintf('%s owner=%s handoff=%s', response, fake.State.owner, fake.State.handoff);
+    end
+    fake.schedule(0, response);
     return;
 end
 if strcmp(action, 'trace')
@@ -129,6 +166,22 @@ if strcmp(action, 'trace')
     return;
 end
 assert(identifier > fake.State.last_id && identifier <= double(intmax('uint32')));
+if any(strcmp(action, {'acquire','release'}))
+    fake.State.last_id = identifier;
+    fake.schedule(0, sprintf('ok %.0f adrc %s=accepted', identifier, action));
+    if strcmp(action, 'acquire')
+        if fake.State.fail_acquire
+            fake.State.owner = 'lcd'; fake.State.handoff = 'unsafe';
+        else
+            fake.State.owner = 'adrc'; fake.State.handoff = 'transferred';
+        end
+    elseif fake.State.hold_release
+        fake.State.owner = 'releasing'; fake.State.handoff = 'pending';
+    else
+        fake.State.owner = 'lcd'; fake.State.handoff = 'released';
+    end
+    return;
+end
 if strcmp(action, fake.State.reject_command)
     fake.schedule(0, sprintf('error %.0f adrc code=not_ready', identifier)); return;
 end

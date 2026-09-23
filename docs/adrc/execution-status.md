@@ -8,7 +8,8 @@
 - 上电默认 LCD-MIT。USB 的 `adrc status`、`adrc hardware`、`adrc limits`、`adrc feedback` 可只读；当前目标只接受 `adrc acquire motor=7`。取得所有权前，控制任务检查 LCD 运动/结果队列和发现序列为空、传统 CAN 软件队列与 FDCAN FIFO 已排空并经过 4 ms 静默、收到静默起点之后的新鲜禁能零故障低速反馈，且实际发现的电机 7 身份、MIT 模式和全部参数一致。
 - ADRC 持有时，LCD POS/MIT 请求和旧 CAN 发送入口被拒绝，LCD 与 USB STOP 都作用于 ADRC 单轴。`adrc release` 强制重新发送 DISABLE；只有匹配的真实 CAN 发送回执及更新的禁能反馈都到达后才交还 LCD。失败或超时保持锁定，`adrc status` 的 `owner`/`handoff` 字段可查询结果。
 - `Tests/host/run_adrc_lcd_integration_tests.ps1` 与所有权状态机测试通过；覆盖默认 LCD、错误轴、未取得控制权拒绝运行、旧 LCD 控制组/新 CAN 提交阻止接管、LCD/USB STOP、发送失败和旧反馈不能交还、已失能监督器仍需新 DISABLE。原 `run_tests.ps1`、ADRC App/bench/协议/通道/监督器、LCD UI 与传输回归通过；`test_debug_ui_build_contract.py` 的 24 组门禁与 13 组 ADRC 发布门禁通过。
-- 最新集成目标 ARMCC 构建 0 错误、0 警告，Code=216168、RO=100956、RW=848、ZI=233496 字节；HEX SHA-256 为 `F64DCB390C80040491EEA660895F66ABD7DFB4F4346F288BDADE668E3BD20FBD`。构建日志在 `MDK-ARM/LCD-MIT-ADRC/LCD-MIT-ADRC.build_log.htm`，HEX 位于同目录。模型及生成代码仍是此前验证的三个 SLX 和 ERT 快照，本轮未改模型。
+- 最新集成目标 ARMCC 构建 0 错误、0 警告，Code=216216、RO=100956、RW=848、ZI=233496 字节；HEX SHA-256 为 `894F68686145F747E4BB97104631FADA8D73FB9004ADF78C3A3043FA5B22351D`。构建日志在 `MDK-ARM/LCD-MIT-ADRC/LCD-MIT-ADRC.build_log.htm`，HEX 位于同目录。模型及生成代码仍是此前验证的三个 SLX 和 ERT 快照，本轮未改模型。
+- 集成版 MATLAB 客户端新增显式 `acquireMotor(7)`/`releaseMotor()`，仅在收到匹配 ACK 且轮询到 `owner`/`handoff` 的目标状态后返回。R2026a 的纯内存传输测试输出 `ADRC_CLIENT_TESTS_PASSED checks=45 hardwareOpened=0`；该 MATLAB 批处理进程在测试输出之后退出时发生 access violation，退出码为 1，因此仅确认测试体完成，不能记作一次正常退出的 MATLAB 作业。桌面 Automation Server 已由用户开启，但本工具进程的 COM 附着仍失败；未连接串口或硬件。
 - 当前硬件资格仍为空，USB 不能自行授权 ADRC 运动；集成版尚无由实测辨识结果驱动的本地资格注入路径，因此这份 HEX 只代表已链接的离线集成版，不能作为单电机 ADRC 运行验收。先做只读接管/释放和反馈时序核对，再完成位置、速度、转矩映射与 b0 实测、模型重验和资格配置，最后才分阶段开放有限期运动。本轮未连接串口、未烧录、未给电机通电。
 
 ## 文件与版本

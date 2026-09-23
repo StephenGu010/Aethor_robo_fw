@@ -2915,10 +2915,16 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
             request.request_id, "code=bad_argument"); }
         else
         {
-            admission = adrc_lcd_ownership_submit_acquire(&application_adrc_lcd_ownership,
-                (uint8_t)(motor.data[0] - '1'), request.request_id);
+            admission = request.request_id <=
+                application_adrc_bridge.bench.gateway.highest_admitted_request_id ?
+                ADRC_LCD_OWNERSHIP_STALE_ID :
+                adrc_lcd_ownership_submit_acquire(&application_adrc_lcd_ownership,
+                    (uint8_t)(motor.data[0] - '1'), request.request_id);
             if (admission == ADRC_LCD_OWNERSHIP_OK)
-            { application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING; }
+            {
+                application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING;
+                application_adrc_bridge.bench.gateway.highest_admitted_request_id = request.request_id;
+            }
             status = aethor_app_integrated_response(output,
                 admission == ADRC_LCD_OWNERSHIP_OK ? PROTOCOL_ENGINE_STATUS_OK :
                     PROTOCOL_ENGINE_STATUS_BAD_REQUEST, request.request_id,
@@ -2928,12 +2934,15 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
     else if (text_protocol_request_path_equals(&request, "adrc", "release"))
     {
         AdrcLcdOwnershipStatus admission = ADRC_LCD_OWNERSHIP_BAD_ARGUMENT;
-        if (request.has_request_id != 0U && request.positional_count == 0U && request.field_count == 0U)
+        if (request.has_request_id != 0U && request.positional_count == 0U &&
+            request.field_count == 0U && request.request_id >
+                application_adrc_bridge.bench.gateway.highest_admitted_request_id)
         { admission = adrc_lcd_ownership_submit_release(&application_adrc_lcd_ownership,
             request.request_id, timestamp_us); }
         if (admission == ADRC_LCD_OWNERSHIP_OK)
         {
             application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING;
+            application_adrc_bridge.bench.gateway.highest_admitted_request_id = request.request_id;
             adrc_app_bridge_request_release_disable(&application_adrc_bridge);
         }
         status = aethor_app_integrated_response(output,
@@ -2980,6 +2989,8 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
          text_protocol_request_path_equals(&request, "disable", NULL)))
     {
         adrc_app_bridge_request_stop(&application_adrc_bridge);
+        if (request.request_id > application_adrc_bridge.bench.gateway.highest_admitted_request_id)
+        { application_adrc_bridge.bench.gateway.highest_admitted_request_id = request.request_id; }
         status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_OK,
             request.request_id, "stop=latched");
     }

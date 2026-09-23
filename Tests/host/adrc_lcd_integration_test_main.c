@@ -105,6 +105,7 @@ static void test_lcd_default_and_safe_acquire(void)
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
     assert(request("40 adrc status", 4001U, &output) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output.messages[0].data, "handoff=unsafe") != NULL);
+    assert(strstr(output.messages[0].data, "last_id=4") != NULL);
     assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 0U);
 
     fixture_disabled_motor7(8000U);
@@ -148,6 +149,7 @@ static void test_release_requires_new_feedback(void)
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
     assert(request("41 adrc status", 14002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output.messages[0].data, "handoff=released") != NULL);
+    assert(strstr(output.messages[0].data, "last_id=8") != NULL);
 }
 
 /** @brief LCD motion is rejected while its STOP still reaches the selected-axis owner. */

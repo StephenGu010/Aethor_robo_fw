@@ -281,6 +281,10 @@ void StartArmControlTask(void const * argument)
           aethor_app_adrc_report_transmit(adrcKind, decodedTorqueNm, 0U);
 #endif
         }
+#if AETHOR_ADRC_LCD_INTEGRATED
+        else
+        { aethor_app_adrc_report_disable_submit_at(adrcKind, timestampUs); }
+#endif
       }
     }
 #endif

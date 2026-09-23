@@ -56,6 +56,7 @@ typedef struct
     AdrcLcdOwnerState state;
     uint64_t acquire_started_us;
     uint64_t release_started_us;
+    uint64_t disable_submitted_us;
     uint64_t disable_transmitted_us;
     uint32_t active_request_id;
     uint32_t highest_request_id;
@@ -72,6 +73,10 @@ AdrcLcdOwnershipStatus adrc_lcd_ownership_submit_acquire(
 /** @brief Queues a release that must be followed by a real disable receipt and feedback. */
 AdrcLcdOwnershipStatus adrc_lcd_ownership_submit_release(
     AdrcLcdOwnership *ownership, uint32_t request_id, uint64_t now_us);
+
+/** @brief Records the queued disable time before the next-tick hardware receipt. */
+void adrc_lcd_ownership_report_disable_submit(
+    AdrcLcdOwnership *ownership, uint64_t submitted_us);
 
 /** @brief Records a matched successful disable transmission without claiming drive execution. */
 void adrc_lcd_ownership_report_disable_transmit(

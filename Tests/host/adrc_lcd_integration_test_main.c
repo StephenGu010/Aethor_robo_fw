@@ -402,15 +402,15 @@ static void test_release_requires_new_feedback(void)
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_RELEASING);
     assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 1U);
     assert(kind == 2U && frame.data[7] == S3519_MODE_COMMAND_DISABLE);
+    aethor_app_adrc_report_disable_submit_at(kind, 12002U);
     aethor_app_adrc_report_transmit_at(kind, decoded, 0U, 12500U);
     (void)aethor_app_service(12600U);
     assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 1U);
     assert(kind == 2U);
+    aethor_app_adrc_report_disable_submit_at(kind, 12601U);
+    fixture_disabled_motor7(12602U);
     aethor_app_adrc_report_transmit_at(kind, decoded, 1U, 13000U);
     (void)aethor_app_service(13001U);
-    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_RELEASING);
-    fixture_disabled_motor7(14000U);
-    (void)aethor_app_service(14001U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD);
     assert(request("41 adrc status", 14002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output.messages[0].data, "handoff=released") != NULL);

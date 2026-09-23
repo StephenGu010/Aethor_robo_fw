@@ -5,7 +5,7 @@
 ## LCD-MIT/ADRC 单固件集成（2026-09-23）
 
 - 独立工作树：`D:/download/TCG/Aethor_robo_fw/.worktrees/s3519-adrc-lcd-mit`，分支 `feature/s3519-adrc-lcd-mit`。先合入已验证的 LCD 流畅度版本，再建立单独的 `MDK-ARM/LCD-MIT-ADRC.uvprojx`；原板上 LCD-MIT 固件的完整 Flash 已在替换前备份。
-- 上电默认 LCD-MIT。USB 的 `adrc status`、`adrc hardware`、`adrc limits`、`adrc feedback` 可只读；当前目标只接受 `adrc acquire motor=7`。取得所有权前，控制任务检查 LCD 运动/结果队列和发现序列为空、传统 CAN 软件队列与 FDCAN FIFO 已排空并经过 4 ms 静默，且实际发现的电机 7 身份、MIT 模式和全部参数一致。当前板上版本的接管查询仍是 `0x7FF/0xCC`，实测失能时未刷新反馈；新的单次电机 7 DISABLE 接管挑战仅完成离线测试与构建，见下方最新记录，尚未刷入。接管须确认发送成功和提交后的新鲜禁能、零故障、低速反馈；100 ms 内未取得则超时返回 LCD。
+- 上电默认 LCD-MIT。USB 的 `adrc status`、`adrc hardware`、`adrc limits`、`adrc feedback` 可只读；当前目标只接受 `adrc acquire motor=7`。取得所有权前，控制任务检查 LCD 运动/结果队列和发现序列为空、传统 CAN 软件队列与 FDCAN FIFO 已排空并经过 4 ms 静默，且实际发现的电机 7 身份、MIT 模式和全部参数一致。接管使用单次电机 7 DISABLE 挑战；须确认实际发送成功和提交后的新鲜禁能、零故障、低速反馈，100 ms 内未取得则超时返回 LCD。此路径已刷入但尚未做带电接管实测。
 - ADRC 持有时，LCD POS/MIT 请求和旧 CAN 发送入口被拒绝，LCD 与 USB STOP 都作用于 ADRC 单轴。`adrc release` 强制重新发送 DISABLE；只有匹配的真实 CAN 发送回执及更新的禁能反馈都到达后才交还 LCD。失败或超时保持锁定，`adrc status` 的 `owner`/`handoff` 字段可查询结果。
 - `Tests/host/run_adrc_lcd_integration_tests.ps1` 与所有权状态机、独立 CAN 通道测试通过；覆盖默认 LCD、错误轴、未取得控制权拒绝运行、旧 LCD 控制组/新 CAN 提交阻止接管、禁能挑战发送和超时、失败保持 LCD、LCD/USB STOP、发送失败和旧反馈不能交还、已失能监督器仍需新 DISABLE。原 `run_tests.ps1`、ADRC App/bench/协议/监督器、LCD UI 与传输回归通过；`test_debug_ui_build_contract.py` 的 24 组门禁与 13 组 ADRC 发布门禁通过。
 - 当前板上已烧录提交 `7db5d7f` 的集成目标，ARMCC 构建 0 错误、0 警告，Code=217240、RO=101180、RW=868、ZI=233500 字节；HEX SHA-256 为 `A02EC16DC65220190E0778C3B620CA1320603D7A41C76D4FDCDF1C8EB5AE570D`。完整构建日志在 `output/adrc/hardware/integrated_gate_flash_20260923/discover_keil_final_20260923.log`，HEX 位于 `MDK-ARM/LCD-MIT-ADRC/`。模型及生成代码仍是此前验证的三个 SLX 和 ERT 快照，本轮未改模型。
@@ -42,7 +42,9 @@
 
 - 24 V 关闭后，以已刷入的 AXF 符号定位并只读 STM32 RAM 中电机 7 的发现快照，得到 `PMAX=12.5 rad`、`VMAX=200 rad/s`、`TMAX=10 Nm`、`mode=2 fields=1fff`；前两项、模式和字段与此前 COM4 发现结果一致。记录为 `output/adrc/hardware/enabled_feedback_pilot/motor7_range_ram_read_20260923.txt`。这不是新一次驱动寄存器查询。`TMAX=10` 对应的 12 位转矩码格约 0.004884 Nm，超过现有 4 ms、0.5 Nm/s 斜率门限允许的 0.002 Nm；合成模型的 0.001 Nm 也偏乐观。因此除速度量化外，转矩量化也是当前 ADRC 资格阻塞项。厂商 S3519 V1.1 手册将 `VMAX(0x16)`、`TMAX(0x17)` 列为可读写映射范围，寄存器写入立即生效但未发送存储命令时掉电丢失。暂以 `VMAX=20 rad/s`、`TMAX=4 Nm` 作为**待验证的临时映射候选**，理论码格分别约 0.009768 rad/s、0.001954 Nm；尚未写入电机，也不能把 `TMAX` 当成电源限流。实施前需完成失能独占、写入回读、主控量程同步、失败恢复原值和模型重验。
 
-- 接管路径已离线调整：`adrc acquire motor=7` 在 MIT 模式回读、LCD/CAN 空闲后，经专用 FDCAN buffer 发送一次**精确的电机 7 DISABLE 帧**；只有确认本次帧实际发送成功，且收到时间戳晚于该帧提交时刻的新鲜、禁能、无故障、低速反馈，才交接 ADRC。CAN 回复可能早于下一个 4 ms 周期的发送回执采样，因此反馈不要求晚于回执采样时刻。独立的 LCD 诊断 `adrc probe` 仍发送 4/8 字节 `0xCC`。专用通道仅额外放行 CAN ID `0x007`、数据 `FF FF FF FF FF FF FF FD` 的电机 7 DISABLE，拒绝字节变体和其他运动帧。所有权、集成、专用 CAN 通道、ADRC App 主机测试及 Keil 集成完整重建通过，0 错误、0 警告；修正后的构建日志为 `output/adrc/hardware/enabled_feedback_pilot/handoff_disable_corrected_build_20260923.log`。本段结果尚未刷入板上或做接管实测，且即便交接成功也仍缺速度/转矩量化资格，不能执行 ADRC 运动。
+- 接管路径已调整：`adrc acquire motor=7` 在 MIT 模式回读、LCD/CAN 空闲后，经专用 FDCAN buffer 发送一次**精确的电机 7 DISABLE 帧**；只有确认本次帧实际发送成功，且收到时间戳晚于该帧提交时刻的新鲜、禁能、无故障、低速反馈，才交接 ADRC。CAN 回复可能早于下一个 4 ms 周期的发送回执采样，因此反馈不要求晚于回执采样时刻。独立的 LCD 诊断 `adrc probe` 仍发送 4/8 字节 `0xCC`。专用通道仅额外放行 CAN ID `0x007`、数据 `FF FF FF FF FF FF FF FD` 的电机 7 DISABLE，拒绝字节变体和其他运动帧。此接管版本 `9c74b53` 已在 24 V 关闭时烧录：先备份原 Flash 1 MiB，回读验证新镜像 320508 字节完全一致，复位后核心运行。记录在 `output/adrc/hardware/enabled_feedback_pilot/20260923T162042/flash-result.json`。COM4 只读检查为 `enabled=00 moving=0 owner=lcd qualified=0 busoff=0`，原始记录在同目录 `postflash_usb_readonly.txt`；没有发送接管、使能或运动指令。
+
+- 离线复核发现释放也需按 DISABLE **提交时刻**而非下一周期回执采样时刻判断反馈新鲜度，否则一次快速禁能回复可能被误判为旧反馈，导致 LCD 控制权无法交还。现已新增专用缓冲区提交时间记录；交还仍要求匹配的实际发送成功、提交后的新鲜禁能/无故障/低速反馈和 CAN 空闲。所有权、集成、专用 CAN 通道、ADRC App 主机测试已通过，Keil 集成完整重建 0 错误、0 警告，构建日志为 `output/adrc/hardware/enabled_feedback_pilot/handoff_release_build_20260923.log`。此释放修正版尚未刷入或带电实测；即使接管/释放通过，速度与转矩量化资格仍阻止 ADRC 运动。
 
 ## 文件与版本
 
@@ -92,7 +94,7 @@ MATLAB 客户端已完成，入口见 `Models/AdrcClient/README.md`。9 月 21 �
 3. 经有限脉冲辨识 b0，重复及保留数据验证后，更新 plant 与控制参数并重新执行模型验收。
 4. 进行有限期 PI/LADRC 对照，保存速度、已发送名义转矩、ESO 状态、扰动恢复与最终失能证据。
 
-当前 24 V 按用户最近确认保持关闭，板上为提交 `79ecd83` 的 LCD-MIT/ADRC 集成固件，带 `adrc gate`、`adrc discover`、`adrc probe` 和使能态反馈帧间隔统计。接线和分阶段供电、辨识与调参细节见 [调试与调参步骤](commissioning-and-tuning.md)。未经实测的参数和仿真结果均不得用于解锁电机运行。
+当前 24 V 按用户最近确认保持关闭，板上为提交 `9c74b53` 的 LCD-MIT/ADRC 集成固件，已包含电机 7 DISABLE 接管挑战、`adrc gate`、`adrc discover`、`adrc probe` 和使能态反馈帧间隔统计；释放修正版仍在离线准备。接线和分阶段供电、辨识与调参细节见 [调试与调参步骤](commissioning-and-tuning.md)。未经实测的参数和仿真结果均不得用于解锁电机运行。
 
 ## 主线位置与工期估算
 

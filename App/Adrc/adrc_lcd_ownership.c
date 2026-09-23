@@ -49,9 +49,21 @@ AdrcLcdOwnershipStatus adrc_lcd_ownership_submit_release(
     ownership->active_request_id = request_id;
     ownership->highest_request_id = request_id;
     ownership->release_started_us = now_us;
+    ownership->disable_submitted_us = 0ULL;
     ownership->disable_transmitted_us = 0ULL;
     ownership->state = ADRC_LCD_OWNER_RELEASING;
     return ADRC_LCD_OWNERSHIP_OK;
+}
+
+/** @brief Starts a new disable challenge only after its dedicated buffer accepts it. */
+void adrc_lcd_ownership_report_disable_submit(
+    AdrcLcdOwnership *ownership, uint64_t submitted_us)
+{
+    if (ownership == NULL || ownership->state != ADRC_LCD_OWNER_RELEASING ||
+        submitted_us == 0ULL || submitted_us < ownership->release_started_us)
+    { return; }
+    ownership->disable_submitted_us = submitted_us;
+    ownership->disable_transmitted_us = 0ULL;
 }
 
 /** @brief Records a matched successful disable transmission without claiming drive execution. */
@@ -59,7 +71,8 @@ void adrc_lcd_ownership_report_disable_transmit(
     AdrcLcdOwnership *ownership, uint64_t transmitted_us, uint8_t succeeded)
 {
     if (ownership == NULL || ownership->state != ADRC_LCD_OWNER_RELEASING ||
-        succeeded == 0U || transmitted_us < ownership->release_started_us)
+        succeeded == 0U || ownership->disable_submitted_us == 0ULL ||
+        transmitted_us < ownership->disable_submitted_us)
     { return; }
     ownership->disable_transmitted_us = transmitted_us;
 }
@@ -104,9 +117,10 @@ AdrcLcdOwnershipStatus adrc_lcd_ownership_service(
     }
     if (ownership->state == ADRC_LCD_OWNER_RELEASING)
     {
-        if (ownership->disable_transmitted_us != 0ULL &&
+        if (ownership->disable_submitted_us != 0ULL &&
+            ownership->disable_transmitted_us != 0ULL &&
             feedback_is_current(evidence) != 0U &&
-            evidence->feedback_us > ownership->disable_transmitted_us &&
+            evidence->feedback_us > ownership->disable_submitted_us &&
             evidence->disabled != 0U && evidence->no_fault != 0U &&
             evidence->stationary != 0U && evidence->can_idle != 0U)
         {

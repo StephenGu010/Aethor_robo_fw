@@ -6221,6 +6221,15 @@ void aethor_app_adrc_report_transmit(uint8_t kind, float decoded_torque_nm, uint
 }
 
 #if AETHOR_ADRC_LCD_INTEGRATED
+/** @brief Marks a release DISABLE only after the dedicated hardware buffer accepts it. */
+void aethor_app_adrc_report_disable_submit_at(uint8_t kind, uint64_t timestamp_us)
+{
+    if (!application_initialized || kind != 2U) { return; }
+    aethor_app_enter_task_critical();
+    adrc_lcd_ownership_report_disable_submit(&application_adrc_lcd_ownership, timestamp_us);
+    aethor_app_exit_task_critical();
+}
+
 /** @brief Couples a real selected-axis disable receipt to the LCD handback evidence gate. */
 void aethor_app_adrc_report_transmit_at(uint8_t kind, float decoded_torque_nm,
     uint8_t succeeded, uint64_t timestamp_us)

@@ -111,20 +111,20 @@ try {
     }
     $serialPort.Open()
     $serialPort.DiscardInBuffer()
-    Assert-WindowDisabledLcd $serialPort 67000001
-    $gateReply = Invoke-WindowRequest $serialPort 67000004 'adrc gate motor=7'
+    Assert-WindowDisabledLcd $serialPort 80000001
+    $gateReply = Invoke-WindowRequest $serialPort 80000004 'adrc gate motor=7'
     if ($gateReply -notmatch 'lcd_idle=1 can_idle=1' -or
         $gateReply -notmatch 'discovery_active=0') {
         throw 'Discovery preflight stopped: LCD, CAN, or discovery is busy'
     }
 
-    $discoverReply = Invoke-WindowRequest $serialPort 67000005 'adrc discover motor=7'
-    if ($discoverReply -notmatch '^ok 67000005 adrc discover=accepted') {
+    $discoverReply = Invoke-WindowRequest $serialPort 80000005 'adrc discover motor=7'
+    if ($discoverReply -notmatch '^ok 80000005 adrc discover=accepted') {
         throw "Discovery rejected: $discoverReply"
     }
     for ($pollIndex = 0; $pollIndex -lt 25; ++$pollIndex) {
         Start-Sleep -Milliseconds 40
-        $gateReply = Invoke-WindowRequest $serialPort ([uint32](67000006 + $pollIndex)) 'adrc gate motor=7'
+        $gateReply = Invoke-WindowRequest $serialPort ([uint32](80000006 + $pollIndex)) 'adrc gate motor=7'
         if ($gateReply -match 'discovery_active=0') {
             $discoveryComplete = $true
             break
@@ -134,28 +134,28 @@ try {
         $gateReply -notmatch 'mode=2 fields=1fff verified=40') {
         throw 'Original mode 2 or complete motor-7 discovery was not verified'
     }
-    Assert-WindowDisabledLcd $serialPort 67000040
+    Assert-WindowDisabledLcd $serialPort 80000040
 
-    $modeReply = Invoke-WindowRequest $serialPort 67000050 'bench mode 7 mode=mit'
-    if ($modeReply -notmatch '^ok 67000050 bench mode accepted=1') {
+    $modeReply = Invoke-WindowRequest $serialPort 80000050 'bench mode 7 mode=mit'
+    if ($modeReply -notmatch '^ok 80000050 bench mode accepted=1') {
         throw "MIT mode switch rejected: $modeReply"
     }
     $mitModeEntered = $true
-    [void](Wait-WindowCompletion $serialPort 67000050 'mode')
-    $gateReply = Invoke-WindowRequest $serialPort 67000051 'adrc gate motor=7'
+    [void](Wait-WindowCompletion $serialPort 80000050 'mode')
+    $gateReply = Invoke-WindowRequest $serialPort 80000051 'adrc gate motor=7'
     if ($gateReply -notmatch 'mode=1 fields=1fff verified=40' -or
         $gateReply -notmatch 'lcd_idle=1 can_idle=1') {
         throw 'MIT mode readback or ownership gate failed'
     }
-    Assert-WindowDisabledLcd $serialPort 67000052
+    Assert-WindowDisabledLcd $serialPort 80000052
 
-    $acquireReply = Invoke-WindowRequest $serialPort 67000060 'adrc acquire motor=7'
-    if ($acquireReply -notmatch '^ok 67000060 adrc acquire=accepted') {
+    $acquireReply = Invoke-WindowRequest $serialPort 80000060 'adrc acquire motor=7'
+    if ($acquireReply -notmatch '^ok 80000060 adrc acquire=accepted') {
         throw "ADRC acquire rejected: $acquireReply"
     }
     $ownerReturnedToLcd = $false
     for ($pollIndex = 0; $pollIndex -lt 20; ++$pollIndex) {
-        $ownerReply = Invoke-WindowRequest $serialPort ([uint32](67000061 + $pollIndex)) 'adrc status'
+        $ownerReply = Invoke-WindowRequest $serialPort ([uint32](80000061 + $pollIndex)) 'adrc status'
         if ($ownerReply -match 'owner=adrc handoff=transferred') {
             $acquireTransferred = $true
             break
@@ -168,12 +168,12 @@ try {
     }
     if (-not $acquireTransferred) { throw 'ADRC acquire state was not confirmed' }
 
-    $releaseReply = Invoke-WindowRequest $serialPort 67000090 'adrc release'
-    if ($releaseReply -notmatch '^ok 67000090 adrc release=accepted') {
+    $releaseReply = Invoke-WindowRequest $serialPort 80000090 'adrc release'
+    if ($releaseReply -notmatch '^ok 80000090 adrc release=accepted') {
         throw "ADRC release rejected: $releaseReply"
     }
     for ($pollIndex = 0; $pollIndex -lt 45; ++$pollIndex) {
-        $ownerReply = Invoke-WindowRequest $serialPort ([uint32](67000091 + $pollIndex)) 'adrc status'
+        $ownerReply = Invoke-WindowRequest $serialPort ([uint32](80000091 + $pollIndex)) 'adrc status'
         if ($ownerReply -match 'owner=lcd handoff=released') {
             $releaseVerified = $true
             $ownerReturnedToLcd = $true
@@ -185,11 +185,11 @@ try {
         Start-Sleep -Milliseconds 10
     }
     if (-not $releaseVerified) { throw 'ADRC release state was not confirmed' }
-    Assert-WindowDisabledLcd $serialPort 67000140
+    Assert-WindowDisabledLcd $serialPort 80000140
 
     $postReleaseDiscoveryIdle = $false
     for ($pollIndex = 0; $pollIndex -lt 25; ++$pollIndex) {
-        $gateReply = Invoke-WindowRequest $serialPort ([uint32](67000200 + $pollIndex)) 'adrc gate motor=7'
+        $gateReply = Invoke-WindowRequest $serialPort ([uint32](80000200 + $pollIndex)) 'adrc gate motor=7'
         if ($gateReply -match 'discovery_active=0') {
             $postReleaseDiscoveryIdle = $true
             break
@@ -199,23 +199,23 @@ try {
     if (-not $postReleaseDiscoveryIdle) {
         throw 'Selected-axis discovery remained busy after release'
     }
-    $restoreReply = Invoke-WindowRequest $serialPort 67000300 'bench mode 7 mode=pos_vel'
-    if ($restoreReply -notmatch '^ok 67000300 bench mode accepted=1') {
+    $restoreReply = Invoke-WindowRequest $serialPort 80000300 'bench mode 7 mode=pos_vel'
+    if ($restoreReply -notmatch '^ok 80000300 bench mode accepted=1') {
         throw "Mode 2 restore rejected: $restoreReply"
     }
-    [void](Wait-WindowCompletion $serialPort 67000300 'mode')
+    [void](Wait-WindowCompletion $serialPort 80000300 'mode')
     $modeRestored = $true
-    $gateReply = Invoke-WindowRequest $serialPort 67000301 'adrc gate motor=7'
+    $gateReply = Invoke-WindowRequest $serialPort 80000301 'adrc gate motor=7'
     if ($gateReply -notmatch 'mode=2 fields=1fff verified=40') {
         throw 'Mode 2 restore readback failed'
     }
-    $disableReply = Invoke-WindowRequest $serialPort 67000302 'bench disable 7'
-    if ($disableReply -notmatch '^ok 67000302 bench disable accepted=1') {
+    $disableReply = Invoke-WindowRequest $serialPort 80000302 'bench disable 7'
+    if ($disableReply -notmatch '^ok 80000302 bench disable accepted=1') {
         throw "Final DISABLE rejected: $disableReply"
     }
-    [void](Wait-WindowCompletion $serialPort 67000302 'disable')
+    [void](Wait-WindowCompletion $serialPort 80000302 'disable')
     $finalDisableCompleted = $true
-    Assert-WindowDisabledLcd $serialPort 67000303
+    Assert-WindowDisabledLcd $serialPort 80000303
     $transcriptLines.Add('HANDOFF_WINDOW_COMPLETE')
     Write-Output 'ADRC_HANDOFF_WINDOW_COMPLETE motor=7 no_motion=1 mode_restored=1'
 }
@@ -227,7 +227,7 @@ catch {
 finally {
     if ($serialPort.IsOpen -and $mitModeEntered) {
         try {
-            $ownerReply = Invoke-WindowRequest $serialPort 67000900 'adrc status'
+            $ownerReply = Invoke-WindowRequest $serialPort 80000900 'adrc status'
             $ownerReturnedToLcd = $ownerReply -match 'owner=lcd\b'
         }
         catch { $transcriptLines.Add('owner_check_error=' + $_.Exception.Message) }
@@ -235,9 +235,9 @@ finally {
     if ($serialPort.IsOpen -and $mitModeEntered -and $ownerReturnedToLcd -and
         -not $modeRestored) {
         try {
-            $restoreReply = Invoke-WindowRequest $serialPort 67000901 'bench mode 7 mode=pos_vel'
-            if ($restoreReply -match '^ok 67000901 bench mode accepted=1') {
-                [void](Wait-WindowCompletion $serialPort 67000901 'mode')
+            $restoreReply = Invoke-WindowRequest $serialPort 80000901 'bench mode 7 mode=pos_vel'
+            if ($restoreReply -match '^ok 80000901 bench mode accepted=1') {
+                [void](Wait-WindowCompletion $serialPort 80000901 'mode')
                 $modeRestored = $true
             }
         }
@@ -246,9 +246,9 @@ finally {
     if ($serialPort.IsOpen -and $mitModeEntered -and $ownerReturnedToLcd -and
         -not $finalDisableCompleted) {
         try {
-            $disableReply = Invoke-WindowRequest $serialPort 67000902 'bench disable 7'
-            if ($disableReply -match '^ok 67000902 bench disable accepted=1') {
-                [void](Wait-WindowCompletion $serialPort 67000902 'disable')
+            $disableReply = Invoke-WindowRequest $serialPort 80000902 'bench disable 7'
+            if ($disableReply -match '^ok 80000902 bench disable accepted=1') {
+                [void](Wait-WindowCompletion $serialPort 80000902 'disable')
                 $finalDisableCompleted = $true
             }
         }

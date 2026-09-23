@@ -1,6 +1,6 @@
 # ADRC 实施状态与续接入口
 
-更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成；集成目标已六次烧录并通过回读与复位后的 USB 检查。电机 7 原始模式为 2，失能状态可临时切入模式 1 并恢复模式 2；4 字节状态查询已发送，但未取得查询后的新鲜反馈。8 字节对照首次被板端专用通道拒绝，修正版已烧录，尚待上电复测。尚未进行 ADRC 接管或运动验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
+更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成；集成目标已六次烧录并通过回读与复位后的 USB 检查。电机 7 原始模式为 2，失能状态可临时切入模式 1 并恢复模式 2；4 字节和 8 字节状态查询都已实际发送，但均未取得查询后的新接收帧。尚未进行 ADRC 接管或运动验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
 
 ## LCD-MIT/ADRC 单固件集成（2026-09-23）
 
@@ -30,6 +30,9 @@
 - 对照版随后在 24 V 关闭状态下完成烧录。烧录前 COM4 为 `enabled=00 moving=0 fault=none owner=lcd`；目标提交 `c1622c3`，HEX SHA-256 `F7B514412B9E150F0E11EA9AF342A1BAE1AEAC164525A36CE50774B30A6E0458`。旧 Flash 1 MiB 备份 SHA-256 `F6EC121EE6F898999C55349B4890A96A6449E01625B2F125232A5817329A0EAC`，新映像 320144 字节逐字节回读一致，复位后核心为 `State.RUNNING`。构建日志、备份和 `flash-result.json` 位于 `output/adrc/hardware/mode_feedback_probe_20260923/20260923T144859/`；复位后 COM4 返回 `enabled=00 moving=0 owner=lcd`、`adrc probe motor=7 state=idle query_len=4 rx_after_tx=0`，错误轴仍被拒绝，记录为同目录上级 `postflash_rx_compare_readonly.txt`。对照版尚未上电实测，也没有发送使能或运动命令。
 - 用户再次开启 24 V 运行同一有界脚本，随后确认关闭。模式 1 回读、模式 2 恢复和最终 `DISABLE completed enabled=00` 均通过，始终未使能或运动。4 字节查询 `tx=1`，100 ms 内 `rx_after_tx=0 rx_valid=0 rx_rejected=0`；旧禁能反馈仍变为过期。8 字节请求虽返回 `probe=accepted`，但紧接着 `state=failed tx=0`，故没有发到电机，不能推断其响应能力。原始记录为 `output/adrc/hardware/mode_feedback_probe_20260923/motor7_mode_feedback_20260923T065256719Z.txt`。源码定位到 `stm32_adrc_channel_submit` 把专用探针硬限制为 4 字节；现已离线改为仅允许 4 字节或末四位全零的 8 字节 `0xCC`，并按实际长度选择 FDCAN DLC。先失败再通过的专用通道测试、集成测试和 Keil 完整重建均通过，修正版尚未烧录或实测。
 - 修正版在用户确认 24 V 关闭后完成烧录。烧录前 COM4 为 `enabled=00 moving=0 fault=none owner=lcd`，目标提交 `a7d8e1a`，HEX SHA-256 `1502E9F5B369B5BB30E6D2461FA33029350186E8123C944105225AC91A4F1E5E`；旧 Flash 1 MiB 备份 SHA-256 `AEC17C71E36FCD92738CB95AD0A1793545388FA4AC0868160EB9B28D2345F17B`，新映像 320164 字节逐字节回读一致，复位后核心 `State.RUNNING`。报告、备份与构建日志在 `output/adrc/hardware/mode_feedback_probe_20260923/20260923T145921/`，复位后 COM4 只读为 `enabled=00 moving=0 owner=lcd`、`adrc probe state=idle query_len=4 rx_after_tx=0`，错误轴仍被拒绝；原始 USB 记录在同目录上级 `postflash_channel_fix_readonly.txt`。没有发送使能或运动命令；8 字节实际发帧及反馈尚待新一轮上电确认。
+- 用户确认 24 V 开启后运行修正版单窗口脚本，并在完成后确认关闭。原始模式 2 的只读发现完成，失能状态切到模式 1 并回读；4 字节查询与 8 字节零填充查询都得到专用 CAN 发送回执 `tx=1`，各自 100 ms 窗口内均为 `rx_after_tx=0 rx_valid=0 rx_rejected=0 sample_after_tx=0`，原有禁能反馈随时间过期。随后模式 2 恢复并回读，最终 `bench disable 7` 为 `completed enabled=00`；收尾 `show state enabled=00 moving=0 fault=none`、`adrc status owner=lcd`、CAN `busoff=0`。原始记录为 `output/adrc/hardware/mode_feedback_probe_20260923/motor7_mode_feedback_20260923T070531089Z.txt`。本轮无使能、运动或 ADRC 接管；结果表明当前失能状态下这两种查询均未产生可用反馈，不能据此推断使能后反馈行为，也不能放开 ADRC 运动资格。下一步先离线核对厂商反馈条件和现有驱动的安全启停路径，准备有界的使能后反馈试验，再决定是否进入该物理试验；不重复相同的失能查询或烧录。
+- 离线复核现有 `bench mit ... action=hold`：只有预检 DISABLE 取得新的禁能反馈、MIT 模式回读、清故障后取得新反馈，才发送 ENABLE；ENABLE 后需取得新的 enabled 反馈才开始保持；保持使用读回位置、`kp=1 kd=1 torque_ff=0`，反馈过期或故障进入失能清理，终态需新的 disabled 反馈。已单独准备 `Tests/hardware/adrc_motor7_enabled_feedback_pilot.ps1`：要求显式 24 V、使能试验批准及电源限流确认开关，预检和位置锚点，单次 100 ms HOLD，轮询速度/转矩/位移并在主机侧越限时 STOP，之后尝试 DISABLE、恢复模式 2、最终再次 DISABLE 和状态核对。PowerShell 语法检查及缺少确认开关时拒绝执行的离线检查通过；脚本**尚未带电运行**，主机轮询次数不等于独立 CAN 样本数，也不能替代 4 ms 反馈周期测量。该试验可能产生短时保持力矩或小幅运动，须在确认电源限流和人工断电条件后单独决定是否执行。
+- 用户已允许上述**一次** 100 ms 试验，但答复当前 24 V 电源的限流设定“不确定”，且确认 24 V 已关闭。因此仍未运行使能脚本，也不要求重新上电。S3519 V1.1 说明书第 20 页列出的 9.2 A/8.6 A 是额定相电流/电源电流，第 10 页的“1 A 以上电源”只针对校准流程；二者都不是本台架短时 MIT 保持试验已设定的限流值，不能代替电源型号及实际限流设置的核对。
 
 ## 文件与版本
 
@@ -74,7 +77,7 @@ MATLAB 客户端已完成，入口见 `Models/AdrcClient/README.md`。9 月 21 �
 
 离线软件阶段已完成。硬件阶段仍需按顺序完成：
 
-1. 集成目标的六次烧录、回读、USB 检查，以及模式 2/模式 1 禁能反馈试验已完成。模式 1 能临时切入并恢复模式 2，4 字节查询后没有新鲜反馈；8 字节首次被旧版板端专用通道拒绝，尚无电机应答结论。修正版已在板上，下一步由用户手动开启 24 V 做一次真正的 8 字节失能查询。只有持续反馈、控制周期及门限证据完整才重试非运动接管/释放。
+1. 集成目标的六次烧录、回读、USB 检查，以及模式 2/模式 1 禁能反馈试验已完成。模式 1 能临时切入并恢复模式 2；修正版已确认 4/8 字节 `0xCC` 查询均实际发帧，但禁能状态下没有新接收帧。下一步决定是否执行已离线准备的 100 ms 有界 MIT 保持反馈试验；在取得新鲜、持续、足够频率的反馈及控制周期证据前，不重试 ADRC 接管或 ADRC 运动。
 2. 分别核对位置、速度、转矩映射与量化，不把历史位置比例自动套用到速度或转矩。
 3. 经有限脉冲辨识 b0，重复及保留数据验证后，更新 plant 与控制参数并重新执行模型验收。
 4. 进行有限期 PI/LADRC 对照，保存速度、已发送名义转矩、ESO 状态、扰动恢复与最终失能证据。

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "fdcan.h"
+#include "s3519_codec.h"
 #include "stm32_adrc_channel.h"
 static FDCAN_GlobalTypeDef registers;
 FDCAN_HandleTypeDef hfdcan1;
@@ -39,6 +40,11 @@ int main(void)
 {
     CanFrame frame;
     AdrcCanReceipt receipt;
+    const uint8_t neutral_mit_payload[8] =
+        {0x7FU, 0xFFU, 0x7FU, 0xF0U, 0x00U, 0x00U, 0x07U, 0xFFU};
+    const S3519Ranges discovered_ranges = {12.5F, 200.0F, 10.0F};
+    uint8_t neutral_byte_index;
+    uint8_t saved_byte;
     memset(&frame, 0, sizeof(frame)); frame.identifier = 7U; frame.length = 8U;
     hfdcan1.Instance = &registers; hfdcan1.Init.TxBuffersNbr = 8U;
     stm32_adrc_channel_init();
@@ -64,6 +70,29 @@ int main(void)
     registers.TXBRP = 0U; registers.TXBTO = FDCAN_TX_BUFFER0;
     receipt = stm32_adrc_channel_collect();
     assert(receipt.available && receipt.transmitted && receipt.kind == ADRC_CAN_PROBE);
+    assert(s3519_pack_mit(7U, &discovered_ranges,
+        0.0F, 0.0F, 0.0F, 0.0F, 0.0F, &frame) == S3519_CODEC_STATUS_OK);
+    assert(memcmp(frame.data, neutral_mit_payload, sizeof(neutral_mit_payload)) == 0);
+    assert(stm32_adrc_channel_submit(&frame, ADRC_CAN_PROBE, 0.0F));
+    assert(last_header.Identifier == 7U && last_header.DataLength == FDCAN_DLC_BYTES_8);
+    registers.TXBRP = 0U; registers.TXBTO = FDCAN_TX_BUFFER0;
+    receipt = stm32_adrc_channel_collect();
+    assert(receipt.available && receipt.transmitted && receipt.kind == ADRC_CAN_PROBE);
+    for (neutral_byte_index = 0U; neutral_byte_index < 8U; ++neutral_byte_index)
+    {
+        saved_byte = frame.data[neutral_byte_index];
+        frame.data[neutral_byte_index] = (uint8_t)(saved_byte + 1U);
+        assert(!stm32_adrc_channel_submit(&frame, ADRC_CAN_PROBE, 0.0F));
+        frame.data[neutral_byte_index] = saved_byte;
+    }
+    assert(!stm32_adrc_channel_submit(&frame, ADRC_CAN_PROBE, 0.001F));
+    frame.identifier = 8U;
+    assert(!stm32_adrc_channel_submit(&frame, ADRC_CAN_PROBE, 0.0F));
+    frame.identifier = 7U;
+    frame.length = 7U;
+    assert(!stm32_adrc_channel_submit(&frame, ADRC_CAN_PROBE, 0.0F));
+    frame.length = 8U;
+    memset(frame.data, 0xFF, 7U);
     frame.data[7] = 0xFCU;
     assert(!stm32_adrc_channel_submit(&frame, ADRC_CAN_PROBE, 0.0F));
     frame.data[7] = 0xFDU; frame.data[0] = 0U;
@@ -72,7 +101,7 @@ int main(void)
     assert(stm32_adrc_channel_submit(&frame, ADRC_CAN_TORQUE, 0.012F));
     assert(last_header.Identifier == 7U && last_header.DataLength == 8U);
     assert(!stm32_adrc_channel_submit(&frame, ADRC_CAN_TORQUE, 0.02F));
-    assert(writes == 4U);
+    assert(writes == 5U);
     receipt = stm32_adrc_channel_collect();
     assert(receipt.available && !receipt.transmitted && aborts == 1U);
     assert(!stm32_adrc_channel_submit(&frame, ADRC_CAN_DISABLE, 0.0F));

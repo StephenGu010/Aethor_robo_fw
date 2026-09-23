@@ -12,7 +12,8 @@ Push-Location $projectRoot
 try {
     $env:PATH = (Split-Path $Compiler) + ';' + $savedSearchPath
     & $Compiler -std=c99 -Wall -Wextra -Werror -pedantic -ITests/host/adrc_fakes -IApp/Motor -IApp/Platform `
-        Tests/host/adrc_channel_test_main.c App/Platform/stm32_adrc_channel.c -o $executable
+        Tests/host/adrc_channel_test_main.c App/Platform/stm32_adrc_channel.c `
+        App/Motor/s3519_codec.c App/Motor/can_frame.c -lm -o $executable
     if ($LASTEXITCODE -ne 0) { throw 'ADRC channel compilation failed.' }
     & $executable
     if ($LASTEXITCODE -ne 0) { throw 'ADRC channel test failed.' }

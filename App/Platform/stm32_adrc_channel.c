@@ -1,5 +1,5 @@
 /** @file stm32_adrc_channel.c
- * @brief Uses dedicated FDCAN buffer 0, with next-tick expiry and hardware transmission evidence.
+ * @brief Uses dedicated FDCAN buffer 0, with exact probe allowlisting and transmission evidence.
  * ArmControlTask is the sole caller. TXBTO proves bus transmission, not motor torque application.
  */
 #include "stm32_adrc_channel.h"
@@ -35,6 +35,15 @@ static uint8_t valid_acquire_disable(const CanFrame *frame)
     return 1U;
 }
 
+/** @brief Allows only motor 7's zero-request MIT encoding after acquisition DISABLE. */
+static uint8_t valid_acquire_neutral_mit(const CanFrame *frame)
+{
+    static const uint8_t neutral_mit_payload[8] =
+        {0x7FU, 0xFFU, 0x7FU, 0xF0U, 0x00U, 0x00U, 0x07U, 0xFFU};
+    return (uint8_t)(frame->identifier == 7U && frame->length == 8U &&
+        memcmp(frame->data, neutral_mit_payload, sizeof(neutral_mit_payload)) == 0);
+}
+
 /** @brief Initializes bookkeeping only before control service begins. */
 void stm32_adrc_channel_init(void)
 {
@@ -65,7 +74,8 @@ uint8_t stm32_adrc_channel_submit(const CanFrame *frame, AdrcCanKind kind, float
     if (frame == NULL || frame->identifier > CAN_STANDARD_MAX_IDENTIFIER ||
         (unsigned)kind > (unsigned)ADRC_CAN_PROBE ||
         (kind == ADRC_CAN_PROBE &&
-         ((valid_feedback_query(frame) == 0U && valid_acquire_disable(frame) == 0U) ||
+         ((valid_feedback_query(frame) == 0U && valid_acquire_disable(frame) == 0U &&
+           valid_acquire_neutral_mit(frame) == 0U) ||
           decoded_torque_nm != 0.0F)) ||
         (kind != ADRC_CAN_PROBE && frame->length != 8U) ||
         decoded_torque_nm != decoded_torque_nm ||

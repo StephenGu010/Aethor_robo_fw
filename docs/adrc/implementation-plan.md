@@ -1,8 +1,10 @@
 # S3519 ADRC 实施与验收记录
 
+当前续接入口为 [LCD-MIT/ADRC 集成实施状态](execution-status.md)。集成代码、三个 `.slx` 模型及文档已发布到 [GitHub 实验分支](https://github.com/StephenGu010/Aethor_robo_fw/tree/feature/s3519-adrc-lcd-mit)；独立实验目标与下方历史任务保留供追溯。电机 7 的零请求 MIT 接管挑战虽已实际发送，但未取得新鲜失能反馈；当前不具备 ADRC 运动资格。下方未勾选的实机验收项仍未完成。
+
 ## 已冻结范围
 
-- 基线：`a19fcfe`，分支 `feature/s3519-adrc`，原 LCD/MIT 基线不改写。
+- 基线：`a19fcfe`；初始独立目标分支 `feature/s3519-adrc`，当前 LCD-MIT/ADRC 集成分支 `feature/s3519-adrc-lcd-mit`。原 LCD/MIT 基线不改写。
 - STM32H723 / FreeRTOS 4 ms 控制任务 / 经典 CAN / S3519 MIT 转矩接口。
 - 固定空载单电机，MATLAB/USB 操作，LCD 保留停止入口，不新增调参页面。
 - Simulink 生成离散控制器 C；保留达妙内部电流环，不移植 TI 外设。
@@ -14,6 +16,7 @@
 备份：`D:/download/TCG/output/adrc_baseline_20260921`。
 该目录包含可独立恢复的源码 ZIP、Git bundle、回滚 HEX、忽略文件清单、必要本地配置及 SHA-256 清单。
 开发目录：`D:/download/TCG/Aethor_robo_fw/.worktrees/s3519-adrc`。
+当前集成工作目录：`D:/download/TCG/Aethor_robo_fw/.worktrees/s3519-adrc-lcd-mit`。
 新模型、源文件、测试和文档纳入 Git；构建、仿真和实验数据进入工作目录的 `output/adrc/`。
 任何发布工件记录基线、源码提交、模型、参数、生成代码和 HEX 哈希。
 禁止批量删除；不移动或覆盖历史工作副本及固件。

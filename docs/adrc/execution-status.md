@@ -2,6 +2,8 @@
 
 更新日期：2026-09-23。已完成 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成。电机 7 原始模式为 2，失能状态可临时切入模式 1 并恢复模式 2；4/8 字节 `0xCC`、重复 DISABLE 和零请求 MIT 帧都已实际发送，但接管窗口内没有新接收帧。带电 100 ms MIT HOLD 曾取得 26 帧连续使能态反馈、25 个 4000 μs 帧间隔及最终失能/模式恢复证据。当前仍未完成 ADRC 接管或闭环运动验收；禁能反馈与速度/转矩量化仍是阻塞项。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
 
+代码、三个已验收的离线 `.slx` 模型及本文档已推送到 [GitHub 的 `feature/s3519-adrc-lcd-mit` 分支](https://github.com/StephenGu010/Aethor_robo_fw/tree/feature/s3519-adrc-lcd-mit)，首次发布提交为 `9a7d4b1`，当时本地与远端哈希一致；`main` 未随该次推送更改。板上实际烧录版本仍为 `6989b1a`，仓库后续文档提交不会自动更新板卡固件。本文引用的 `output/adrc/` 原始硬件日志、Flash 备份和逐次构建输出保存在本机工作树，未纳入 GitHub 分支；因此公开分支可复核源码与结论，但不能单凭分支文件复算全部硬件测量。
+
 ## LCD-MIT/ADRC 单固件集成（2026-09-23）
 
 - 独立工作树：`D:/download/TCG/Aethor_robo_fw/.worktrees/s3519-adrc-lcd-mit`，分支 `feature/s3519-adrc-lcd-mit`。先合入已验证的 LCD 流畅度版本，再建立单独的 `MDK-ARM/LCD-MIT-ADRC.uvprojx`；原板上 LCD-MIT 固件的完整 Flash 已在替换前备份。

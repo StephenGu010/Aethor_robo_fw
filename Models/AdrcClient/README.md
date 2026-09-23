@@ -2,6 +2,8 @@
 
 `AdrcClient`、`AdrcSerialTransport` 的实例化均不会连接设备、使能电机或启动实验。`AdrcMemoryTransport` 仅用于无硬件测试。客户端不提供资格写入接口，不推断或生成电机标定证据；固件默认无资格时 `prepare`/`run` 仍被拒绝。集成版的控制权取得与交还也必须显式调用，不由连接或运行方法自动完成。
 
+当前集成固件虽已发布到 [GitHub 实验分支](https://github.com/StephenGu010/Aethor_robo_fw/tree/feature/s3519-adrc-lcd-mit)，但电机 7 的带电 `acquireMotor(7)` 对应板端接管仍因缺少新鲜失能反馈超时。客户端纯内存测试通过不代表串口或电机闭环验收；在 [硬件门禁](../../docs/adrc/execution-status.md)通过前，不执行下面示例中的配置、辨识或 `run()`。
+
 客户端依据 `App/Adrc/adrc_protocol.c` 的文本契约实现，面向独占一个协议连接的单个客户端。MATLAB 需要支持 `serialport`、`string`、`table`；离线测试不调用 `serialport`。
 
 ## 无硬件测试

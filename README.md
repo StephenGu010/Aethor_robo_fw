@@ -1,5 +1,9 @@
 # Aethor 七自由度机械臂固件
 
+## S3519 单电机 ADRC 实验分支
+
+LCD-MIT/ADRC 单固件集成、三个实际 `.slx` 模型和相关源码已发布到 GitHub 的 [feature/s3519-adrc-lcd-mit 分支](https://github.com/StephenGu010/Aethor_robo_fw/tree/feature/s3519-adrc-lcd-mit)；这是实验分支，不代表 `main` 已合入。模型入口见 [离线模型交付](Models/Adrc/VerifiedOffline/README.md)，当前板上诊断、未通过的硬件资格和后续步骤见 [ADRC 实施状态](docs/adrc/execution-status.md)。截至 2026-09-23，电机 7 接管仍因缺少新鲜失能反馈超时，尚未开展 ADRC 速度闭环或负载扰动实机验收。
+
 ## 系统总览：左右选择，中/下进入（2026-09-15）
 
 首页三个图标改为左右循环选择，中键或下键进入，页脚提示同步更新。子页面操作和七台S3519预置保持不变。见 [导航说明](docs/debug-ui/home-horizontal-20260915.md) 与 [本版固件及验证](firmware/2026-09-15-home-horizontal/README.md)。上一版七电机预置源码保留在 `archive/lvgl-seven-motor-preset`，原固件目录继续保留。

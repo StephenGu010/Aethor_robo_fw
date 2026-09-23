@@ -1,6 +1,6 @@
 # ADRC 实施状态与续接入口
 
-更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成；集成目标已两次烧录并通过回读、复位后的 USB 检查及诊断版上电门限检查。电机 7 的 `bench init` 后实际为模式 2，且仍无新鲜控制反馈；首版的一次非运动接管请求被安全门拒绝，诊断版未重试接管，也未进行运动验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
+更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成；集成目标已三次烧录并通过回读与复位后的 USB 检查。上一版上电门限检查显示，电机 7 的 `bench init` 后为模式 2 且无新鲜控制反馈；当前板上改为带独立、无模式写入发现命令的版本，尚未进行此版的电机上电检查或运动验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
 
 ## LCD-MIT/ADRC 单固件集成（2026-09-23）
 
@@ -8,7 +8,7 @@
 - 上电默认 LCD-MIT。USB 的 `adrc status`、`adrc hardware`、`adrc limits`、`adrc feedback` 可只读；当前目标只接受 `adrc acquire motor=7`。取得所有权前，控制任务检查 LCD 运动/结果队列和发现序列为空、传统 CAN 软件队列与 FDCAN FIFO 已排空并经过 4 ms 静默，且实际发现的电机 7 身份、MIT 模式和全部参数一致。接管期间通过独立 CAN 缓冲区发送一次 `0x7FF/0xCC` 只读反馈查询，只有确认发送并取得查询之后的新鲜禁能、零故障、低速反馈才转移所有权；100 ms 内没有取得反馈则超时返回 LCD。
 - ADRC 持有时，LCD POS/MIT 请求和旧 CAN 发送入口被拒绝，LCD 与 USB STOP 都作用于 ADRC 单轴。`adrc release` 强制重新发送 DISABLE；只有匹配的真实 CAN 发送回执及更新的禁能反馈都到达后才交还 LCD。失败或超时保持锁定，`adrc status` 的 `owner`/`handoff` 字段可查询结果。
 - `Tests/host/run_adrc_lcd_integration_tests.ps1` 与所有权状态机、独立 CAN 通道测试通过；覆盖默认 LCD、错误轴、未取得控制权拒绝运行、旧 LCD 控制组/新 CAN 提交阻止接管、只读查询发送和超时、查询失败保持 LCD、LCD/USB STOP、发送失败和旧反馈不能交还、已失能监督器仍需新 DISABLE。原 `run_tests.ps1`、ADRC App/bench/协议/监督器、LCD UI 与传输回归通过；`test_debug_ui_build_contract.py` 的 24 组门禁与 13 组 ADRC 发布门禁通过。
-- 当前离线新构建的集成目标 ARMCC 为 0 错误、0 警告，Code=217240、RO=101180、RW=868、ZI=233500 字节；HEX SHA-256 为 `A02EC16DC65220190E0778C3B620CA1320603D7A41C76D4FDCDF1C8EB5AE570D`。完整构建日志在 `output/adrc/hardware/integrated_gate_flash_20260923/discover_keil_final_20260923.log`，HEX 位于 `MDK-ARM/LCD-MIT-ADRC/`。当前板上仍为上一版门限诊断固件，离线新构建尚未烧录。模型及生成代码仍是此前验证的三个 SLX 和 ERT 快照，本轮未改模型。
+- 当前板上已烧录提交 `7db5d7f` 的集成目标，ARMCC 构建 0 错误、0 警告，Code=217240、RO=101180、RW=868、ZI=233500 字节；HEX SHA-256 为 `A02EC16DC65220190E0778C3B620CA1320603D7A41C76D4FDCDF1C8EB5AE570D`。完整构建日志在 `output/adrc/hardware/integrated_gate_flash_20260923/discover_keil_final_20260923.log`，HEX 位于 `MDK-ARM/LCD-MIT-ADRC/`。模型及生成代码仍是此前验证的三个 SLX 和 ERT 快照，本轮未改模型。
 - 集成版 MATLAB 客户端新增显式 `acquireMotor(7)`/`releaseMotor()`，仅在收到匹配 ACK 且轮询到 `owner`/`handoff` 的目标状态后返回。用户开启的 R2026a 桌面 Automation Server 在沙箱外可连接；纯内存传输测试通过，输出 `ADRC_CLIENT_TESTS_PASSED checks=45 hardwareOpened=0`，COM 客户端退出码为 0，测试目录为 `output/adrc/client/integrated-com`。独立 `-batch` 也完成了这 45 项，但 MATLAB 在输出后退出时发生 access violation，故该批处理不作为正常退出证据。客户端测试本身未连接串口或硬件。
 - 2026-09-23 在板上仍为 LCD-MIT 固件时，COM4 与电机 7 做了上电前后检查。24 V 关闭时，`adrc status` 返回 `unknown_command`；24 V 开启后，`show state` 为 `enabled=00 moving=0`，`bench init 7` 完成，身份/模式/量程/版本掩码均为 `40`。随后连续 10 次 `show motor 7` 仍为 `state=absent age_ms=4294967295`，`show motors present=00`；参数读取成功不能证明实时反馈存在。记录位于 `output/adrc/hardware/usb_readonly_20260923.txt`、`usb_powered_precheck_20260923.txt`、`bench_init_7_readonly_20260923.txt`、`motor7_feedback_poll_20260923.txt`。源码复核确认 `bench init` 在参数发现后还发送非持久化 CTRL_MODE=2 写入并回读；这些历史日志文件名中的 `readonly` 仅表示未使能、未运动，不表示整段 CAN 交互没有写寄存器。检查结束后用户已确认关闭 24 V。
 - 用户确认可在 24 V 关闭时替换固件。烧录前 COM4 仍显示原固件 `adrc status code=unknown_command`、`enabled=00 moving=0`，CMSIS-DAP 唯一编号为 `07000001000000000000000000000000a5a5a5a597969908`，芯片 ID 为 `0x10016483`。`e863524` 的 HEX 与 ELF 对应的 317972 个 Flash 字节一致；旧固件完整 1 MiB Flash 备份的 SHA-256 为 `5408D1B10CFE9C6E0DA10AA3FF40B7274D6CD2F83453FE0F90BF44D692A1C935`。新 HEX 烧录后独立回读 317972 字节全部相等，复位后核心为 `State.RUNNING`。工件、原固件备份和 `flash-result.json` 位于 `output/adrc/hardware/integrated_flash_20260923/20260923T112752/`；烧录脚本和控制台日志位于其上级目录。
@@ -19,7 +19,8 @@
 - 诊断版复位后 COM4 只读检查返回 `enabled=00 moving=0 owner=lcd`，`adrc gate motor=7` 为 `lcd_idle=1 can_idle=0 mit_ready=0 mode=0 fields=0000 verified=00 fb_fresh=0`，CAN `rx=0 tx=4 error=0 busoff=0`；10 秒后 `can_idle=0` 仍在。该检查时 24 V 关闭，启动期 CAN 请求可能未被应答，所以此读数不能代表上电后的门限原因。记录位于 `output/adrc/hardware/integrated_gate_flash_20260923/20260923T114954/postflash_usb_gate_readonly.txt`。
 - 诊断版在用户重新开启 24 V 后，第一次纯只读查询仍为 `show motor 7 state=absent`、`can_idle=1 lcd_idle=1 mit_ready=0 mode=0 fields=0000 fb_fresh=0`，CAN `rx=0 tx=4`；初始记录为 `output/adrc/hardware/integrated_gate_flash_20260923/powered_gate_preinit_20260923.txt`。随后执行一次 `bench init 7`，结果 `identity=40 mode=40 ranges=40 version=40`，CAN 增至 `rx=15 tx=19`。源码确认此命令包含 CTRL_MODE=2 写入与回读，虽然没有使能或运动，也不能视为纯只读；记录为同目录的 `powered_bench_init_7_readonly_20260923.txt`，文件名沿用测试脚本命名。
 - 该轮 `bench init` 后，诊断版 `adrc gate motor=7` 连续两次为 `lcd_idle=1 can_idle=1 mit_ready=0 mode=2 fields=1fff verified=40 fb_fresh=0 disabled=0 no_fault=0 stationary=0`；`show motor 7` 仍为 `state=absent age_ms=4294967295`，`show state enabled=00 moving=0 fault=none`，`adrc status owner=lcd qualified=0`。`mode=2` 是目前可确认的接管拒绝条件，缺少新鲜反馈也是后续接管必须解决的条件；`disabled=0` 在此只表示没有可用反馈，不能推断驱动已使能。记录为同目录的 `powered_gate_readonly_20260923.txt`。本轮没有发送接管、使能或运动命令，结束后用户确认关闭 24 V。
-- 离线新增单独的 `adrc discover motor=7`：仅在 LCD 拥有、LCD/CAN 空闲时启动常规参数发现，不执行 `bench init` 随后的 POS_VEL 模式写入。发现期间 LCD 操作显示忙碌，普通 USB 命令排队，STOP 保持原高优先级路径；完成后用 `adrc gate motor=7` 核对原始模式和字段。集成测试先因缺命令失败，再通过首帧 `0x33` 读取、错误轴和忙碌拒绝、并发命令等待等断言；调试 UI App 各配置、文本协议、ADRC App/CAN 通道、构建合同及 13 组发布门禁通过。该命令尚未在实机运行，不能据离线测试推断驱动反馈能力。
+- 新增单独的 `adrc discover motor=7`：仅在 LCD 拥有、LCD/CAN 空闲时启动常规参数发现，不执行 `bench init` 随后的 POS_VEL 模式写入。发现期间 LCD 操作显示忙碌，普通 USB 命令排队，STOP 保持原高优先级路径；完成后用 `adrc gate motor=7` 核对原始模式和字段。集成测试先因缺命令失败，再通过首帧 `0x33` 读取、错误轴和忙碌拒绝、并发命令等待等断言；调试 UI App 各配置、文本协议、ADRC App/CAN 通道、构建合同及 13 组发布门禁通过。该命令尚未在上电实机运行，不能据离线测试推断驱动反馈能力。
+- 用户确认 24 V 关闭后，烧录前 COM4 只读核对 `enabled=00 moving=0 owner=lcd`，记录位于 `output/adrc/hardware/integrated_gate_flash_20260923/discover_preflash_off_20260923.txt`。随后先备份上一版固件完整 1 MiB Flash，SHA-256 为 `8BC14E6DA2072B5E2D3AD11E3F9BB3F56E50B7AE6D98D4080EECD61B0CF497A9`；新 HEX/ELF 对应 318676 字节一致，烧录后独立回读 318676 字节全部相等，复位后核心为 `State.RUNNING`。报告及备份位于 `output/adrc/hardware/integrated_discover_flash_20260923/20260923T131421/`。复位后 COM4 再枚举，24 V 关闭状态下 `enabled=00 moving=0 owner=lcd`，错误轴 `adrc discover motor=1` 返回 `code=bad_argument`，CAN `rx=0 tx=4` 未变化。记录为 `output/adrc/hardware/integrated_discover_flash_20260923/postflash_usb_readonly_20260923.txt`；未发送有效发现、模式写入、接管、使能或运动命令。
 - 当前硬件资格仍为空，USB 不能自行授权 ADRC 运动；集成版尚无由实测辨识结果驱动的本地资格注入路径。烧录和 USB 启动通过不等于单电机 ADRC 验收。下一步核对新发现命令在实机上的模式读数及失能状态控制反馈查询的可行性；此前 LCD 记录显示 0xCC 的 4/8 字节查询均未取得新回包，不能假定切到 MIT 后反馈一定可用。之后仍需完成位置、速度、转矩映射与 b0 实测、模型重验和资格配置，最后才分阶段开放有限期运动。
 
 ## 文件与版本
@@ -65,9 +66,9 @@ MATLAB 客户端已完成，入口见 `Models/AdrcClient/README.md`。9 月 21 �
 
 离线软件阶段已完成。硬件阶段仍需按顺序完成：
 
-1. 集成目标的两次烧录与诊断版上电门限检查已完成；当前 `bench init` 后实测模式 2、无新鲜反馈。不会改写模式的 `adrc discover` 已离线构建，下一步在 24 V 关闭时烧录并只读确认启动，再在失能条件下核对原始模式、量程、看门狗与 0xCC 查询能否取得新鲜反馈，测量反馈时序与任务运行时间。只有反馈闭环证据完整且门限明确才重试非运动接管/释放；释放会发送 DISABLE，不能称为纯只读操作。
+1. 集成目标的三次烧录、回读与 USB 只读核对已完成；上一版 `bench init` 后实测模式 2、无新鲜反馈。不会改写模式的 `adrc discover` 已在板上，下一步用户重新确认 24 V 开启后，在失能条件下只进行该命令及状态查询，核对原始模式、量程与看门狗；随后单独研究 0xCC 查询能否取得新鲜反馈，并测量反馈时序与任务运行时间。只有反馈闭环证据完整且门限明确才重试非运动接管/释放；释放会发送 DISABLE，不能称为纯只读操作。
 2. 分别核对位置、速度、转矩映射与量化，不把历史位置比例自动套用到速度或转矩。
 3. 经有限脉冲辨识 b0，重复及保留数据验证后，更新 plant 与控制参数并重新执行模型验收。
 4. 进行有限期 PI/LADRC 对照，保存速度、已发送名义转矩、ESO 状态、扰动恢复与最终失能证据。
 
-当前 24 V 按用户最近确认保持关闭，板上仍为带 `adrc gate` 的 LCD-MIT/ADRC 集成固件；新增 `adrc discover` 的固件仅在电脑上构建通过。接线和分阶段供电、辨识与调参细节见 [调试与调参步骤](commissioning-and-tuning.md)。未经实测的参数和仿真结果均不得用于解锁电机运行。
+当前 24 V 按用户最近确认保持关闭，板上为带 `adrc gate` 与 `adrc discover` 的 LCD-MIT/ADRC 集成固件。接线和分阶段供电、辨识与调参细节见 [调试与调参步骤](commissioning-and-tuning.md)。未经实测的参数和仿真结果均不得用于解锁电机运行。

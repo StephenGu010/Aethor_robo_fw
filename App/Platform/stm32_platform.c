@@ -349,6 +349,18 @@ Stm32PlatformStatus stm32_platform_can_service_tx(uint8_t maximum_frame_count)
     return STM32_PLATFORM_STATUS_OK;
 }
 
+/** @brief Confirms that no legacy frame can emerge after an ADRC owner transfer. */
+uint8_t stm32_platform_can_is_idle(void)
+{
+    if (platform_diagnostics.can_started == 0U ||
+        platform_can_rx_inbox.bus_off_latched != 0U ||
+        platform_can_tx_scheduler.count != 0U ||
+        hfdcan1.Init.TxFifoQueueElmtsNbr == 0U)
+    { return 0U; }
+    return (uint8_t)(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) ==
+        hfdcan1.Init.TxFifoQueueElmtsNbr);
+}
+
 /** @brief Returns read-only platform transport diagnostics. */
 const Stm32PlatformDiagnostics *stm32_platform_get_diagnostics(void)
 {

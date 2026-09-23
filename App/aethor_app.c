@@ -7,17 +7,28 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "arm_config.h"
 #include "joint_motion_can.h"
 #include "DebugUi/debug_ui_mailbox.h"
 #include "Config/motor_compatibility.h"
-#if AETHOR_ADRC_BENCH
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
 #include "Adrc/adrc_app_bridge.h"
 #include "Adrc/adrc_generated_adapter.h"
-/** @brief Static selected-axis owner; legacy targets allocate no ADRC trace or gateway storage. */
+#if AETHOR_ADRC_LCD_INTEGRATED
+#include "Adrc/adrc_lcd_ownership.h"
+#endif
+/** @brief Static selected-axis bridge; legacy-only targets allocate no ADRC gateway. */
 static AdrcAppBridge application_adrc_bridge;
+#if AETHOR_ADRC_LCD_INTEGRATED
+/** @brief Exclusive runtime owner and measured legacy-CAN drain state. */
+static AdrcLcdOwnership application_adrc_lcd_ownership;
+static uint8_t application_integrated_can_idle;
+static uint64_t application_integrated_can_quiet_since_us;
+static AdrcLcdOwnershipStatus application_integrated_handoff;
+#endif
 #endif
 
 #define AETHOR_APP_ACTION_TIMEOUT_US (500000ULL)
@@ -2781,8 +2792,208 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
         &application_motor_runtime, &application_protocol_engine,
         adrc_generated_controller_step, NULL) != ADRC_RESULT_OK)
     { application_initialized = 0U; }
+#elif AETHOR_ADRC_LCD_INTEGRATED
+    adrc_lcd_ownership_init(&application_adrc_lcd_ownership);
+    application_integrated_can_idle = 0U;
+    application_integrated_can_quiet_since_us = 0ULL;
+    application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING;
+    if (application_initialized != 0U && adrc_app_bridge_init_deferred(&application_adrc_bridge,
+        &application_motor_runtime, &application_protocol_engine,
+        adrc_generated_controller_step, NULL) != ADRC_RESULT_OK)
+    { application_initialized = 0U; }
 #endif
 }
+
+#if AETHOR_ADRC_LCD_INTEGRATED
+/** @brief Encodes one bounded response from the exclusive ownership gate. */
+static ProtocolEngineStatus aethor_app_integrated_response(ProtocolOutputBatch *output,
+    ProtocolEngineStatus status, uint32_t request_id, const char *detail)
+{
+    int length;
+    if (output == NULL || detail == NULL) { return PROTOCOL_ENGINE_STATUS_INVALID_ARGUMENT; }
+    memset(output, 0, sizeof(*output));
+    length = snprintf(output->messages[0].data, sizeof(output->messages[0].data),
+        "%s %lu adrc %s\r\n", status == PROTOCOL_ENGINE_STATUS_OK ? "ok" : "error",
+        (unsigned long)request_id, detail);
+    if (length < 0 || (size_t)length >= sizeof(output->messages[0].data))
+    { return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL; }
+    output->messages[0].length = (uint16_t)length;
+    output->messages[0].priority = PROTOCOL_OUTPUT_HIGH_PRIORITY;
+    output->count = 1U;
+    return status;
+}
+
+/** @brief Gives the current owner a stable read-only protocol name. */
+static const char *aethor_app_integrated_owner_name(AdrcLcdOwnerState state)
+{
+    switch (state)
+    {
+        case ADRC_LCD_OWNER_LCD: return "lcd";
+        case ADRC_LCD_OWNER_ACQUIRING: return "acquiring";
+        case ADRC_LCD_OWNER_ADRC: return "adrc";
+        case ADRC_LCD_OWNER_RELEASING: return "releasing";
+        default: return "unknown";
+    }
+}
+
+/** @brief Exposes the latest handoff outcome without granting control authority. */
+static const char *aethor_app_integrated_handoff_name(AdrcLcdOwnershipStatus status)
+{
+    switch (status)
+    {
+        case ADRC_LCD_OWNERSHIP_TRANSFERRED: return "transferred";
+        case ADRC_LCD_OWNERSHIP_RELEASED: return "released";
+        case ADRC_LCD_OWNERSHIP_UNSAFE: return "unsafe";
+        case ADRC_LCD_OWNERSHIP_TIMEOUT: return "timeout";
+        default: return "pending";
+    }
+}
+
+/** @brief Matches the full ADRC namespace prefix without accepting partial words. */
+static uint8_t aethor_app_integrated_is_adrc(const TextProtocolRequest *request)
+{
+    const TextProtocolSpan *word = &request->command_words[0];
+    return (uint8_t)(word->length == 4U &&
+        (word->data[0] == 'a' || word->data[0] == 'A') &&
+        (word->data[1] == 'd' || word->data[1] == 'D') &&
+        (word->data[2] == 'r' || word->data[2] == 'R') &&
+        (word->data[3] == 'c' || word->data[3] == 'C'));
+}
+
+/** @brief Permits only legacy queries during ADRC ownership. */
+static uint8_t aethor_app_integrated_legacy_read_only(const TextProtocolRequest *request)
+{
+    return (uint8_t)(text_protocol_request_path_equals(request, "hello", NULL) ||
+        text_protocol_request_path_equals(request, "ping", NULL) ||
+        text_protocol_request_path_equals(request, "help", NULL) ||
+        text_protocol_request_path_equals(request, "show", "info"));
+}
+
+/** @brief Adds the measured ownership state to the existing ADRC status response. */
+static ProtocolEngineStatus aethor_app_integrated_append_owner(ProtocolOutputBatch *output,
+    AdrcLcdOwnerState state)
+{
+    ProtocolOutputMessage *message;
+    const char *name = aethor_app_integrated_owner_name(state);
+    const char *handoff = aethor_app_integrated_handoff_name(application_integrated_handoff);
+    int added;
+    if (output == NULL || output->count == 0U) { return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL; }
+    message = &output->messages[0];
+    if (message->length < 2U)
+    { return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL; }
+    message->length -= 2U;
+    added = snprintf(&message->data[message->length],
+        sizeof(message->data) - message->length,
+        " owner=%s handoff=%s\r\n", name, handoff);
+    if (added < 0 || (size_t)added >= sizeof(message->data) - message->length)
+    { memset(output, 0, sizeof(*output)); return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL; }
+    message->length = (uint16_t)(message->length + added);
+    return PROTOCOL_ENGINE_STATUS_OK;
+}
+
+/** @brief Routes USB requests through the exclusive owner before either command ring. */
+static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line, size_t length,
+    uint64_t timestamp_us, ProtocolOutputBatch *output)
+{
+    TextProtocolRequest request;
+    TextProtocolSpan motor;
+    ProtocolEngineStatus status;
+    AdrcLcdOwnerState owner;
+    if (text_protocol_parse_request(line, length, &request) != TEXT_PROTOCOL_STATUS_OK)
+    { return protocol_engine_process_text_line(&application_protocol_engine,
+        line, length, timestamp_us, output); }
+    aethor_app_enter_task_critical();
+    owner = application_adrc_lcd_ownership.state;
+    if (text_protocol_request_path_equals(&request, "adrc", "acquire"))
+    {
+        AdrcLcdOwnershipStatus admission;
+        if (request.has_request_id == 0U || request.positional_count != 0U ||
+            request.field_count != 1U || !text_protocol_find_field(&request, "motor", &motor) ||
+            motor.length != 1U || motor.data[0] < '1' || motor.data[0] > '7' ||
+            (uint8_t)(motor.data[0] - '0') != DEBUG_UI_INITIAL_MOTOR_ID)
+        { status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+            request.request_id, "code=bad_argument"); }
+        else
+        {
+            admission = adrc_lcd_ownership_submit_acquire(&application_adrc_lcd_ownership,
+                (uint8_t)(motor.data[0] - '1'), request.request_id);
+            if (admission == ADRC_LCD_OWNERSHIP_OK)
+            { application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING; }
+            status = aethor_app_integrated_response(output,
+                admission == ADRC_LCD_OWNERSHIP_OK ? PROTOCOL_ENGINE_STATUS_OK :
+                    PROTOCOL_ENGINE_STATUS_BAD_REQUEST, request.request_id,
+                admission == ADRC_LCD_OWNERSHIP_OK ? "acquire=accepted" : "code=owner_busy_or_stale");
+        }
+    }
+    else if (text_protocol_request_path_equals(&request, "adrc", "release"))
+    {
+        AdrcLcdOwnershipStatus admission = ADRC_LCD_OWNERSHIP_BAD_ARGUMENT;
+        if (request.has_request_id != 0U && request.positional_count == 0U && request.field_count == 0U)
+        { admission = adrc_lcd_ownership_submit_release(&application_adrc_lcd_ownership,
+            request.request_id, timestamp_us); }
+        if (admission == ADRC_LCD_OWNERSHIP_OK)
+        {
+            application_integrated_handoff = ADRC_LCD_OWNERSHIP_WAITING;
+            adrc_app_bridge_request_release_disable(&application_adrc_bridge);
+        }
+        status = aethor_app_integrated_response(output,
+            admission == ADRC_LCD_OWNERSHIP_OK ? PROTOCOL_ENGINE_STATUS_OK :
+                PROTOCOL_ENGINE_STATUS_BAD_REQUEST, request.request_id,
+            admission == ADRC_LCD_OWNERSHIP_OK ? "release=accepted" : "code=owner_busy_or_stale");
+    }
+    else if (aethor_app_integrated_is_adrc(&request))
+    {
+        uint8_t read_only = (uint8_t)(text_protocol_request_path_equals(&request, "adrc", NULL) ||
+            text_protocol_request_path_equals(&request, "adrc", "status") ||
+            text_protocol_request_path_equals(&request, "adrc", "hardware") ||
+            text_protocol_request_path_equals(&request, "adrc", "limits") ||
+            text_protocol_request_path_equals(&request, "adrc", "feedback"));
+        if (!read_only && owner != ADRC_LCD_OWNER_ADRC)
+        { status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+            request.request_id, "code=owner_required"); }
+        else if (text_protocol_request_path_equals(&request, "adrc", "prepare") &&
+            text_protocol_find_field(&request, "motor", &motor) &&
+            (motor.length != 1U ||
+             (uint8_t)(motor.data[0] - '1') != application_adrc_lcd_ownership.axis_index))
+        { status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+            request.request_id, "code=owner_axis"); }
+        else
+        {
+            status = adrc_app_bridge_process_line(&application_adrc_bridge,
+                line, length, timestamp_us, output);
+            if (status == PROTOCOL_ENGINE_STATUS_OK &&
+                (text_protocol_request_path_equals(&request, "adrc", NULL) ||
+                 text_protocol_request_path_equals(&request, "adrc", "status")))
+            { status = aethor_app_integrated_append_owner(output, owner); }
+        }
+    }
+    else if (owner == ADRC_LCD_OWNER_ACQUIRING &&
+        (text_protocol_request_path_equals(&request, "stop", NULL) ||
+         text_protocol_request_path_equals(&request, "disable", NULL)))
+    {
+        application_adrc_lcd_ownership.state = ADRC_LCD_OWNER_LCD;
+        status = protocol_engine_process_text_line(&application_protocol_engine,
+            line, length, timestamp_us, output);
+    }
+    else if (owner != ADRC_LCD_OWNER_LCD &&
+        (text_protocol_request_path_equals(&request, "stop", NULL) ||
+         text_protocol_request_path_equals(&request, "disable", NULL)))
+    {
+        adrc_app_bridge_request_stop(&application_adrc_bridge);
+        status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_OK,
+            request.request_id, "stop=latched");
+    }
+    else if (owner != ADRC_LCD_OWNER_LCD &&
+             !aethor_app_integrated_legacy_read_only(&request))
+    { status = aethor_app_integrated_response(output, PROTOCOL_ENGINE_STATUS_BAD_REQUEST,
+        request.request_id, "code=owner_adrc"); }
+    else
+    { status = protocol_engine_process_text_line(&application_protocol_engine,
+        line, length, timestamp_us, output); }
+    aethor_app_exit_task_critical();
+    return status;
+}
+#endif
 
 /**
  * @brief Processes one complete USB protocol line in task context.
@@ -2799,11 +3010,15 @@ ProtocolEngineStatus aethor_app_process_protocol_line(
     }
     aethor_app_update_protocol_context(timestamp_us);
 #if !AETHOR_ADRC_BENCH
+#if AETHOR_ADRC_LCD_INTEGRATED
+    return aethor_app_integrated_process_line(line, length, timestamp_us, output_batch);
+#else
     return protocol_engine_process_text_line(&application_protocol_engine,
                                              line,
                                              length,
                                              timestamp_us,
                                              output_batch);
+#endif
 #else
     {
         ProtocolEngineStatus status;
@@ -2824,6 +3039,9 @@ uint8_t aethor_app_pop_emergency_can_frame(CanFrame *frame)
     (void)frame;
     return 0U;
 #else
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD) { return 0U; }
+#endif
     if ((application_initialized == 0U) || (frame == NULL))
     {
         return 0U;
@@ -2853,6 +3071,9 @@ uint8_t aethor_app_pop_control_group(
     (void)frames;
     return 0U;
 #else
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD) { return 0U; }
+#endif
     if ((application_initialized == 0U) || (frames == NULL) ||
         (application_debug_ui.fallback_stop_mask != 0U) ||
         (application_action.control_group_ready == 0U))
@@ -2912,6 +3133,18 @@ MotorRuntimeStatus aethor_app_next_can_frame(uint64_t timestamp_us,
     {
         return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
     }
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING)
+    { return MOTOR_RUNTIME_STATUS_WAITING; }
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD)
+    {
+        runtime_status = adrc_app_bridge_next_discovery(&application_adrc_bridge,
+            timestamp_us, frame);
+        if (runtime_status == MOTOR_RUNTIME_STATUS_FRAME_READY)
+        { *priority = CAN_TX_PRIORITY_PARAMETER; }
+        return runtime_status;
+    }
+#endif
 #if AETHOR_DEBUG_UI_ENABLE && !AETHOR_DEBUG_UI_ALLOW_MOTION && \
     AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE
     if (aethor_app_debug_ui_executor_busy() || application_motor_runtime.discovery_active ||
@@ -3964,6 +4197,115 @@ static uint8_t aethor_app_service_active_action(
 }
 #endif
 
+#if AETHOR_ADRC_LCD_INTEGRATED
+/** @brief Captures only fresh physical feedback and drained legacy sources for handoff. */
+static void aethor_app_integrated_build_evidence(uint64_t timestamp_us,
+    AdrcLcdOwnershipEvidence *evidence)
+{
+    MotorFeedbackSnapshot snapshot;
+    const MotorDiscoveryResult *discovery;
+    const MotorJointFeedback *feedback;
+    const JointConfig *joint;
+    uint8_t axis = application_adrc_lcd_ownership.axis_index;
+    uint8_t bit;
+    memset(evidence, 0, sizeof(*evidence));
+    memset(&snapshot, 0, sizeof(snapshot));
+    evidence->now_us = timestamp_us;
+    evidence->can_idle = 0U;
+    evidence->lcd_idle = (uint8_t)(!aethor_app_debug_ui_executor_busy() &&
+        !debug_ui_mailbox_busy(&application_debug_ui.mailbox, true) &&
+        application_debug_ui.authority == DEBUG_UI_AUTHORITY_REMOTE &&
+        application_debug_ui.unconfirmed_disable_mask == 0U &&
+        debug_ui_mailbox_result_count(&application_debug_ui.mailbox) == 0U &&
+        application_protocol_engine.result_read_sequence ==
+            application_protocol_engine.result_write_sequence &&
+        application_debug_ui.fallback_frame_read_index >= application_debug_ui.fallback_frames.count &&
+        application_emergency_disable_read_index >= application_emergency_disable_batch.count &&
+        application_action.control_group_ready == 0U &&
+        application_action.frame_read_index >= application_action.frames.count &&
+        application_motor_runtime.discovery_active == 0U);
+    if (axis >= ARM_JOINT_COUNT) { return; }
+    bit = (uint8_t)(1U << axis);
+    joint = &arm_config_get_production()->joints[axis];
+    discovery = &application_motor_runtime.discovery.results[axis];
+    evidence->mit_discovered = (uint8_t)(
+        (application_motor_runtime.discovery.verified_joint_mask & bit) != 0U &&
+        (discovery->verified_fields_mask & MOTOR_DISCOVERY_ALL_FIELDS_MASK) ==
+            MOTOR_DISCOVERY_ALL_FIELDS_MASK &&
+        discovery->observed_esc_id == joint->esc_id &&
+        discovery->observed_master_id == joint->master_id &&
+        discovery->observed_control_mode == 1U);
+    (void)motor_runtime_get_snapshot(&application_motor_runtime, timestamp_us,
+        ADRC_LCD_OWNER_FEEDBACK_MAX_AGE_US, &snapshot);
+    if ((snapshot.valid_joint_mask & bit) == 0U) { return; }
+    feedback = &snapshot.joints[axis];
+    evidence->feedback_us = feedback->timestamp_us;
+    evidence->feedback_fresh = 1U;
+    evidence->can_idle = (uint8_t)(application_integrated_can_idle != 0U &&
+        feedback->timestamp_us > application_integrated_can_quiet_since_us);
+    evidence->disabled = (uint8_t)(feedback->driver_state == S3519_DRIVER_STATE_DISABLED);
+    evidence->no_fault = (uint8_t)(feedback->fault_flags == 0U);
+    evidence->stationary = (uint8_t)(isfinite(feedback->velocity_rad_s) &&
+        fabsf(feedback->velocity_rad_s) <= AETHOR_APP_MODE_SWITCH_MAX_SPEED_RAD_S);
+}
+
+/** @brief Advances the exclusive owner and keeps failed transfers fail closed. */
+static uint8_t aethor_app_integrated_service(uint64_t timestamp_us)
+{
+    AdrcLcdOwnershipEvidence evidence;
+    AdrcLcdOwnershipStatus transition;
+    uint8_t result_generated = 0U;
+    aethor_app_enter_task_critical();
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ADRC ||
+        application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_RELEASING)
+    { result_generated = adrc_app_bridge_service(&application_adrc_bridge, timestamp_us); }
+    aethor_app_integrated_build_evidence(timestamp_us, &evidence);
+    transition = adrc_lcd_ownership_service(&application_adrc_lcd_ownership, &evidence);
+    if (transition != ADRC_LCD_OWNERSHIP_WAITING)
+    { application_integrated_handoff = transition; }
+    if (transition == ADRC_LCD_OWNERSHIP_TRANSFERRED &&
+        adrc_app_bridge_start_selected_discovery(&application_adrc_bridge,
+            application_adrc_lcd_ownership.axis_index) != MOTOR_RUNTIME_STATUS_OK)
+    {
+        application_adrc_lcd_ownership.state = ADRC_LCD_OWNER_LCD;
+        application_integrated_handoff = ADRC_LCD_OWNERSHIP_UNSAFE;
+    }
+    if (transition == ADRC_LCD_OWNERSHIP_RELEASED)
+    { adrc_app_bridge_complete_release(&application_adrc_bridge); }
+    aethor_app_exit_task_critical();
+    return result_generated;
+}
+
+/** @brief Requires a full 4 ms quiet interval after the last legacy CAN submission. */
+void aethor_app_integrated_set_can_idle(uint8_t idle, uint64_t timestamp_us)
+{
+    aethor_app_enter_task_critical();
+    if (idle == 0U || timestamp_us == 0ULL ||
+        timestamp_us < application_integrated_can_quiet_since_us)
+    {
+        application_integrated_can_quiet_since_us = 0ULL;
+        application_integrated_can_idle = 0U;
+    }
+    else
+    {
+        if (application_integrated_can_quiet_since_us == 0ULL)
+        { application_integrated_can_quiet_since_us = timestamp_us; }
+        application_integrated_can_idle = (uint8_t)(
+            timestamp_us - application_integrated_can_quiet_since_us >= 4000ULL);
+    }
+    aethor_app_exit_task_critical();
+}
+
+/** @brief Invalidates an earlier idle sample when control code submits legacy CAN. */
+void aethor_app_integrated_note_legacy_can_activity(void)
+{
+    aethor_app_enter_task_critical();
+    application_integrated_can_quiet_since_us = 0ULL;
+    application_integrated_can_idle = 0U;
+    aethor_app_exit_task_critical();
+}
+#endif
+
 /**
  * @brief Executes one non-blocking Phase 0 application service cycle.
  * @param timestamp_us Current monotonic time in microseconds.
@@ -3984,6 +4326,10 @@ uint8_t aethor_app_service(uint64_t timestamp_us)
 #else
     if (application_initialized != 0U)
     {
+#if AETHOR_ADRC_LCD_INTEGRATED
+        if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD)
+        { return aethor_app_integrated_service(timestamp_us); }
+#endif
         MotorFeedbackSnapshot motor_snapshot;
         ProtocolCommand command;
         MotorRuntimeStatus snapshot_status;
@@ -4583,6 +4929,22 @@ DebugUiReason aethor_app_debug_ui_submit(const DebugUiRequest *request)
     DebugUiReason reason;
 #endif
     if (application_initialized == 0U) { return DEBUG_UI_REASON_NOT_READY; }
+#if AETHOR_ADRC_LCD_INTEGRATED
+    aethor_app_enter_task_critical();
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING &&
+        request != NULL && request->operation == DEBUG_UI_OPERATION_STOP)
+    { application_adrc_lcd_ownership.state = ADRC_LCD_OWNER_LCD; }
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD)
+    {
+        if (request == NULL) { aethor_app_exit_task_critical(); return DEBUG_UI_REASON_NOT_READY; }
+        if (request->operation != DEBUG_UI_OPERATION_STOP)
+        { aethor_app_exit_task_critical(); return DEBUG_UI_REASON_DISABLED; }
+        adrc_app_bridge_request_stop(&application_adrc_bridge);
+        aethor_app_exit_task_critical();
+        return DEBUG_UI_REASON_STOP_LATCHED;
+    }
+    aethor_app_exit_task_critical();
+#endif
 #if AETHOR_ADRC_BENCH
     if (request == NULL) { return DEBUG_UI_REASON_NOT_READY; }
     if (request->operation != DEBUG_UI_OPERATION_STOP) { return DEBUG_UI_REASON_DISABLED; }
@@ -4592,6 +4954,22 @@ DebugUiReason aethor_app_debug_ui_submit(const DebugUiRequest *request)
     return DEBUG_UI_REASON_STOP_LATCHED;
 #else
     aethor_app_enter_task_critical();
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING &&
+        request != NULL && request->operation == DEBUG_UI_OPERATION_STOP)
+    { application_adrc_lcd_ownership.state = ADRC_LCD_OWNER_LCD; }
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD)
+    {
+        if (request != NULL && request->operation == DEBUG_UI_OPERATION_STOP)
+        {
+            adrc_app_bridge_request_stop(&application_adrc_bridge);
+            aethor_app_exit_task_critical();
+            return DEBUG_UI_REASON_STOP_LATCHED;
+        }
+        aethor_app_exit_task_critical();
+        return request == NULL ? DEBUG_UI_REASON_NOT_READY : DEBUG_UI_REASON_DISABLED;
+    }
+#endif
     reason = debug_ui_mailbox_submit(&application_debug_ui.mailbox, request);
     if ((reason == DEBUG_UI_REASON_STOP_LATCHED) && (AETHOR_DEBUG_UI_ALLOW_MOTION == 0U))
     {
@@ -4675,6 +5053,10 @@ bool aethor_app_debug_ui_get_snapshot(uint64_t timestamp_us, DebugUiSnapshot *sn
     snapshot->bench_profile = (uint8_t)(AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE);
     snapshot->motion_enabled = AETHOR_DEBUG_UI_ALLOW_MOTION;
     snapshot->mit_enabled = AETHOR_DEBUG_UI_ALLOW_MIT;
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD)
+    { snapshot->motion_enabled = 0U; snapshot->mit_enabled = 0U; }
+#endif
     snapshot->target_motor_id = application_debug_ui.target_motor_id;
     snapshot->unconfirmed_disable_mask = application_debug_ui.unconfirmed_disable_mask;
     snapshot->retained_result_count = debug_ui_mailbox_result_count(&application_debug_ui.mailbox);
@@ -5126,12 +5508,19 @@ void aethor_app_debug_ui_process(uint64_t timestamp_us)
     uint8_t pass;
 #endif
     if (application_initialized == 0U) { return; }
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD) { return; }
+#endif
 #if AETHOR_ADRC_BENCH
     (void)timestamp_us;
     return;
 #else
     aethor_app_debug_ui_route_results();
     aethor_app_enter_task_critical();
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD)
+    { aethor_app_exit_task_critical(); return; }
+#endif
     aethor_app_debug_ui_refresh_reference(timestamp_us);
     debug_ui_mailbox_service_health(&application_debug_ui.mailbox, timestamp_us);
     if ((application_debug_ui.authority == DEBUG_UI_AUTHORITY_LOCAL_BUSY) &&
@@ -5242,6 +5631,17 @@ uint8_t aethor_app_pop_protocol_result_output(
         return available;
     }
 #else
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD)
+    {
+        uint8_t available;
+        aethor_app_enter_task_critical();
+        available = adrc_protocol_pop_result_output(&application_adrc_bridge.bench.gateway,
+            &application_protocol_engine, output_batch);
+        aethor_app_exit_task_critical();
+        return available;
+    }
+#endif
     aethor_app_debug_ui_route_results();
     return protocol_engine_pop_result_output(&application_protocol_engine,
                                              output_batch);
@@ -5264,6 +5664,10 @@ uint8_t aethor_app_generate_stream_output(
     memset(output_batch, 0, sizeof(*output_batch));
     return 0U;
 #else
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_LCD)
+    { memset(output_batch, 0, sizeof(*output_batch)); return 0U; }
+#endif
     aethor_app_update_protocol_context(timestamp_us);
     return protocol_engine_generate_stream_output(&application_protocol_engine,
                                                   timestamp_us,
@@ -5360,6 +5764,19 @@ uint8_t aethor_app_report_transport_fault(uint32_t detail,
     {
         return 0U;
     }
+#if AETHOR_ADRC_LCD_INTEGRATED
+    aethor_app_enter_task_critical();
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ADRC ||
+        application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_RELEASING)
+    {
+        adrc_app_bridge_report_fault(&application_adrc_bridge);
+        aethor_app_exit_task_critical();
+        return 1U;
+    }
+    if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING)
+    { application_adrc_lcd_ownership.state = ADRC_LCD_OWNER_LCD; }
+    aethor_app_exit_task_critical();
+#endif
 #if AETHOR_ADRC_BENCH
     (void)timestamp_us;
     aethor_app_enter_task_critical();
@@ -5431,13 +5848,18 @@ static uint8_t aethor_app_apply_transport_fault(uint32_t detail,
 }
 #endif
 
-#if AETHOR_ADRC_BENCH
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
 /** @brief Delivers the sole selected-axis output under the application task critical hooks. */
 uint8_t aethor_app_adrc_pop_frame(CanFrame *frame, uint8_t *kind, float *decoded_torque_nm)
 {
     uint8_t available;
     if (!application_initialized) { return 0U; }
     aethor_app_enter_task_critical();
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_ADRC &&
+        application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_RELEASING)
+    { aethor_app_exit_task_critical(); return 0U; }
+#endif
     available = adrc_app_bridge_pop_frame(&application_adrc_bridge, frame, kind, decoded_torque_nm);
     aethor_app_exit_task_critical();
     return available;
@@ -5452,6 +5874,26 @@ void aethor_app_adrc_report_transmit(uint8_t kind, float decoded_torque_nm, uint
     aethor_app_exit_task_critical();
 }
 
+#if AETHOR_ADRC_LCD_INTEGRATED
+/** @brief Couples a real selected-axis disable receipt to the LCD handback evidence gate. */
+void aethor_app_adrc_report_transmit_at(uint8_t kind, float decoded_torque_nm,
+    uint8_t succeeded, uint64_t timestamp_us)
+{
+    uint8_t matched_disable;
+    if (!application_initialized) { return; }
+    aethor_app_enter_task_critical();
+    matched_disable = (uint8_t)(succeeded != 0U && kind == 2U &&
+        application_adrc_bridge.awaiting_receipt != 0U &&
+        application_adrc_bridge.frame_kind == kind &&
+        application_adrc_bridge.decoded_torque_nm == decoded_torque_nm);
+    adrc_app_bridge_report_transmit(&application_adrc_bridge, kind, decoded_torque_nm, succeeded);
+    if (matched_disable != 0U)
+    { adrc_lcd_ownership_report_disable_transmit(&application_adrc_lcd_ownership,
+        timestamp_us, 1U); }
+    aethor_app_exit_task_critical();
+}
+#endif
+
 /** @brief Installs locally measured commissioning evidence, retaining the supervisor's provenance checks. */
 AdrcExperimentResult aethor_app_adrc_set_evidence(const AdrcExperimentConfig *config,
     const AdrcExperimentQualification *qualification, uint64_t timestamp_us)
@@ -5459,6 +5901,10 @@ AdrcExperimentResult aethor_app_adrc_set_evidence(const AdrcExperimentConfig *co
     AdrcExperimentResult result;
     if (!application_initialized) { return ADRC_RESULT_INVALID_STATE; }
     aethor_app_enter_task_critical();
+#if AETHOR_ADRC_LCD_INTEGRATED
+    if (application_adrc_lcd_ownership.state != ADRC_LCD_OWNER_ADRC)
+    { aethor_app_exit_task_critical(); return ADRC_RESULT_INVALID_STATE; }
+#endif
     result = adrc_app_bridge_set_evidence(&application_adrc_bridge, config, qualification, timestamp_us);
     aethor_app_exit_task_critical();
     return result;

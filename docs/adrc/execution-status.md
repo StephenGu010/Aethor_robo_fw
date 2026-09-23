@@ -1,17 +1,26 @@
 # ADRC 实施状态与续接入口
 
-更新日期：2026-09-21。当前已完成真实 ADRC 模型、生成 C 与独立实验固件链接；尚未进行烧录或电机验收。此文件与 `implementation-plan.md` 的未勾选项共同说明剩余工作。
+更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件的离线集成；集成目标尚未烧录或进行电机验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
+
+## LCD-MIT/ADRC 单固件离线集成（2026-09-23）
+
+- 独立工作树：`D:/download/TCG/Aethor_robo_fw/.worktrees/s3519-adrc-lcd-mit`，分支 `feature/s3519-adrc-lcd-mit`。先合入已验证的 LCD 流畅度版本，再建立单独的 `MDK-ARM/LCD-MIT-ADRC.uvprojx`；用户板上的 LCD-MIT 固件保持原样。
+- 上电默认 LCD-MIT。USB 的 `adrc status`、`adrc hardware`、`adrc limits`、`adrc feedback` 可只读；当前目标只接受 `adrc acquire motor=7`。取得所有权前，控制任务检查 LCD 运动/结果队列和发现序列为空、传统 CAN 软件队列与 FDCAN FIFO 已排空并经过 4 ms 静默、收到静默起点之后的新鲜禁能零故障低速反馈，且实际发现的电机 7 身份、MIT 模式和全部参数一致。
+- ADRC 持有时，LCD POS/MIT 请求和旧 CAN 发送入口被拒绝，LCD 与 USB STOP 都作用于 ADRC 单轴。`adrc release` 强制重新发送 DISABLE；只有匹配的真实 CAN 发送回执及更新的禁能反馈都到达后才交还 LCD。失败或超时保持锁定，`adrc status` 的 `owner`/`handoff` 字段可查询结果。
+- `Tests/host/run_adrc_lcd_integration_tests.ps1` 与所有权状态机测试通过；覆盖默认 LCD、错误轴、未取得控制权拒绝运行、旧 LCD 控制组/新 CAN 提交阻止接管、LCD/USB STOP、发送失败和旧反馈不能交还、已失能监督器仍需新 DISABLE。原 `run_tests.ps1`、ADRC App/bench/协议/通道/监督器、LCD UI 与传输回归通过；`test_debug_ui_build_contract.py` 的 24 组门禁与 13 组 ADRC 发布门禁通过。
+- 最新集成目标 ARMCC 构建 0 错误、0 警告，Code=216168、RO=100956、RW=848、ZI=233496 字节；HEX SHA-256 为 `F64DCB390C80040491EEA660895F66ABD7DFB4F4346F288BDADE668E3BD20FBD`。构建日志在 `MDK-ARM/LCD-MIT-ADRC/LCD-MIT-ADRC.build_log.htm`，HEX 位于同目录。模型及生成代码仍是此前验证的三个 SLX 和 ERT 快照，本轮未改模型。
+- 当前硬件资格仍为空，USB 不能自行授权 ADRC 运动；集成版尚无由实测辨识结果驱动的本地资格注入路径，因此这份 HEX 只代表已链接的离线集成版，不能作为单电机 ADRC 运行验收。先做只读接管/释放和反馈时序核对，再完成位置、速度、转矩映射与 b0 实测、模型重验和资格配置，最后才分阶段开放有限期运动。本轮未连接串口、未烧录、未给电机通电。
 
 ## 文件与版本
 
-- 开发工作树：`D:/download/TCG/Aethor_robo_fw/.worktrees/s3519-adrc`，分支 `feature/s3519-adrc`。
+- 独立 ADRC-Bench 历史工作树：`D:/download/TCG/Aethor_robo_fw/.worktrees/s3519-adrc`，分支 `feature/s3519-adrc`。
 - 原基线：`a19fcfe`。原 `flatten-project-root` 工作树保持干净；备份目录 `D:/download/TCG/output/adrc_baseline_20260921` 的 11 项 SHA-256 已重新匹配。
 - `App/Adrc/`：监督器、协议、单轴试验管理、应用连接层与生成接口适配器。
 - `App/Platform/stm32_adrc_channel.*`：独立 CAN buffer 0 与真实发送回执。
 - `Models/Adrc/`：controller / plant / validation 的重建源、仿真与生成代码重放流水线。
 - `output/adrc/`：每次构建、仿真和验证的独立目录。失败产物保留，不作为通过证据。
 
-## 当前行为
+## 独立 ADRC-Bench 行为
 
 默认 `AETHOR_ADRC_BENCH=0`。实验目标开启后，只接受选定轴的 ADRC 流程与只读命令；LCD 保留 STOP。默认硬件资格为空，USB 命令无法自称取得资格。真实生成算法缺失时不发布完整实验目标；当前已由通过哈希复核的真实生成算法发布独立实验目标。
 

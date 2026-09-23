@@ -216,11 +216,11 @@ uint8_t adrc_app_bridge_service(AdrcAppBridge *bridge, uint64_t timestamp_us)
     if (bridge->frame_pending || bridge->awaiting_receipt) { bridge->send_failed = 1U; }
     bridge->frame_pending = 0U;
     bridge->awaiting_receipt = 0U;
-    force_disable = (uint8_t)((bridge->stop_pending ||
+    force_disable = (uint8_t)(bridge->release_disable_pending || ((bridge->stop_pending ||
         bridge->bench.gateway.stop_pending) &&
         bridge->bench.experiment.status.disabled_confirmed == 0U &&
         bridge->bench.experiment.status.state != ADRC_STATE_RUNNING &&
-        bridge->bench.experiment.status.state != ADRC_STATE_STOPPING);
+        bridge->bench.experiment.status.state != ADRC_STATE_STOPPING));
     if (bridge->stop_pending || bridge->send_failed)
     {
         (void)adrc_experiment_stop(&bridge->bench.experiment, timestamp_us);
@@ -365,6 +365,8 @@ void adrc_app_bridge_report_transmit(AdrcAppBridge *bridge, uint8_t kind,
     { bridge->receipt_torque_nm = decoded_torque_nm; bridge->receipt_valid = 1U; }
     else if (kind == 0U)
     { bridge->receipt_torque_nm = 0.0F; bridge->receipt_valid = 0U; }
+    if (bridge->send_failed == 0U && kind == 2U)
+    { bridge->release_disable_pending = 0U; }
     bridge->awaiting_receipt = 0U;
 }
 
@@ -373,6 +375,23 @@ void adrc_app_bridge_request_stop(AdrcAppBridge *bridge)
 {
     if (bridge != NULL && bridge->initialized)
     { bridge->stop_pending = 1U; bridge->frame_pending = 0U; }
+}
+
+/** @brief Requires one matched disable receipt before the integrated owner can return to LCD. */
+void adrc_app_bridge_request_release_disable(AdrcAppBridge *bridge)
+{
+    if (bridge != NULL && bridge->initialized)
+    { bridge->release_disable_pending = 1U; adrc_app_bridge_request_stop(bridge); }
+}
+
+/** @brief Prevents a leftover ADRC slot from crossing a completed LCD handback. */
+void adrc_app_bridge_complete_release(AdrcAppBridge *bridge)
+{
+    if (bridge == NULL || !bridge->initialized) { return; }
+    bridge->frame_pending = 0U;
+    bridge->awaiting_receipt = 0U;
+    bridge->stop_pending = 0U;
+    bridge->release_disable_pending = 0U;
 }
 
 /** @brief Preserves transport failure until the next owner input and requests selected-axis disable. */

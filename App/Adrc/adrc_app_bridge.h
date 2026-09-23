@@ -31,6 +31,7 @@ typedef struct
     uint8_t receipt_valid;
     uint8_t send_failed;
     uint8_t stop_pending;
+    uint8_t release_disable_pending;
     uint8_t discovery_axis;
     uint8_t initialized;
 } AdrcAppBridge;
@@ -55,6 +56,10 @@ void adrc_app_bridge_report_transmit(AdrcAppBridge *bridge, uint8_t kind,
     float decoded_torque_nm, uint8_t succeeded);
 /** @brief Latches a local safety stop for the control owner and revokes unsent actuation. */
 void adrc_app_bridge_request_stop(AdrcAppBridge *bridge);
+/** @brief Forces an explicit disable frame for LCD handback even if ADRC was already disabled. */
+void adrc_app_bridge_request_release_disable(AdrcAppBridge *bridge);
+/** @brief Discards only stale selected-axis output after measured handback to LCD. */
+void adrc_app_bridge_complete_release(AdrcAppBridge *bridge);
 /** @brief Latches a transport failure and selected-axis disable request without touching other motors. */
 void adrc_app_bridge_report_fault(AdrcAppBridge *bridge);
 /** @brief Returns only read-only discovery while no experiment or frame is active. */

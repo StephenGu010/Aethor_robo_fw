@@ -1,6 +1,6 @@
 # ADRC 实施状态与续接入口
 
-更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成；集成目标已六次烧录并通过回读与复位后的 USB 检查。电机 7 原始模式为 2，失能状态可临时切入模式 1 并恢复模式 2；4 字节和 8 字节状态查询都已实际发送，但均未取得查询后的新接收帧。一次 100 ms MIT HOLD 脚本取得反馈帧，但用户事后明确确认脚本运行时电源 OUTPUT 已关闭，因此不能作为 24 V 供电下的验收证据。尚未进行 ADRC 接管或运动验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
+更新日期：2026-09-23。已完成真实 ADRC 模型、生成 C、独立实验目标及 LCD-MIT/ADRC 单固件集成；集成目标已七次烧录并通过回读与复位后的 USB 检查。电机 7 原始模式为 2，失能状态可临时切入模式 1 并恢复模式 2；4 字节和 8 字节状态查询都已实际发送，但均未取得查询后的新接收帧。一次 100 ms MIT HOLD 脚本取得反馈帧，但用户事后明确确认脚本运行时电源 OUTPUT 已关闭，因此不能作为 24 V 供电下的验收证据。尚未进行 ADRC 接管或运动验收。下文保留 9 月 21 日独立目标的证据，新集成目标状态见下一节。
 
 ## LCD-MIT/ADRC 单固件集成（2026-09-23）
 
@@ -36,7 +36,7 @@
 - 已运行一次 `Tests/hardware/adrc_motor7_enabled_feedback_pilot.ps1`，原始记录为 `output/adrc/hardware/enabled_feedback_pilot/motor7_enabled_feedback_20260923T072542072Z.txt`。脚本记录的三个确认开关为 True，MIT HOLD 命令报告 `completed elapsed_ms=121`（配置的保持时间为 100 ms），7 条主机轮询看到 `state=moving` 且反馈年龄 0–4 ms；结束时模式 2 已恢复，最终 DISABLE 报告完成，`enabled=00 owner=lcd busoff=0`。但用户随后明确确认**脚本运行时 OUTPUT 已关闭**，并且未观察电机。因此该次不能证明带电使能、机械运动、输出电流、持续反馈或 4 ms 独立 CAN 更新周期；不能用日志中的 `power24v_confirmed=True` 替代实际供电证明。反馈帧的供能条件未查明，保留原始日志，不把这次计入实机闭环资格。用户已确认目前 24 V 关闭。
 - 原脚本汇总的 `fresh_enabled_polls=0` 是主机统计字段的错误：公开 `show motor` 将使能反馈显示为 `moving` 或 `holding`，不会显示 `enabled`。原始 7 条活动态轮询均为年龄小于 100 ms；脚本后续改为统计 `fresh_active_polls`。这仅修正日志解释，不改变上段供电状态结论。日志速度恒为 -2.799°/s，位置仅在约 ±0.011° 间变化；由 `vmax_deg_s=11459.156` 和 12 位速度编码计算，单码格约 5.597°/s（0.09768 rad/s），因此这些速度读数及文本 `moving` 不能独立证明轴在转动。
 - 当前离线仿真把速度量化设为 0.001 rad/s，约比上述原始反馈码格细 98 倍；固件资格要求 `velocity_quantum_rad_s <= 0.015`，同时又要求配置值不小于按发现量程计算的真实码格。默认坐标映射为 1 时，两项无法同时满足。这是**已验证的模型/资格不匹配**，不能通过仅调大 ESO 带宽或填写资格标志绕过。下一步应先确定可靠的供电状态记录、反馈帧实际到达间隔与位置/速度映射，再选定速度估计方法和控制周期，重建量化/延迟仿真及资格门限；只有通过后才设计新的带电限时试验。
-- 已离线加入电机运行时的**最新连续使能态反馈段**统计：只有通过解码和身份/时间戳检查的帧才计数，禁能或故障帧结束当前段；下一段从 1 重新计数。`adrc gate motor=7` 只读返回 `active_samples`、`active_intervals`、`active_min_us`、`active_max_us`，100 ms 试验脚本在最终失能后保存该结果。统计时间取自 STM32 CAN 接收任务解码时刻，反映控制软件实际接收节奏，不等同于总线物理到达时刻，也不能证明 24 V OUTPUT 状态。Motor 核心测试、LCD/ADRC 集成测试和 PowerShell 语法检查通过；集成 Keil 完整重建 0 错误、0 警告，日志为 `output/adrc/hardware/enabled_feedback_pilot/timing_build_20260923.log`。**本次仅离线构建，板上仍是 `a7d8e1a` 固件，没有这四个新字段；未烧录或再次上电试验。**
+- 已离线加入电机运行时的**最新连续使能态反馈段**统计：只有通过解码和身份/时间戳检查的帧才计数，禁能或故障帧结束当前段；下一段从 1 重新计数。`adrc gate motor=7` 只读返回 `active_samples`、`active_intervals`、`active_min_us`、`active_max_us`，100 ms 试验脚本在最终失能后保存该结果。统计时间取自 STM32 CAN 接收任务解码时刻，反映控制软件实际接收节奏，不等同于总线物理到达时刻，也不能证明 24 V OUTPUT 状态。Motor 核心测试、LCD/ADRC 集成测试和 PowerShell 语法检查通过；集成 Keil 完整重建 0 错误、0 警告，日志为 `output/adrc/hardware/enabled_feedback_pilot/timing_build_20260923.log`。用户确认 24 V 关闭后，已刷入提交 `79ecd83` 的诊断版。烧录前只读为 `enabled=00 moving=0 owner=lcd`；HEX SHA-256 为 `461B553807FDC277DE81C7810FC2D99E222A2CDC1366AA2C0A818C194F6B1E3C`，与 ELF 对应的 320396 个 Flash 字节一致。旧版完整 1 MiB Flash 已备份，SHA-256 为 `16050BC12EF97778F52A07D9392F50E3FA4E96A3791D2F0ADF62F9F4FC2EFB08`；新映像逐字节回读 320396 字节一致，复位后核心为 `State.RUNNING`。备份与报告位于 `output/adrc/hardware/enabled_feedback_pilot/20260923T154457/`。复位后 COM4 只读为 `enabled=00 moving=0 fault=none owner=lcd`，`adrc gate motor=7` 返回四个新增字段均为 0；记录为同目录上级的 `preflash_poweroff_readonly_20260923.txt` 和 `postflash_poweroff_readonly_20260923.txt`。没有发送发现、接管、使能或运动命令，也没有重新开启 24 V；无供电时 `mode=0 fields=0000` 不代表驱动参数改变。
 
 ## 文件与版本
 
@@ -81,12 +81,12 @@ MATLAB 客户端已完成，入口见 `Models/AdrcClient/README.md`。9 月 21 �
 
 离线软件阶段已完成。硬件阶段仍需按顺序完成：
 
-1. 集成目标的六次烧录、回读、USB 检查，以及模式 2/模式 1 禁能反馈试验已完成。模式 1 能临时切入并恢复模式 2；修正版已确认 4/8 字节 `0xCC` 查询均实际发帧，但禁能状态下没有新接收帧。100 ms MIT HOLD 脚本已执行，但用户确认运行时电源 OUTPUT 关闭，故带电反馈资格仍未验证。在取得可核实的供电状态、新鲜且足够频率的反馈及控制周期证据前，不重试 ADRC 接管或 ADRC 运动。
+1. 集成目标的七次烧录、回读、USB 检查，以及模式 2/模式 1 禁能反馈试验已完成。模式 1 能临时切入并恢复模式 2；修正版已确认 4/8 字节 `0xCC` 查询均实际发帧，但禁能状态下没有新接收帧。100 ms MIT HOLD 脚本已执行，但用户确认运行时电源 OUTPUT 关闭，故带电反馈资格仍未验证。在取得可核实的供电状态、新鲜且足够频率的反馈及控制周期证据前，不重试 ADRC 接管或 ADRC 运动。
 2. 分别核对位置、速度、转矩映射与量化；当前原始速度码格与离线模型及固件资格门限不匹配，先解决测量链与模型/门限一致性，不把历史位置比例自动套用到速度或转矩。
 3. 经有限脉冲辨识 b0，重复及保留数据验证后，更新 plant 与控制参数并重新执行模型验收。
 4. 进行有限期 PI/LADRC 对照，保存速度、已发送名义转矩、ESO 状态、扰动恢复与最终失能证据。
 
-当前 24 V 按用户最近确认保持关闭，板上为带 `adrc gate`、`adrc discover` 和 `adrc probe` 的 LCD-MIT/ADRC 集成固件。接线和分阶段供电、辨识与调参细节见 [调试与调参步骤](commissioning-and-tuning.md)。未经实测的参数和仿真结果均不得用于解锁电机运行。
+当前 24 V 按用户最近确认保持关闭，板上为提交 `79ecd83` 的 LCD-MIT/ADRC 集成固件，带 `adrc gate`、`adrc discover`、`adrc probe` 和使能态反馈帧间隔统计。接线和分阶段供电、辨识与调参细节见 [调试与调参步骤](commissioning-and-tuning.md)。未经实测的参数和仿真结果均不得用于解锁电机运行。
 
 ## 主线位置与工期估算
 

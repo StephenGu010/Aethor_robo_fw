@@ -706,6 +706,8 @@ static uint32_t phase0_discovery_raw_value(uint8_t register_address,
             return (uint32_t)(esc_id + 0x10U);
         case S3519_REGISTER_ESC_ID:
             return esc_id;
+        case S3519_REGISTER_TIMEOUT:
+            return 100U;
         case S3519_REGISTER_CONTROL_MODE:
             return 2U;
         case S3519_REGISTER_HARDWARE_VERSION:

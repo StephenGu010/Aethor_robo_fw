@@ -40,6 +40,67 @@ def verify_keil_source_selection(root: Path) -> None:
         print(f"PASS Keil {name}: explicit UI/LVGL selection and source inventory")
 
 
+def verify_home_animation_dirty_area(root: Path) -> None:
+    """Require the idle home animation to invalidate only its fixed drawing area."""
+    source = (root / "Ui/debug_ui_astra_layout.inc").read_text(encoding="utf-8")
+    function_start = source.index("void debug_ui_view_animate")
+    function_end = source.index("/** @brief Format one actual draft field", function_start)
+    function_body = source[function_start:function_end]
+    assert "static const lv_area_t home_animation_area = {12, 58, 268, 180};" in function_body
+    assert "lv_obj_invalidate_area(page->root, &home_animation_area);" in function_body
+    assert "lv_obj_invalidate(page->root);" not in function_body
+    print("PASS home animation: fixed 257x123 dirty area")
+
+
+def verify_integrated_keil_target(root: Path) -> None:
+    """Require one additional firmware image with LCD-MIT and generated ADRC sources."""
+    project = ET.parse(root / "MDK-ARM/LCD-MIT-ADRC.uvprojx").getroot()
+    target = project.find("./Targets/Target")
+    assert target is not None
+    assert target.findtext("TargetName") == "LCD-MIT-ADRC"
+    assert target.findtext("./TargetOption/TargetCommonOption/OutputName") == "LCD-MIT-ADRC"
+    controls = target.find("./TargetOption/TargetArmAds/Cads/VariousControls")
+    definitions = set(controls.findtext("Define").split(","))
+    for required in (
+        "AETHOR_DEBUG_UI_ENABLE=1", "AETHOR_DEBUG_UI_ALLOW_MOTION=1",
+        "AETHOR_DEBUG_UI_ALLOW_MIT=1", "AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE=1",
+        "AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE=1", "AETHOR_S3519_SAME_MODEL_MASK=0x7F",
+        "AETHOR_DEBUG_UI_S3519_PROFILE_MASK=0x7F", "AETHOR_ADRC_LCD_INTEGRATED=1",
+    ):
+        assert required in definitions, required
+    assert "AETHOR_ADRC_BENCH=1" not in definitions
+    paths = [node.findtext("FilePath").replace("\\", "/") for node in target.findall(".//File")]
+    assert len(paths) == len(set(paths))
+    for required in (
+        "../App/Adrc/adrc_lcd_ownership.c", "../App/Adrc/adrc_experiment.c",
+        "../App/Adrc/adrc_app_bridge.c", "../App/Adrc/adrc_generated_adapter.c",
+        "../App/Platform/stm32_adrc_channel.c",
+        "../App/Adrc/Generated/916eb8008efc66d926c0ab2e6833afc6e61bf37106e47873072e59e45c9974f7/adrc_controller.c",
+    ):
+        assert required in paths, required
+    assert all((root / "MDK-ARM" / path).is_file() for path in paths)
+    print("PASS Keil LCD-MIT-ADRC: LCD motion gates and generated controller present")
+
+
+def verify_adrc_integration_flags(root: Path, compiler: str) -> None:
+    """Reject ambiguous and nonboolean ADRC target combinations at preprocessing time."""
+    cases = (
+        ("ADRC default", (), True),
+        ("ADRC integrated", ("AETHOR_ADRC_LCD_INTEGRATED=1",), True),
+        ("ADRC isolated", ("AETHOR_ADRC_BENCH=1",), True),
+        ("ADRC both targets", ("AETHOR_ADRC_BENCH=1", "AETHOR_ADRC_LCD_INTEGRATED=1"), False),
+        ("ADRC invalid integrated flag", ("AETHOR_ADRC_LCD_INTEGRATED=2",), False),
+    )
+    for name, definitions, expected_success in cases:
+        result = subprocess.run(
+            [compiler, "-std=c99", "-Wall", "-Wextra", "-Werror", "-IApp/Config",
+             "-x", "c", "-fsyntax-only", "-", *["-D" + value for value in definitions]],
+            cwd=root, input='#include "adrc_build_config.h"\n',
+            text=True, capture_output=True, check=False)
+        assert (result.returncode == 0) == expected_success, (name, result.stderr)
+    print("PASS ADRC integration compile gates: five combinations")
+
+
 def main() -> int:
     """Compile valid and forbidden feature/profile combinations independently."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -48,6 +109,9 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     verify_keil_source_selection(root)
+    verify_home_animation_dirty_area(root)
+    verify_integrated_keil_target(root)
+    verify_adrc_integration_flags(root, args.compiler)
     cases = [
         ("defaults locked", [], True),
         ("read only", ["AETHOR_DEBUG_UI_ENABLE=1"], True),

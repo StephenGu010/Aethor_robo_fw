@@ -29,6 +29,10 @@
 #include "monotonic_time.h"
 #include "stm32_platform.h"
 #include "debug_ui_config.h"
+#include "adrc_build_config.h"
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+#include "stm32_adrc_channel.h"
+#endif
 #if AETHOR_DEBUG_UI_ENABLE
 #include "debug_ui_task.h"
 #endif
@@ -216,6 +220,10 @@ void StartArmControlTask(void const * argument)
   TickType_t lastWakeTime = xTaskGetTickCount();
 
   (void)argument;
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+  /* Dedicated buffer bookkeeping is owned only by this control task. */
+  stm32_adrc_channel_init();
+#endif
   for(;;)
   {
 #if AETHOR_DEBUG_UI_ENABLE
@@ -227,18 +235,72 @@ void StartArmControlTask(void const * argument)
     CanFrame controlGroup[ARM_JOINT_COUNT];
     CanTxPriority pendingPriority;
 
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+    AdrcCanReceipt adrcReceipt = stm32_adrc_channel_collect();
+    if (adrcReceipt.available != 0U)
+    {
+#if AETHOR_ADRC_LCD_INTEGRATED
+      if (adrcReceipt.kind == ADRC_CAN_PROBE)
+      { aethor_app_integrated_report_probe_transmit(adrcReceipt.transmitted, timestampUs); }
+      else
+      { aethor_app_adrc_report_transmit_at((uint8_t)adrcReceipt.kind,
+          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted, timestampUs); }
+#else
+      aethor_app_adrc_report_transmit((uint8_t)adrcReceipt.kind,
+          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted);
+#endif
+    }
+#endif
+#if AETHOR_ADRC_LCD_INTEGRATED
+    aethor_app_integrated_set_can_idle(stm32_platform_can_is_idle(), timestampUs);
+#endif
     if ((aethor_app_service(timestampUs) != 0U) &&
         (ProtocolTaskHandle != NULL))
     {
       (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
     }
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+    {
+      uint8_t adrcKind = 0U;
+      float decodedTorqueNm = 0.0F;
+#if AETHOR_ADRC_LCD_INTEGRATED
+      if (aethor_app_integrated_pop_probe_frame(&pendingFrame, timestampUs) != 0U)
+      {
+        if (stm32_adrc_channel_submit(&pendingFrame, ADRC_CAN_PROBE, 0.0F) == 0U)
+        { aethor_app_integrated_report_probe_transmit(0U, timestampUs); }
+      }
+      else
+#endif
+      if (aethor_app_adrc_pop_frame(&pendingFrame, &adrcKind, &decodedTorqueNm) != 0U)
+      {
+        if (stm32_adrc_channel_submit(&pendingFrame, (AdrcCanKind)adrcKind, decodedTorqueNm) == 0U)
+        {
+#if AETHOR_ADRC_LCD_INTEGRATED
+          aethor_app_adrc_report_transmit_at(adrcKind, decodedTorqueNm, 0U, timestampUs);
+#else
+          aethor_app_adrc_report_transmit(adrcKind, decodedTorqueNm, 0U);
+#endif
+        }
+#if AETHOR_ADRC_LCD_INTEGRATED
+        else
+        { aethor_app_adrc_report_disable_submit_at(adrcKind, timestampUs); }
+#endif
+      }
+    }
+#endif
     while (aethor_app_pop_emergency_can_frame(&pendingFrame) != 0U)
     {
+#if AETHOR_ADRC_LCD_INTEGRATED
+      aethor_app_integrated_note_legacy_can_activity();
+#endif
       (void)stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY,
                                       &pendingFrame);
     }
     if (aethor_app_pop_control_group(controlGroup) != 0U)
     {
+#if AETHOR_ADRC_LCD_INTEGRATED
+      aethor_app_integrated_note_legacy_can_activity();
+#endif
       CanTxSchedulerStatus controlGroupStatus =
           stm32_platform_can_submit_control_group(controlGroup,
                                                   ARM_JOINT_COUNT);
@@ -256,6 +318,9 @@ void StartArmControlTask(void const * argument)
                                   &pendingPriority) ==
         MOTOR_RUNTIME_STATUS_FRAME_READY)
     {
+#if AETHOR_ADRC_LCD_INTEGRATED
+      aethor_app_integrated_note_legacy_can_activity();
+#endif
       (void)stm32_platform_can_submit(pendingPriority, &pendingFrame);
     }
     (void)stm32_platform_can_service_tx(ARM_JOINT_COUNT);

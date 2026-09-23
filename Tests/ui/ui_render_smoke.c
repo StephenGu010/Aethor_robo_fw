@@ -208,6 +208,32 @@ static void render_graphics(void *context)
     }
 }
 
+/** @brief Measure pixels flushed by one model-to-view update after pending DMA completes. */
+static uint32_t render_update_pixels(void)
+{
+    uint32_t writes_before = framebuffer_writes;
+    debug_ui_view_update(&view, &model, &diagnostics);
+    lv_refr_now(NULL);
+    lcd_st7789_service(fake_ms);
+    assert(owned_pixels == NULL);
+    return framebuffer_writes - writes_before;
+}
+
+/** @brief Require stable views to stay idle and one-row changes to remain sub-screen. */
+static void verify_dirty_update_budget(void)
+{
+    uint32_t unchanged_pixels = render_update_pixels();
+    uint32_t changed_pixels;
+    assert(unchanged_pixels == 0U);
+    model.snapshot.bench_profile = (uint8_t)!model.snapshot.bench_profile;
+    changed_pixels = render_update_pixels();
+    assert(changed_pixels > 0U && changed_pixels < 280U * 240U);
+    model.snapshot.bench_profile = (uint8_t)!model.snapshot.bench_profile;
+    printf("LVGL_DIRTY_UPDATE_OK unchanged=%lu changed=%lu full=%lu\n",
+           (unsigned long)unchanged_pixels, (unsigned long)changed_pixels,
+           (unsigned long)(280U * 240U));
+}
+
 /** @brief Save framebuffer pixels as a binary PPM with a visible simulation label. */
 static void save_page(const char *directory, const char *name)
 {
@@ -510,6 +536,7 @@ int main(int argc, char **argv)
     simulated_data();
     objects_before = lv_obj_get_child_cnt(view.page.root);
     save_page(argv[1], "01_overview");
+    verify_dirty_update_budget();
     model.page = DEBUG_UI_PAGE_MOTORS; model.selected_motor = model.focus = 6U; model.list_first = 2U;
     save_page(argv[1], "02_motors_scrolled");
     model.page = DEBUG_UI_PAGE_DETAIL; model.selected_motor = 0U;

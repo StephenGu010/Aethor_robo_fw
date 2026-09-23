@@ -20,6 +20,7 @@
 #define PROTOCOL_ENGINE_MESSAGE_CAPACITY (520U)
 #define PROTOCOL_ENGINE_MAX_OUTPUT_COUNT (2U)
 #define PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY (32U)
+#define PROTOCOL_ENGINE_ADRC_RETAINED_CAPACITY (3U)
 #define PROTOCOL_ENGINE_RECENT_RESULT_RETENTION_US (60000000ULL)
 #define PROTOCOL_ENGINE_COMMAND_CAPACITY (8U)
 #define PROTOCOL_ENGINE_RESULT_CAPACITY (8U)
@@ -60,6 +61,11 @@ typedef struct
     ProtocolOutputMessage messages[PROTOCOL_ENGINE_MAX_OUTPUT_COUNT];
     uint8_t count;
 } ProtocolOutputBatch;
+
+/** @brief Optional ADRC extension called only after canonical ID conflict and replay checks. */
+typedef ProtocolEngineStatus (*ProtocolAdrcHandler)(void *context,
+    const TextProtocolRequest *request, uint64_t timestamp_us,
+    ProtocolOutputBatch *output_batch, uint8_t *retain_request);
 
 /** @brief Stores one replay-safe result for up to 60 seconds. */
 typedef struct
@@ -219,6 +225,10 @@ typedef struct
 typedef struct
 {
     const ArmConfig *configuration;
+    ProtocolAdrcHandler adrc_handler;
+    void *adrc_context;
+    /** @brief Accepted ADRC commands cannot expire or be evicted before terminal publication. */
+    ProtocolRecentResult adrc_retained_results[PROTOCOL_ENGINE_ADRC_RETAINED_CAPACITY];
     ProtocolRecentResult recent_results[PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY];
     ProtocolCommand commands[PROTOCOL_ENGINE_COMMAND_CAPACITY];
     ProtocolCommand stop_command;
@@ -266,6 +276,12 @@ typedef struct
     ArmState last_published_state;
     uint8_t last_published_state_valid;
 } ProtocolEngine;
+
+/** @brief Installs the optional ADRC adapter before concurrent request processing starts. */
+void protocol_engine_set_adrc_handler(ProtocolEngine *engine, ProtocolAdrcHandler handler, void *context);
+/** @brief Replaces a retained/cached accepted reply with its terminal; caller serializes engine access. */
+uint8_t protocol_engine_complete_adrc_request(ProtocolEngine *engine, uint32_t request_id,
+    uint64_t timestamp_us, const ProtocolOutputBatch *output_batch);
 
 /** @brief Shared finite/range validation for parsed USB and local typed commands. */
 DebugUiReason protocol_engine_validate_typed_command(const ProtocolCommand *command);

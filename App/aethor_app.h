@@ -15,6 +15,34 @@
 #include "motor_runtime.h"
 #include "protocol_engine.h"
 #include "DebugUi/debug_ui_contract.h"
+#include "Config/adrc_build_config.h"
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+#include "Adrc/adrc_experiment.h"
+/** @brief Pops the single current ADRC frame; kind is enable=0, nominal torque=1, disable=2. */
+uint8_t aethor_app_adrc_pop_frame(CanFrame *frame, uint8_t *kind, float *decoded_torque_nm);
+/** @brief Reports actual CAN transmission, never queue admission or measured physical torque. */
+void aethor_app_adrc_report_transmit(uint8_t kind, float decoded_torque_nm, uint8_t succeeded);
+#if AETHOR_ADRC_LCD_INTEGRATED
+/** @brief Marks the selected-axis release DISABLE after dedicated-buffer admission. */
+void aethor_app_adrc_report_disable_submit_at(uint8_t kind, uint64_t timestamp_us);
+/** @brief Records a real transmission timestamp for the measured LCD handback gate. */
+void aethor_app_adrc_report_transmit_at(uint8_t kind, float decoded_torque_nm,
+    uint8_t succeeded, uint64_t timestamp_us);
+/** @brief Publishes one timestamped legacy scheduler and hardware FIFO drain sample. */
+void aethor_app_integrated_set_can_idle(uint8_t idle, uint64_t timestamp_us);
+/** @brief Resets the handoff quiet window after any legacy CAN submission attempt. */
+void aethor_app_integrated_note_legacy_can_activity(void);
+/** @brief Emits one motor-7 DISABLE challenge or LCD-owned diagnostic feedback query. */
+uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestamp_us);
+/** @brief Records the dedicated CAN probe transmission result, never motor execution. */
+void aethor_app_integrated_report_probe_transmit(uint8_t succeeded, uint64_t timestamp_us);
+#endif
+/** @brief Supplies local measured hardware evidence; no USB path calls this hook. */
+AdrcExperimentResult aethor_app_adrc_set_evidence(const AdrcExperimentConfig *config,
+    const AdrcExperimentQualification *qualification, uint64_t timestamp_us);
+/** @brief Copies coherent supervisor status under the same task critical boundary. */
+uint8_t aethor_app_adrc_get_status(AdrcExperimentStatus *status);
+#endif
 
 /** @brief ProtocolTask-only bounded local STOP/admission and health service pass. */
 void aethor_app_debug_ui_process(uint64_t timestamp_us);

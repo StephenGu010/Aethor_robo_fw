@@ -11,14 +11,15 @@
 #include "arm_config.h"
 #include "s3519_codec.h"
 
-#define MOTOR_DISCOVERY_REGISTER_COUNT (12U)
+#define MOTOR_DISCOVERY_REGISTER_COUNT (13U)
 #define MOTOR_DISCOVERY_REQUEST_TIMEOUT_US (20000ULL)
 #define MOTOR_DISCOVERY_MAX_ATTEMPTS (4U)
-#define MOTOR_DISCOVERY_ALL_FIELDS_MASK (0x0FFFU)
+#define MOTOR_DISCOVERY_ALL_FIELDS_MASK (0x1FFFU)
 #define MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK (0x0003U)
 #define MOTOR_DISCOVERY_MODE_FIELDS_MASK (0x0004U)
-#define MOTOR_DISCOVERY_RANGE_FIELDS_MASK (0x01F8U)
-#define MOTOR_DISCOVERY_VERSION_FIELDS_MASK (0x0E00U)
+#define MOTOR_DISCOVERY_RANGE_FIELDS_MASK (0x0E38U)
+#define MOTOR_DISCOVERY_VERSION_FIELDS_MASK (0x01C0U)
+#define MOTOR_DISCOVERY_WATCHDOG_FIELDS_MASK (0x1000U)
 
 /**
  * @brief Identifies the progress of the read-only discovery process.
@@ -61,6 +62,7 @@ typedef struct
     uint32_t observed_master_id;
     uint32_t observed_esc_id;
     uint32_t observed_control_mode;
+    uint32_t communication_timeout_raw;
     uint32_t hardware_version;
     uint32_t software_version;
     uint32_t sub_version;

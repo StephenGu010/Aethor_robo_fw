@@ -1721,7 +1721,7 @@ static void test_s3519_command_encoding(void)
     CanFrame frame;
     S3519Ranges ranges = {12.5F, 45.0F, 18.0F};
 
-    assert(S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED == 0U);
+    assert(S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED == 1U);
     assert(s3519_pack_position_velocity(3U, 1.25F, 0.5F, &frame) ==
            S3519_CODEC_STATUS_OK);
     assert(frame.identifier == 0x103U);
@@ -1767,6 +1767,16 @@ static void test_s3519_command_encoding(void)
     assert(frame.data[0] == 3U);
     assert(frame.data[2] == 0xCCU);
     assert(frame.data[3] == 0U);
+    assert(s3519_pack_feedback_query_with_length(3U, 8U, &frame) ==
+           S3519_CODEC_STATUS_OK);
+    assert(frame.identifier == 0x7FFU);
+    assert(frame.length == 8U);
+    assert(frame.data[0] == 3U && frame.data[1] == 0U &&
+           frame.data[2] == 0xCCU && frame.data[3] == 0U &&
+           frame.data[4] == 0U && frame.data[5] == 0U &&
+           frame.data[6] == 0U && frame.data[7] == 0U);
+    assert(s3519_pack_feedback_query_with_length(3U, 5U, &frame) ==
+           S3519_CODEC_STATUS_INVALID_ARGUMENT);
 
     assert(s3519_pack_mit(3U,
                           &ranges,
@@ -1814,6 +1824,8 @@ static uint32_t make_discovery_raw_value(S3519Register register_address,
             return (uint32_t)(esc_id + 0x10U);
         case S3519_REGISTER_ESC_ID:
             return esc_id;
+        case S3519_REGISTER_TIMEOUT:
+            return 100U;
         case S3519_REGISTER_CONTROL_MODE:
             return 2U;
         case S3519_REGISTER_HARDWARE_VERSION:
@@ -1851,7 +1863,8 @@ static void test_motor_discovery_verifies_every_joint(void)
         S3519_REGISTER_SUB_VERSION,
         S3519_REGISTER_POSITION_RANGE,
         S3519_REGISTER_VELOCITY_RANGE,
-        S3519_REGISTER_TORQUE_RANGE
+        S3519_REGISTER_TORQUE_RANGE,
+        S3519_REGISTER_TIMEOUT
     };
     const ArmConfig *configuration = arm_config_get_production();
     MotorDiscovery discovery;
@@ -1859,6 +1872,13 @@ static void test_motor_discovery_verifies_every_joint(void)
     uint8_t joint_index;
 
     assert(motor_discovery_init(&discovery, configuration) == MOTOR_DISCOVERY_STATUS_OK);
+    assert((MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK & MOTOR_DISCOVERY_MODE_FIELDS_MASK) == 0U);
+    assert((MOTOR_DISCOVERY_RANGE_FIELDS_MASK & MOTOR_DISCOVERY_VERSION_FIELDS_MASK) == 0U);
+    assert((MOTOR_DISCOVERY_RANGE_FIELDS_MASK & MOTOR_DISCOVERY_WATCHDOG_FIELDS_MASK) == 0U);
+    assert((MOTOR_DISCOVERY_VERSION_FIELDS_MASK & MOTOR_DISCOVERY_WATCHDOG_FIELDS_MASK) == 0U);
+    assert((MOTOR_DISCOVERY_IDENTITY_FIELDS_MASK | MOTOR_DISCOVERY_MODE_FIELDS_MASK |
+            MOTOR_DISCOVERY_RANGE_FIELDS_MASK | MOTOR_DISCOVERY_VERSION_FIELDS_MASK |
+            MOTOR_DISCOVERY_WATCHDOG_FIELDS_MASK) == MOTOR_DISCOVERY_ALL_FIELDS_MASK);
 
     for (joint_index = 0U; joint_index < ARM_JOINT_COUNT; ++joint_index)
     {
@@ -1903,6 +1923,9 @@ static void test_motor_discovery_verifies_every_joint(void)
                 case S3519_REGISTER_CONTROL_MODE:
                     response.raw_value = 2U;
                     break;
+                case S3519_REGISTER_TIMEOUT:
+                    response.raw_value = 100U;
+                    break;
                 case S3519_REGISTER_HARDWARE_VERSION:
                     response.raw_value = 0x00010002U;
                     break;
@@ -1938,6 +1961,7 @@ static void test_motor_discovery_verifies_every_joint(void)
         assert(discovery.results[joint_index].acceleration_rad_s2 == 30.0F);
         assert(discovery.results[joint_index].deceleration_rad_s2 == 25.0F);
         assert(discovery.results[joint_index].maximum_speed_rad_s == 20.0F);
+        assert(discovery.results[joint_index].communication_timeout_raw == 100U);
         assert(discovery.results[joint_index].hardware_version == 0x00010002U);
         assert(discovery.results[joint_index].software_version == 0x00030004U);
         assert(discovery.results[joint_index].sub_version == 0x00000005U);
@@ -2233,9 +2257,48 @@ static void test_position_register_reads(void)
     assert(runtime.position_read.pending == 0U);
 }
 
+/** @brief Measures only consecutive accepted enabled feedback and preserves the latest burst. */
+static void test_motor_runtime_records_enabled_feedback_intervals(void)
+{
+    static const uint8_t enabled_payload[8] = {
+        0x11U, 0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 42U, 40U
+    };
+    static const uint8_t disabled_payload[8] = {
+        0x01U, 0x80U, 0x00U, 0x80U, 0x08U, 0x00U, 42U, 40U
+    };
+    MotorRuntime runtime;
+    CanFrame enabled_frame;
+    CanFrame disabled_frame;
+    MotorFeedbackTiming *timing;
+
+    prepare_runtime_with_two_discovered_motors(&runtime);
+    assert(can_frame_init(&enabled_frame, 0x11U, enabled_payload,
+                          sizeof(enabled_payload)) == CAN_FRAME_STATUS_OK);
+    assert(can_frame_init(&disabled_frame, 0x11U, disabled_payload,
+                          sizeof(disabled_payload)) == CAN_FRAME_STATUS_OK);
+    timing = &runtime.feedback_timing[0];
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 1000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 1U && timing->interval_count == 0U);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 5000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 9500U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 3U && timing->interval_count == 2U);
+    assert(timing->minimum_interval_us == 4000U && timing->maximum_interval_us == 4500U);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 9500U) == MOTOR_RUNTIME_STATUS_STALE_FEEDBACK);
+    assert(timing->sample_count == 3U && timing->interval_count == 2U);
+    assert(motor_runtime_accept_frame(&runtime, &disabled_frame, 10000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 3U && timing->interval_count == 2U);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 20000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 1U && timing->interval_count == 0U);
+    assert(motor_runtime_accept_frame(&runtime, &enabled_frame, 24000U) == MOTOR_RUNTIME_STATUS_OK);
+    assert(timing->sample_count == 2U && timing->interval_count == 1U);
+    assert(timing->minimum_interval_us == 4000U && timing->maximum_interval_us == 4000U);
+    assert(runtime.feedback_timing[1].sample_count == 0U);
+}
+
 /** @brief Runs all seven-motor core assertions; returns zero on success. */
 int main(void)
 {
+    test_motor_runtime_records_enabled_feedback_intervals();
     test_position_register_reads();
     test_motor_runtime_reports_discovered_position_velocity_limits();
     test_motor_runtime_accepts_valid_position_velocity_move_limits();

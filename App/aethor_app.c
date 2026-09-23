@@ -31,6 +31,9 @@ static uint64_t application_integrated_can_quiet_since_us;
 static uint64_t application_integrated_probe_submitted_us;
 static uint8_t application_integrated_probe_transmitted;
 static uint8_t application_integrated_probe_failed;
+/** @brief A zero-request MIT control frame may follow only a confirmed acquisition DISABLE transmit. */
+static uint8_t application_integrated_acquire_disable_transmitted;
+static uint8_t application_integrated_acquire_neutral_submitted;
 /** @brief Raw receive evidence retained after one bounded acquisition challenge. */
 static uint32_t application_integrated_acquire_rx_count;
 static uint32_t application_integrated_acquire_valid_count;
@@ -2823,6 +2826,8 @@ void aethor_app_init(uint64_t timestamp_us, uint32_t boot_id)
     application_integrated_probe_submitted_us = 0ULL;
     application_integrated_probe_transmitted = 0U;
     application_integrated_probe_failed = 0U;
+    application_integrated_acquire_disable_transmitted = 0U;
+    application_integrated_acquire_neutral_submitted = 0U;
     application_integrated_acquire_rx_count = 0U;
     application_integrated_acquire_valid_count = 0U;
     application_integrated_acquire_rejected_count = 0U;
@@ -2973,6 +2978,8 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 application_integrated_probe_submitted_us = 0ULL;
                 application_integrated_probe_transmitted = 0U;
                 application_integrated_probe_failed = 0U;
+                application_integrated_acquire_disable_transmitted = 0U;
+                application_integrated_acquire_neutral_submitted = 0U;
                 application_integrated_acquire_rx_count = 0U;
                 application_integrated_acquire_valid_count = 0U;
                 application_integrated_acquire_rejected_count = 0U;
@@ -3136,6 +3143,8 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 application_integrated_probe_submitted_us = 0ULL;
                 application_integrated_probe_transmitted = 0U;
                 application_integrated_probe_failed = 0U;
+                application_integrated_acquire_disable_transmitted = 0U;
+                application_integrated_acquire_neutral_submitted = 0U;
                 status = aethor_app_integrated_response(output,
                     PROTOCOL_ENGINE_STATUS_OK, request.request_id, "probe=accepted");
             }
@@ -3160,7 +3169,7 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
             aethor_app_integrated_build_evidence(timestamp_us,
                 DEBUG_UI_INITIAL_MOTOR_ID - 1U, &evidence);
             written = snprintf(detail, sizeof(detail),
-                "gate motor=%u lcd_idle=%u can_idle=%u mit_ready=%u mode=%lu fields=%04x verified=%02x fb_fresh=%u disabled=%u no_fault=%u stationary=%u authority=%u action=%u ui_busy=%u ui_results=%u proto_results=%u discovery_active=%u active_samples=%lu active_intervals=%lu active_min_us=%lu active_max_us=%lu acq_submit=%u acq_tx=%u acq_failed=%u acq_rx=%lu acq_valid=%lu acq_rejected=%lu acq_last_id=%u acq_last_len=%u",
+                "gate motor=%u lcd_idle=%u can_idle=%u mit_ready=%u mode=%lu fields=%04x verified=%02x fb_fresh=%u disabled=%u no_fault=%u stationary=%u authority=%u action=%u ui_busy=%u ui_results=%u proto_results=%u discovery_active=%u active_samples=%lu active_intervals=%lu active_min_us=%lu active_max_us=%lu acq_submit=%u acq_tx=%u acq_failed=%u acq_disable_tx=%u acq_neutral=%u acq_rx=%lu acq_valid=%lu acq_rejected=%lu acq_last_id=%u acq_last_len=%u",
                 (unsigned int)DEBUG_UI_INITIAL_MOTOR_ID,
                 (unsigned int)evidence.lcd_idle, (unsigned int)evidence.can_idle,
                 (unsigned int)evidence.mit_discovered,
@@ -3183,6 +3192,8 @@ static ProtocolEngineStatus aethor_app_integrated_process_line(const char *line,
                 (unsigned int)(application_integrated_probe_submitted_us != 0ULL),
                 (unsigned int)application_integrated_probe_transmitted,
                 (unsigned int)application_integrated_probe_failed,
+                (unsigned int)application_integrated_acquire_disable_transmitted,
+                (unsigned int)application_integrated_acquire_neutral_submitted,
                 (unsigned long)application_integrated_acquire_rx_count,
                 (unsigned long)application_integrated_acquire_valid_count,
                 (unsigned long)application_integrated_acquire_rejected_count,
@@ -4611,24 +4622,30 @@ void aethor_app_integrated_note_legacy_can_activity(void)
     aethor_app_exit_task_critical();
 }
 
-/** @brief Issues one acquisition DISABLE or LCD-owned diagnostic query after CAN is quiet. */
+/** @brief Issues acquisition DISABLE then zero-request MIT control, or an LCD-owned query. */
 uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestamp_us)
 {
     AdrcLcdOwnershipEvidence evidence;
     uint8_t available = 0U;
     uint8_t axis;
+    uint8_t acquiring;
+    uint8_t neutral_due;
     if (!application_initialized || frame == NULL || timestamp_us == 0ULL) { return 0U; }
     aethor_app_enter_task_critical();
-    if ((application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING ||
+    acquiring = (uint8_t)(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
+    neutral_due = (uint8_t)(acquiring != 0U &&
+        application_integrated_acquire_disable_transmitted != 0U &&
+        application_integrated_acquire_neutral_submitted == 0U);
+    if ((acquiring != 0U ||
         (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_LCD &&
          application_integrated_diag_requested_us != 0ULL &&
          timestamp_us >= application_integrated_diag_requested_us &&
          timestamp_us - application_integrated_diag_requested_us <=
             ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US)) &&
-        application_integrated_probe_submitted_us == 0ULL &&
+        (application_integrated_probe_submitted_us == 0ULL || neutral_due != 0U) &&
         application_integrated_probe_failed == 0U)
     {
-        axis = application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING ?
+        axis = acquiring != 0U ?
             application_adrc_lcd_ownership.axis_index :
             (uint8_t)(DEBUG_UI_INITIAL_MOTOR_ID - 1U);
         aethor_app_integrated_build_evidence(timestamp_us,
@@ -4638,7 +4655,7 @@ uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestam
         {
             const JointConfig *joint = &arm_config_get_production()->joints[axis];
             uint8_t packed = 0U;
-            if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING)
+            if (acquiring != 0U && neutral_due == 0U)
             {
                 MotorEmergencyFrameBatch disable_batch;
                 if (motor_runtime_build_mode_command_batch(&application_motor_runtime,
@@ -4650,12 +4667,25 @@ uint8_t aethor_app_integrated_pop_probe_frame(CanFrame *frame, uint64_t timestam
                     packed = 1U;
                 }
             }
-            else if (s3519_pack_feedback_query_with_length((uint8_t)joint->esc_id,
+            else if (neutral_due != 0U)
+            {
+                if (s3519_pack_mit((uint8_t)joint->esc_id,
+                        &application_motor_runtime.discovery.results[axis].ranges,
+                        0.0F, 0.0F, 0.0F, 0.0F, 0.0F, frame) == S3519_CODEC_STATUS_OK)
+                { packed = 1U; }
+            }
+            else if (acquiring == 0U &&
+                s3519_pack_feedback_query_with_length((uint8_t)joint->esc_id,
                     application_integrated_diag_query_length, frame) == S3519_CODEC_STATUS_OK)
             { packed = 1U; }
             if (packed != 0U)
             {
                 application_integrated_probe_submitted_us = timestamp_us;
+                if (neutral_due != 0U)
+                {
+                    application_integrated_probe_transmitted = 0U;
+                    application_integrated_acquire_neutral_submitted = 1U;
+                }
                 available = 1U;
             }
             else { application_integrated_probe_failed = 1U; }
@@ -4678,6 +4708,9 @@ void aethor_app_integrated_report_probe_transmit(uint8_t succeeded, uint64_t tim
         if (succeeded != 0U && timestamp_us >= application_integrated_probe_submitted_us)
         {
             application_integrated_probe_transmitted = 1U;
+            if (application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING &&
+                application_integrated_acquire_neutral_submitted == 0U)
+            { application_integrated_acquire_disable_transmitted = 1U; }
             if (application_integrated_diag_requested_us != 0ULL)
             { application_integrated_diag_transmitted_us = timestamp_us; }
         }

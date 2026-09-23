@@ -370,6 +370,13 @@ static void test_no_feedback_after_probe_times_out(void)
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
     assert(aethor_app_integrated_pop_probe_frame(&frame, 6003U) == 1U);
     aethor_app_integrated_report_probe_transmit(1U, 6004U);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6005U) == 1U);
+    assert(frame.identifier == 7U && frame.length == 8U);
+    assert(frame.data[4] == 0U && frame.data[5] == 0U &&
+        (frame.data[6] & 0xF0U) == 0U);
+    assert(((((uint16_t)frame.data[6] & 0x0FU) << 8U) | frame.data[7]) >= 2047U);
+    assert(((((uint16_t)frame.data[6] & 0x0FU) << 8U) | frame.data[7]) <= 2048U);
+    aethor_app_integrated_report_probe_transmit(1U, 6006U);
     (void)aethor_app_service(100004U);
     assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
     (void)aethor_app_service(106004U);
@@ -378,8 +385,34 @@ static void test_no_feedback_after_probe_times_out(void)
     assert(strstr(output.messages[0].data, "handoff=timeout") != NULL);
     assert(request("3 adrc gate motor=7", 106006U, &output) == PROTOCOL_ENGINE_STATUS_OK);
     assert(strstr(output.messages[0].data,
-        "acq_submit=1 acq_tx=1 acq_failed=0 acq_rx=0 acq_valid=0 acq_rejected=0") != NULL);
+        "acq_submit=1 acq_tx=1 acq_failed=0 acq_disable_tx=1 acq_neutral=1 acq_rx=0 acq_valid=0 acq_rejected=0") != NULL);
     assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 0U);
+}
+
+/** @brief Requires a fresh disabled state reply after the neutral MIT fallback. */
+static void test_neutral_probe_requires_actual_reply(void)
+{
+    ProtocolOutputBatch output;
+    CanFrame frame;
+    aethor_app_init(1000U, 1234U);
+    fixture_discovered_motor7();
+    aethor_app_integrated_set_can_idle(1U, 1001U);
+    aethor_app_integrated_set_can_idle(1U, 6001U);
+    assert(request("1 adrc acquire motor=7", 6002U, &output) == PROTOCOL_ENGINE_STATUS_OK);
+    (void)aethor_app_service(6003U);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6003U) == 1U);
+    assert(frame.data[7] == S3519_MODE_COMMAND_DISABLE);
+    aethor_app_integrated_report_probe_transmit(1U, 6004U);
+    assert(aethor_app_integrated_pop_probe_frame(&frame, 6005U) == 1U);
+    assert(frame.identifier == 7U && frame.data[4] == 0U && frame.data[5] == 0U);
+    (void)aethor_app_service(6006U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
+    aethor_app_integrated_report_probe_transmit(1U, 6007U);
+    (void)aethor_app_service(6008U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ACQUIRING);
+    fixture_disabled_motor7(6009U);
+    (void)aethor_app_service(6010U);
+    assert(application_adrc_lcd_ownership.state == ADRC_LCD_OWNER_ADRC);
 }
 
 /** @brief A dedicated-buffer rejection cannot be promoted into disabled feedback evidence. */
@@ -484,6 +517,7 @@ int main(void)
     test_lcd_default_and_safe_acquire();
     test_release_requires_new_feedback();
     test_no_feedback_after_probe_times_out();
+    test_neutral_probe_requires_actual_reply();
     test_failed_probe_keeps_lcd_owner();
     test_lcd_stop_during_adrc();
     puts("ADRC_LCD_INTEGRATION_TESTS_PASSED");

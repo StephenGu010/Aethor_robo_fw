@@ -2,15 +2,19 @@
 .SYNOPSIS
 Verifies one non-motion motor-7 ADRC acquire and release in a single power window.
 .DESCRIPTION
-Requires a user-confirmed 24 V supply and the integrated LCD-MIT/ADRC firmware.
+Requires a user-confirmed 24 V supply, explicit neutral-MIT challenge approval,
+and the integrated LCD-MIT/ADRC firmware. The acquisition fallback requests
+Kp=0, Kd=0, velocity=0, and feed-forward torque=0; protocol quantization may
+make the encoded torque slightly nonzero. It sends no explicit ENABLE.
 The command allowlist contains discovery, disabled mode switching, ownership
-handoff, status queries, and final DISABLE. It sends no ENABLE, torque, or motion.
+handoff, status queries, and final DISABLE. It requests no nonzero torque or speed.
 If ownership does not return to LCD, it records the locked state and requires
 physical power cutoff instead of attempting a legacy mode command.
 #>
 param(
     [string]$PortName = 'COM4',
-    [switch]$Power24vConfirmed
+    [switch]$Power24vConfirmed,
+    [switch]$NeutralMitChallengeApproved
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,8 +33,10 @@ $acquireTransferred = $false
 $releaseVerified = $false
 $modeRestored = $false
 $finalDisableCompleted = $false
+$unsafeAcquire = $false
 $transcriptLines.Add('host_start_utc=' + [datetime]::UtcNow.ToString('o') +
-    ' port=' + $PortName + ' power24v_confirmed=' + [bool]$Power24vConfirmed)
+    ' port=' + $PortName + ' power24v_confirmed=' + [bool]$Power24vConfirmed +
+    ' neutral_mit_challenge_approved=' + [bool]$NeutralMitChallengeApproved)
 
 function Receive-WindowLine {
     <# Records one asynchronous line and caches terminal bench replies. #>
@@ -106,6 +112,9 @@ function Assert-WindowDisabledLcd {
 
 try {
     if (-not $Power24vConfirmed) { throw 'User confirmation of 24 V ON is required' }
+    if (-not $NeutralMitChallengeApproved) {
+        throw 'Approval of the quantized zero-request MIT challenge is required'
+    }
     if ($PortName -notin [System.IO.Ports.SerialPort]::GetPortNames()) {
         throw "Serial port unavailable: $PortName"
     }
@@ -167,6 +176,7 @@ try {
             break
         }
         if ($ownerReply -match 'owner=lcd handoff=(unsafe|timeout)') {
+            $unsafeAcquire = $ownerReply -match 'handoff=unsafe'
             $ownerReturnedToLcd = $true
             throw "ADRC acquire did not transfer: $ownerReply"
         }
@@ -233,7 +243,13 @@ catch {
 finally {
     if ($serialPort.IsOpen -and $mitModeEntered) {
         try {
-            [void](Invoke-WindowRequest $serialPort 81000899 'adrc gate motor=7')
+            $gateReply = Invoke-WindowRequest $serialPort 81000899 'adrc gate motor=7'
+            if ($gateReply -match 'fb_fresh=1' -and
+                ($gateReply -notmatch 'disabled=1' -or
+                 $gateReply -notmatch 'no_fault=1' -or
+                 $gateReply -notmatch 'stationary=1')) {
+                $unsafeAcquire = $true
+            }
         }
         catch { $transcriptLines.Add('acquire_gate_read_error=' + $_.Exception.Message) }
         try {
@@ -243,7 +259,19 @@ finally {
         catch { $transcriptLines.Add('owner_check_error=' + $_.Exception.Message) }
     }
     if ($serialPort.IsOpen -and $mitModeEntered -and $ownerReturnedToLcd -and
-        -not $modeRestored) {
+        $unsafeAcquire) {
+        try {
+            $disableReply = Invoke-WindowRequest $serialPort 81000903 'bench disable 7'
+            if ($disableReply -match '^ok 81000903 bench disable accepted=1') {
+                [void](Wait-WindowCompletion $serialPort 81000903 'disable')
+                $finalDisableCompleted = $true
+            }
+        }
+        catch { $transcriptLines.Add('unsafe_disable_error=' + $_.Exception.Message) }
+        $transcriptLines.Add('hardware_poweroff_required=1 unsafe_acquire=1')
+    }
+    if ($serialPort.IsOpen -and $mitModeEntered -and $ownerReturnedToLcd -and
+        -not $unsafeAcquire -and -not $modeRestored) {
         try {
             $restoreReply = Invoke-WindowRequest $serialPort 81000901 'bench mode 7 mode=pos_vel'
             if ($restoreReply -match '^ok 81000901 bench mode accepted=1') {
@@ -254,7 +282,7 @@ finally {
         catch { $transcriptLines.Add('restore_error=' + $_.Exception.Message) }
     }
     if ($serialPort.IsOpen -and $mitModeEntered -and $ownerReturnedToLcd -and
-        -not $finalDisableCompleted) {
+        -not $unsafeAcquire -and -not $finalDisableCompleted) {
         try {
             $disableReply = Invoke-WindowRequest $serialPort 81000902 'bench disable 7'
             if ($disableReply -match '^ok 81000902 bench disable accepted=1') {

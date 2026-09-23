@@ -149,9 +149,10 @@ static uint8_t build_torque(AdrcAppBridge *bridge, uint8_t axis, float torque_nm
     return 1U;
 }
 
-/** @brief Initializes a fail-closed hardware bridge without static or simulated qualification. */
-AdrcExperimentResult adrc_app_bridge_init(AdrcAppBridge *bridge, MotorRuntime *runtime,
-    ProtocolEngine *engine, AdrcControllerCallback controller, void *controller_context)
+/** @brief Initializes shared bridge storage while optionally preserving LCD-owned discovery. */
+static AdrcExperimentResult init_bridge(AdrcAppBridge *bridge, MotorRuntime *runtime,
+    ProtocolEngine *engine, AdrcControllerCallback controller, void *controller_context,
+    uint8_t start_discovery)
 {
     AdrcExperimentResult result;
     if (bridge == NULL || runtime == NULL || engine == NULL || !runtime->initialized)
@@ -164,9 +165,44 @@ AdrcExperimentResult adrc_app_bridge_init(AdrcAppBridge *bridge, MotorRuntime *r
     protocol_engine_set_adrc_handler(engine, adrc_protocol_handle_request, adrc_bench_gateway(&bridge->bench));
     bridge->discovery_axis = bridge->bench.draft_config.axis_index;
     reset_feedback_statistics(bridge);
-    (void)motor_runtime_begin_discovery(runtime, (uint8_t)(1U << bridge->discovery_axis));
+    if (start_discovery != 0U)
+    { (void)motor_runtime_begin_discovery(runtime, (uint8_t)(1U << bridge->discovery_axis)); }
     bridge->initialized = 1U;
     return ADRC_RESULT_OK;
+}
+
+/** @brief Initializes a fail-closed isolated ADRC bridge with selected-axis discovery. */
+AdrcExperimentResult adrc_app_bridge_init(AdrcAppBridge *bridge, MotorRuntime *runtime,
+    ProtocolEngine *engine, AdrcControllerCallback controller, void *controller_context)
+{
+    return init_bridge(bridge, runtime, engine, controller, controller_context, 1U);
+}
+
+/** @brief Initializes ADRC without replacing the LCD-owned motor discovery sequence. */
+AdrcExperimentResult adrc_app_bridge_init_deferred(AdrcAppBridge *bridge, MotorRuntime *runtime,
+    ProtocolEngine *engine, AdrcControllerCallback controller, void *controller_context)
+{
+    return init_bridge(bridge, runtime, engine, controller, controller_context, 0U);
+}
+
+/** @brief Starts selected-axis read-only discovery after exclusive ownership is granted. */
+MotorRuntimeStatus adrc_app_bridge_start_selected_discovery(AdrcAppBridge *bridge, uint8_t axis_index)
+{
+    MotorRuntimeStatus status;
+    if (bridge == NULL || bridge->initialized == 0U || axis_index >= ARM_JOINT_COUNT)
+    { return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT; }
+    if (bridge->frame_pending || bridge->awaiting_receipt || bridge->stop_pending ||
+        bridge->bench.experiment.status.state == ADRC_STATE_RUNNING ||
+        bridge->bench.experiment.status.state == ADRC_STATE_STOPPING)
+    { return MOTOR_RUNTIME_STATUS_WAITING; }
+    status = motor_runtime_begin_discovery(bridge->runtime, (uint8_t)(1U << axis_index));
+    if (status == MOTOR_RUNTIME_STATUS_OK)
+    {
+        bridge->discovery_axis = axis_index;
+        bridge->bench.draft_config.axis_index = axis_index;
+        reset_feedback_statistics(bridge);
+    }
+    return status;
 }
 
 /** @brief Expires the old slot before owner execution and selects disable over enable over torque. */

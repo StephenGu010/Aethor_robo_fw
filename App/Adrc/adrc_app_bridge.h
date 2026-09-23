@@ -37,6 +37,11 @@ typedef struct
 /** @brief Initializes hardware provenance with no qualification and registers the protocol gateway. */
 AdrcExperimentResult adrc_app_bridge_init(AdrcAppBridge *bridge, MotorRuntime *runtime,
     ProtocolEngine *engine, AdrcControllerCallback controller, void *controller_context);
+/** @brief Initializes ADRC without replacing the LCD-owned motor discovery sequence. */
+AdrcExperimentResult adrc_app_bridge_init_deferred(AdrcAppBridge *bridge, MotorRuntime *runtime,
+    ProtocolEngine *engine, AdrcControllerCallback controller, void *controller_context);
+/** @brief Starts selected-axis read-only discovery after exclusive ownership is granted. */
+MotorRuntimeStatus adrc_app_bridge_start_selected_discovery(AdrcAppBridge *bridge, uint8_t axis_index);
 /** @brief Runs only the selected-axis 4 ms owner and replaces the expiring output slot. */
 uint8_t adrc_app_bridge_service(AdrcAppBridge *bridge, uint64_t timestamp_us);
 /** @brief Rejects all legacy mutation paths before they can reach their command queues. */

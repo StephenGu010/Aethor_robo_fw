@@ -427,6 +427,22 @@ static void test_readonly_hardware_diagnostics(void)
     assert(aethor_app_adrc_pop_frame(&frame, &kind, &decoded) == 0U);
 }
 
+/** @brief Deferring ADRC startup must preserve LCD discovery until exclusive acquisition. */
+static void test_deferred_bridge_discovery(void)
+{
+    aethor_app_init(1000U, 792U);
+    assert(motor_runtime_begin_discovery(&application_motor_runtime, 0x01U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(application_motor_runtime.discovery.target_joint_mask == 0x01U);
+    assert(adrc_app_bridge_init_deferred(&application_adrc_bridge,
+        &application_motor_runtime, &application_protocol_engine,
+        adrc_generated_controller_step, NULL) == ADRC_RESULT_OK);
+    assert(application_motor_runtime.discovery.target_joint_mask == 0x01U);
+    assert(adrc_app_bridge_start_selected_discovery(&application_adrc_bridge, 6U) ==
+           MOTOR_RUNTIME_STATUS_OK);
+    assert(application_motor_runtime.discovery.target_joint_mask == 0x40U);
+}
+
 /** @brief Ensures opt-in ADRC builds reject legacy actuation and lack startup qualification. */
 int main(void)
 {
@@ -461,6 +477,7 @@ int main(void)
     test_readonly_discovery_and_receive();
     test_readonly_feedback_query_pacing();
     test_readonly_hardware_diagnostics();
+    test_deferred_bridge_discovery();
     puts("ADRC_APP_TESTS_PASSED");
     return 0;
 }

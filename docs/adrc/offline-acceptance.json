@@ -1,0 +1,69 @@
+{
+  "recorded_at_utc": "2026-09-21T08:29:20.1070628Z",
+  "offline_acceptance_passed": true,
+  "hardware_tested": false,
+  "hardware_qualified": false,
+  "model_delivery": "Models/Adrc/VerifiedOffline/20260921T081022747Z",
+  "controller_mil": {
+    "passed": true,
+    "samples": 2002,
+    "max_normalized_error": 4.826142429026348E-07,
+    "tolerance": 0.0001,
+    "reset_drop_reverse_and_nonfinite_checks": true
+  },
+  "closed_loop_cases": 38,
+  "generated_c_replay": {
+    "samples": 59040,
+    "max_normalized_error": 0,
+    "tolerance": 0.0001,
+    "passed": true
+  },
+  "firmware_linked": true,
+  "firmware_errors": 0,
+  "firmware_warnings": 0,
+  "software_sources_unchanged": true,
+  "legacy_checks": 28,
+  "legacy_keil_targets": 4,
+  "matlab_client_memory_checks": 35,
+  "evidence": [
+    {
+      "path": "output\\adrc\\models\\com_20260921T081022747Z\\pipeline_report.json",
+      "sha256": "916EB8008EFC66D926C0AB2E6833AFC6E61BF37106E47873072E59E45C9974F7"
+    },
+    {
+      "path": "output\\adrc\\verification\\final_target_20260921T081022747Z\\target_report.json",
+      "sha256": "EBAA292DB1FD636157A4D19FD398E9C9535F20A7C91C2C6C04C403C9147F1CE3"
+    },
+    {
+      "path": "output\\adrc\\verification\\20260921T081446669Z\\manifest.json",
+      "sha256": "30C0F090558106E86D2F633547D41A9953EA99A188FE65B0FC7A03946599AEDF"
+    },
+    {
+      "path": "output\\adrc\\client\\20260921T082813219Z\\client_report.json",
+      "sha256": "24319EF6C42F8229F29E9533B69F4B1D1162DF8EDECE3566A8AFE0303E1D2C97"
+    }
+  ],
+  "client_sources": [
+    {
+      "name": "AdrcClient.m",
+      "sha256": "83CACF99858D6B21FD3A4BF5B8E9197D2CD186FD38EFFC95CA48235F97FC7F7A"
+    },
+    {
+      "name": "AdrcMemoryTransport.m",
+      "sha256": "E0F841524991F38271AA7245EDB614BFF709C718EEC85FA379AFDE65120AEB8B"
+    },
+    {
+      "name": "AdrcSerialTransport.m",
+      "sha256": "9F7BF5A39CA621390EA9A5DB6B805E3A325022E7E266EAFF938F913B4F7641DE"
+    },
+    {
+      "name": "run_adrc_client_tests.m",
+      "sha256": "8591585373B94B30F8D9708A0C5E3F256923C242F8EE472BDA82C315FA5545BD"
+    }
+  ],
+  "limitations": [
+    "Synthetic plant and tuning parameters, not measured S3519 values",
+    "No flashing, serial/CAN test, task timing, runtime stack, watchdog or motor validation",
+    "Standalone MATLAB startup crash not confirmed resolved; existing Automation Server session used"
+  ]
+}

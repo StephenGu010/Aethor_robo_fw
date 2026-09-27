@@ -17,7 +17,8 @@
 #define S3519_KP_MAX (500.0F)
 #define S3519_KD_MIN (0.0F)
 #define S3519_KD_MAX (5.0F)
-#define S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED (0U)
+/* The vendor STM32H7 example and Python SDK both define 0x7FF/0xCC as a read-only feedback refresh. */
+#define S3519_EXPLICIT_FEEDBACK_QUERY_VALIDATED (1U)
 #define S3519_DRIVER_STATE_DISABLED (0U)
 #define S3519_DRIVER_STATE_ENABLED (1U)
 #define S3519_DRIVER_STATE_FAULT_MINIMUM (8U)
@@ -52,6 +53,7 @@ typedef enum
     S3519_REGISTER_MAXIMUM_SPEED = 0x06U,
     S3519_REGISTER_MASTER_ID = 0x07U,
     S3519_REGISTER_ESC_ID = 0x08U,
+    S3519_REGISTER_TIMEOUT = 0x09U,
     S3519_REGISTER_CONTROL_MODE = 0x0AU,
     S3519_REGISTER_HARDWARE_VERSION = 0x0DU,
     S3519_REGISTER_SOFTWARE_VERSION = 0x0EU,
@@ -151,6 +153,17 @@ S3519CodecStatus s3519_pack_control_mode_write(uint8_t esc_id,
  * @return Detailed codec status.
  */
 S3519CodecStatus s3519_pack_feedback_query(uint8_t esc_id, CanFrame *frame);
+
+/**
+ * @brief Packs the vendor status query in either the four- or eight-byte SDK form.
+ * @param esc_id Target motor receive identifier.
+ * @param frame_length Exact Classic CAN payload length, four or eight bytes.
+ * @param frame Destination Classic CAN frame.
+ * @return Detailed codec status.
+ */
+S3519CodecStatus s3519_pack_feedback_query_with_length(uint8_t esc_id,
+                                                       uint8_t frame_length,
+                                                       CanFrame *frame);
 
 /**
  * @brief Packs one MIT command using discovered motor ranges.

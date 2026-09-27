@@ -274,6 +274,43 @@ static void test_landscape_key_navigation(void)
     puts("LANDSCAPE_KEY_NAVIGATION_PASS right_select_down_enter_left_back_left_select_center_enter");
 }
 
+/** @brief Require queued model events to redraw immediately instead of waiting 100 ms. */
+static void test_task_view_dirty(void)
+{
+    uint32_t render_started_ms;
+    debug_ui_model_init(&task_model);
+    task_input.events[0].type = DEBUG_UI_INPUT_EVENT_PRESS;
+    task_input.events[0].key = DEBUG_UI_KEY_DOWN;
+    task_input.events[0].timestamp_ms = fake_ms;
+    task_input.events[0].held_ms = 0U;
+    task_input.event_count = 1U;
+    last_snapshot_ms = fake_ms;
+    last_view_ms = fake_ms;
+    view_dirty = 0U;
+    service_control_io();
+    assert(view_dirty == 1U);
+    render_started_ms = fake_ms;
+    graphics_service(NULL);
+    assert(view_dirty == 0U && last_view_ms == render_started_ms);
+    puts("TASK_VIEW_DIRTY_PASS event_to_render_same_service_cycle");
+}
+
+/** @brief Require coherent complete-refresh timing rather than last-block timing. */
+static void test_complete_refresh_metrics(void)
+{
+    LvPortDispRefreshStatus refresh_status;
+    lv_port_disp_refresh_status(&refresh_status);
+    assert(refresh_status.completed > 0U);
+    assert(refresh_status.last_bytes > 0U);
+    assert(refresh_status.last_duration_ms > 0U);
+    assert(refresh_status.fps_tenths == 10000U / refresh_status.last_duration_ms);
+    printf("TASK_REFRESH_METRICS_PASS bytes=%lu duration=%lu fps_tenths=%lu completed=%lu\n",
+        (unsigned long)refresh_status.last_bytes,
+        (unsigned long)refresh_status.last_duration_ms,
+        (unsigned long)refresh_status.fps_tenths,
+        (unsigned long)refresh_status.completed);
+}
+
 /** @brief Verify real wait->UiTask->input->model->submit and post-assert cleanup paths. */
 int main(int argc, char **argv)
 {
@@ -292,9 +329,11 @@ int main(int argc, char **argv)
         (void)debug_ui_input_feed(&task_input, 4095U, prime_ms + 1U, prime_ms, prime_ms);
     assert(task_input.valid);
     fake_ms = 300U; graphics_initialized = graphics_running = 1U;
+    test_task_view_dirty();
     adc_value = 0U;
     assert(debug_ui_graphics_run(render_continuously, NULL));
     while (owned_pixels != NULL) { ++fake_ms; lv_port_disp_service(fake_ms); }
+    test_complete_refresh_metrics();
     assert(stop_submissions == 1U && stop_while_owned == 1U);
     assert(seen_buffers[0] != NULL && seen_buffers[1] != NULL && immutable_checks > 100U);
     assert(notification_count > 0U && health_publications > 0U);

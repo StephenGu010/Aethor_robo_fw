@@ -1686,6 +1686,15 @@ static ProtocolRecentResult *protocol_engine_find_recent(
 {
     uint8_t result_index;
 
+    for (result_index = 0U; result_index < PROTOCOL_ENGINE_ADRC_RETAINED_CAPACITY; ++result_index)
+    {
+        if ((engine->adrc_retained_results[result_index].valid != 0U) &&
+            (engine->adrc_retained_results[result_index].request_id == request_id))
+        {
+            return &engine->adrc_retained_results[result_index];
+        }
+    }
+
     for (result_index = 0U;
          result_index < PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY;
          ++result_index)
@@ -6148,6 +6157,7 @@ ProtocolEngineStatus protocol_engine_process_text_line(
     char canonical[TEXT_PROTOCOL_MAX_REQUEST_LINE_LENGTH + 1U];
     size_t canonical_length = 0U;
     uint32_t body_hash;
+    uint8_t retain_adrc_request = 0U;
 
     if ((engine == NULL) || (line == NULL) || (output_batch == NULL))
     {
@@ -6209,7 +6219,13 @@ ProtocolEngineStatus protocol_engine_process_text_line(
         return PROTOCOL_ENGINE_STATUS_REPLAYED;
     }
 
-    if (text_protocol_request_path_equals(&request, "hello", NULL) != 0U)
+    if ((engine->adrc_handler != NULL) &&
+        (protocol_engine_text_namespace_equals(&request, "adrc") != 0U))
+    {
+        engine_status = engine->adrc_handler(engine->adrc_context, &request,
+            timestamp_us, output_batch, &retain_adrc_request);
+    }
+    else if (text_protocol_request_path_equals(&request, "hello", NULL) != 0U)
     {
         engine_status = protocol_engine_handle_text_hello(engine,
                                                           &request,
@@ -6336,6 +6352,24 @@ ProtocolEngineStatus protocol_engine_process_text_line(
                                           (uint8_t)(engine_status ==
                                                     PROTOCOL_ENGINE_STATUS_OK),
                                           output_batch);
+        if ((retain_adrc_request != 0U) && (request.request_id != 0U) &&
+            (engine_status == PROTOCOL_ENGINE_STATUS_OK))
+        {
+            ProtocolRecentResult *accepted = protocol_engine_find_recent(
+                engine, request.request_id, timestamp_us);
+            if (accepted != NULL)
+            {
+                uint8_t retained_index;
+                for (retained_index = 0U; retained_index < PROTOCOL_ENGINE_ADRC_RETAINED_CAPACITY; ++retained_index)
+                {
+                    if (engine->adrc_retained_results[retained_index].valid == 0U)
+                    {
+                        engine->adrc_retained_results[retained_index] = *accepted;
+                        break;
+                    }
+                }
+            }
+        }
     }
     if ((engine_status == PROTOCOL_ENGINE_STATUS_OK) &&
         (engine->session_active != 0U))
@@ -6387,5 +6421,59 @@ uint8_t protocol_engine_watchdog_expired(ProtocolEngine *engine,
         return 0U;
     }
     engine->watchdog_timeout_reported = 1U;
+    return 1U;
+}
+
+/** @brief Registers the isolated optional ADRC protocol adapter. */
+void protocol_engine_set_adrc_handler(ProtocolEngine *engine,
+    ProtocolAdrcHandler handler, void *context)
+{
+    if (engine != NULL)
+    {
+        engine->adrc_handler = handler;
+        engine->adrc_context = context;
+    }
+}
+
+/** @brief Replaces a shared cached response and releases a pinned command only after retaining DONE. */
+uint8_t protocol_engine_complete_adrc_request(ProtocolEngine *engine, uint32_t request_id,
+    uint64_t timestamp_us, const ProtocolOutputBatch *output_batch)
+{
+    ProtocolRecentResult *recent_result;
+    uint8_t retained_index;
+    if ((engine == NULL) || (output_batch == NULL) || (output_batch->count != 1U) ||
+        (output_batch->messages[0].length >= PROTOCOL_ENGINE_MESSAGE_CAPACITY))
+    {
+        return 0U;
+    }
+    recent_result = protocol_engine_find_recent(engine, request_id, timestamp_us);
+    if (recent_result == NULL)
+    {
+        return 0U;
+    }
+    recent_result->completed_at_us = timestamp_us;
+    recent_result->response_length = output_batch->messages[0].length;
+    recent_result->priority = output_batch->messages[0].priority;
+    memcpy(recent_result->response, output_batch->messages[0].data,
+        (size_t)recent_result->response_length + 1U);
+    for (retained_index = 0U; retained_index < PROTOCOL_ENGINE_ADRC_RETAINED_CAPACITY; ++retained_index)
+    {
+        if (recent_result == &engine->adrc_retained_results[retained_index])
+        {
+            uint8_t cached_index;
+            for (cached_index = 0U; cached_index < PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY; ++cached_index)
+            {
+                if (engine->recent_results[cached_index].request_id == request_id)
+                {
+                    engine->recent_results[cached_index].valid = 0U;
+                }
+            }
+            engine->recent_results[engine->recent_write_index] = *recent_result;
+            engine->recent_write_index = (uint8_t)((engine->recent_write_index + 1U) %
+                PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY);
+            recent_result->valid = 0U;
+            break;
+        }
+    }
     return 1U;
 }

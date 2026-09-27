@@ -222,7 +222,7 @@ static int init_resources(void)
     lcd_spi.Init.Mode = SPI_MODE_MASTER; lcd_spi.Init.Direction = SPI_DIRECTION_2LINES_TXONLY;
     lcd_spi.Init.DataSize = SPI_DATASIZE_8BIT;
     lcd_spi.Init.CLKPolarity = SPI_POLARITY_LOW; lcd_spi.Init.CLKPhase = SPI_PHASE_1EDGE;
-    lcd_spi.Init.NSS = SPI_NSS_SOFT; lcd_spi.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+    lcd_spi.Init.NSS = SPI_NSS_SOFT; lcd_spi.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
     lcd_spi.Init.FirstBit = SPI_FIRSTBIT_MSB; lcd_spi.Init.TIMode = SPI_TIMODE_DISABLE;
     lcd_spi.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE; lcd_spi.Init.CRCPolynomial = 7U;
     lcd_spi.Init.NSSPMode = SPI_NSS_PULSE_DISABLE; lcd_spi.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;

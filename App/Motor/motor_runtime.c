@@ -658,6 +658,36 @@ static MotorRuntimeStatus motor_runtime_accept_control_feedback(
         return MOTOR_RUNTIME_STATUS_CODEC_ERROR;
     }
 
+    {
+        MotorFeedbackTiming *timing = &runtime->feedback_timing[joint_index];
+        if (decoded_feedback.state == S3519_DRIVER_STATE_ENABLED)
+        {
+            if (timing->active_streak == 0U)
+            {
+                timing->sample_count = 0U;
+                timing->interval_count = 0U;
+                timing->minimum_interval_us = 0U;
+                timing->maximum_interval_us = 0U;
+            }
+            else if (timestamp_us > timing->last_sample_us)
+            {
+                uint64_t elapsed_us = timestamp_us - timing->last_sample_us;
+                uint32_t bounded_elapsed_us = elapsed_us > UINT32_MAX ?
+                    UINT32_MAX : (uint32_t)elapsed_us;
+                if (timing->interval_count == 0U ||
+                    bounded_elapsed_us < timing->minimum_interval_us)
+                { timing->minimum_interval_us = bounded_elapsed_us; }
+                if (bounded_elapsed_us > timing->maximum_interval_us)
+                { timing->maximum_interval_us = bounded_elapsed_us; }
+                if (timing->interval_count != UINT32_MAX) { ++timing->interval_count; }
+            }
+            timing->last_sample_us = timestamp_us;
+            timing->active_streak = 1U;
+            if (timing->sample_count != UINT32_MAX) { ++timing->sample_count; }
+        }
+        else { timing->active_streak = 0U; }
+    }
+
     if (decoded_feedback.state >= S3519_DRIVER_STATE_FAULT_MINIMUM)
     {
         runtime->bank.motors[joint_index].state = MOTOR_LIFECYCLE_FAULT;

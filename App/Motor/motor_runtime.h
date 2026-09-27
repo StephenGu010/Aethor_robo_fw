@@ -119,6 +119,17 @@ typedef struct
     uint8_t seen_mask;
 } MotorRegisterPosition;
 
+/** @brief Receive-side timing for the latest uninterrupted enabled-feedback burst. */
+typedef struct
+{
+    uint64_t last_sample_us;
+    uint32_t sample_count;
+    uint32_t interval_count;
+    uint32_t minimum_interval_us;
+    uint32_t maximum_interval_us;
+    uint8_t active_streak;
+} MotorFeedbackTiming;
+
 /**
  * @brief Owns all static receive-side state for the first seven-axis arm.
  */
@@ -131,6 +142,7 @@ typedef struct
     uint32_t rejected_parameter_response_count;
     uint32_t accepted_feedback_count;
     uint32_t rejected_feedback_count;
+    MotorFeedbackTiming feedback_timing[ARM_JOINT_COUNT];
     MotorModeSwitchState mode_switch_state;
     uint64_t mode_request_sent_at_us;
     S3519ControlMode requested_control_mode;

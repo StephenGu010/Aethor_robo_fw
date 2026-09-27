@@ -1,0 +1,39 @@
+{
+  "hardware_qualified": false,
+  "hardware_tested": false,
+  "model_run": "D:\\download\\TCG\\Aethor_robo_fw\\.worktrees\\s3519-adrc\\output\\adrc\\models\\com_20260921T080454015Z",
+  "generated_files": [
+    {
+      "name": "adrc_controller.c",
+      "sha256": "50316d74a865793a6fa1789ed14950286e91d3e476377d90178822432e8ad8b3"
+    },
+    {
+      "name": "adrc_controller.h",
+      "sha256": "59580c71dee3ecd2af060e5d722f3b4748111f207c34241a161a970174d59b2d"
+    },
+    {
+      "name": "adrc_controller_private.h",
+      "sha256": "8e31c6bb63631753b7489cd0fbd2b2f220ca403aa78ce35238d5fb61340ada44"
+    },
+    {
+      "name": "adrc_controller_types.h",
+      "sha256": "3b269fb8b5fb83c99046c5418205f43698da0e6fc9871544787eb3a16185094f"
+    },
+    {
+      "name": "rtmodel.h",
+      "sha256": "b6b7ab4f430163906ed6526ef8a599ca109374a1961acce58a2e70638b736ed9"
+    },
+    {
+      "name": "rtwtypes.h",
+      "sha256": "8e4943d74f6f299d05bc43452176aeef6e674523973477964571fe2db9c9f647"
+    }
+  ],
+  "pipeline_report_sha256": "3db36213cca7aa9a54eee6f66fdc02119aec6020af5e8cc9bf172c58fac44e0f",
+  "model_hashes": {
+    "adrc_controller": "ca54e57a924d1e7c947bd045fa93b48deef22fd6d276f12d8f14f7d2eb2241af",
+    "adrc_plant": "e7b1a2bb4a430e25b4c680fdb122541f9af98646255f9c2abaeb239cc37538c9",
+    "adrc_validation": "4818c4558d9256b03411a5e7aafbc674647c22b2f534c570f18e7911034e714e"
+  },
+  "project_sha256": "7f055721546e10672cc7fb1c70bd608fe180b3becc08b4b8ebcd2018c28e5544",
+  "baseline_project_sha256": "70e16165f881d245b82fc6f7758134d4839db3ebde170d74fcd541626a31edf7"
+}

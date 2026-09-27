@@ -114,6 +114,8 @@ CanTxSchedulerStatus stm32_platform_can_submit_control_group(
 
 /** @brief Moves a bounded number of scheduled frames into the HAL TX FIFO. */
 Stm32PlatformStatus stm32_platform_can_service_tx(uint8_t maximum_frame_count);
+/** @brief Returns true only after the legacy scheduler and FDCAN1 FIFO are drained. */
+uint8_t stm32_platform_can_is_idle(void);
 
 /** @brief Returns read-only platform transport diagnostics. */
 const Stm32PlatformDiagnostics *stm32_platform_get_diagnostics(void);

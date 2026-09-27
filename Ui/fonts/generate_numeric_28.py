@@ -23,7 +23,8 @@ def array_body(source_text, array_name):
 
 def generate():
     """Copy selected glyph bytes and metrics and generate a sparse sequential cmap."""
-    source_bytes = SOURCE.read_bytes()
+    # Windows Git checkouts may use CRLF; preserve every other upstream byte.
+    source_bytes = SOURCE.read_bytes().replace(b"\r\n", b"\n")
     if hashlib.sha256(source_bytes).hexdigest() != SOURCE_SHA256:
         raise ValueError("Upstream font hash changed; review glyph mapping before regenerating")
     source_text = source_bytes.decode("utf-8")
@@ -99,14 +100,15 @@ const lv_font_t ui_font_numeric_28 = {
 
 
 def main():
-    """Write the deterministic subset or check the committed artifact byte-for-byte."""
+    """Write the subset or check all artifact bytes except Git checkout CRLF."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Verify existing generated artifact without writing")
     arguments = parser.parse_args()
     output_text, glyph_count, bitmap_size = generate()
     expected_bytes = output_text.encode("utf-8")
     if arguments.check:
-        if OUTPUT.read_bytes() != expected_bytes:
+        # Match the source's checkout-only normalization, not arbitrary whitespace.
+        if OUTPUT.read_bytes().replace(b"\r\n", b"\n") != expected_bytes:
             raise ValueError("Generated font differs; regenerate it")
     else:
         OUTPUT.write_bytes(expected_bytes)

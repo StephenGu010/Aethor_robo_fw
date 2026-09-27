@@ -21,7 +21,8 @@ static const S3519Register discovery_registers[MOTOR_DISCOVERY_REGISTER_COUNT] =
     S3519_REGISTER_SUB_VERSION,
     S3519_REGISTER_POSITION_RANGE,
     S3519_REGISTER_VELOCITY_RANGE,
-    S3519_REGISTER_TORQUE_RANGE
+    S3519_REGISTER_TORQUE_RANGE,
+    S3519_REGISTER_TIMEOUT
 };
 
 /**
@@ -137,6 +138,10 @@ static MotorDiscoveryStatus motor_discovery_store_response(
             {
                 return motor_discovery_fail(discovery, MOTOR_DISCOVERY_STATUS_BAD_VALUE);
             }
+            break;
+
+        case S3519_REGISTER_TIMEOUT:
+            result->communication_timeout_raw = response->raw_value;
             break;
 
         case S3519_REGISTER_POSITION_RANGE:

@@ -20,6 +20,11 @@ typedef struct {
     uint32_t spi_errors; /**< Cumulative platform count, never a current health flag. */
     uint32_t init_errors; /**< Cumulative initialization failures, retained after recovery. */
     uint32_t flush_ms;
+    uint32_t refresh_bytes;
+    uint32_t refresh_ms;
+    uint32_t refresh_fps_tenths;
+    uint32_t refresh_completed;
+    uint32_t refresh_failed;
     uint32_t stack_free_words;
     uint32_t control_execution_max_us;
     uint32_t control_period_max_us;
@@ -48,6 +53,12 @@ typedef struct {
     uint8_t scrollbar_first;
     uint8_t popup_focus; /**< Visible parent row behind a parameter dialog. */
     int16_t popup_marker; /**< Parameter position on the fixed 39..241 slider. */
+    uint8_t layout_row_mask; /**< Rows requested by the current layout pass. */
+    uint8_t layout_icon_mask; /**< Icons requested by the current layout pass. */
+    uint8_t layout_overlay_visible; /**< Overlay visibility requested by layout. */
+    uint8_t layout_confirm_visible; /**< Confirmation bar visibility requested by layout. */
+    uint8_t layout_initialized; /**< At least one complete layout was applied. */
+    uint8_t layout_custom_changed; /**< Root-drawn retained content changed this pass. */
     char title_text[80];
     char row_text[DEBUG_UI_VIEW_ROWS][DEBUG_UI_VIEW_TEXT_BYTES];
     char footer_text[112];

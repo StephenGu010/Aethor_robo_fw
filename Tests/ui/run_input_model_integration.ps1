@@ -13,9 +13,10 @@ function Invoke-InputModelIntegration {
     $env:PATH = (Split-Path $Compiler) + ';' + $env:PATH
     Push-Location $projectRoot
     try {
-        & $Compiler '-std=c11' '-Wall' '-Wextra' '-Werror' '-g' '-IApp/DebugUi' '-ITests/host' `
-            '-DAETHOR_DEBUG_UI_ENABLE=1' '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1' '-DAETHOR_DEBUG_UI_ALLOW_MIT=1' `
-            'App/DebugUi/debug_ui_input.c' 'App/DebugUi/debug_ui_model.c' `
+        & $Compiler '-std=c11' '-Wall' '-Wextra' '-Werror' '-g' '-ffunction-sections' '-fdata-sections' '-Wl,--gc-sections' '-IApp/DebugUi' '-ITests/host' '-IUi' '-IMiddlewares/Third_Party/LVGL' '-DLV_CONF_INCLUDE_SIMPLE' `
+            '-DAETHOR_DEBUG_UI_ENABLE=1' '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1' '-DAETHOR_DEBUG_UI_ALLOW_MIT=1' '-DAETHOR_DEBUG_UI_ALLOW_STATIC_LOAD=1' `
+            '-DAETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD=1' `
+            'App/DebugUi/debug_ui_input.c' 'App/DebugUi/debug_ui_model.c' 'Ui/lv_port_indev.c' 'Tests/ui/input_lvgl_registration_stub.c' `
             'Tests/ui/input_model_integration_test.c' '-lm' '-o' $executable
         if ($LASTEXITCODE -ne 0) { throw 'Input/model integration build failed.' }
         & $executable

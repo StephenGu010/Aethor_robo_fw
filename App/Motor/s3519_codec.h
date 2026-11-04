@@ -135,6 +135,9 @@ S3519CodecStatus s3519_pack_parameter_read(uint8_t esc_id,
                                           S3519Register register_address,
                                           CanFrame *frame);
 
+/** @brief Packs only motor-7 capability index 0..5, always opcode 0x33; no arbitrary RID. */
+S3519CodecStatus s3519_pack_capability_read(uint8_t esc_id, uint8_t index, CanFrame *frame);
+
 /**
  * @brief Packs one volatile control-mode register write for later readback.
  * @param esc_id Target motor receive identifier.

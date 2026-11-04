@@ -37,14 +37,16 @@ static void astra_line(lv_draw_ctx_t *context, int x, int y, int scale,
     descriptor.width = (lv_coord_t)(scale > 1 ? 3 : 2);
     lv_draw_line(context, &descriptor, &first, &last);
 }
-/** @brief Original motor, chart and lock line icons, defined in a 24-unit square. */
+/** @brief Original motor, chart, lock and static-load icons in a 24-unit square. */
 static void astra_icon(lv_draw_ctx_t *context, unsigned icon, int x, int y, int scale, uint32_t color)
 {
     static const int8_t motor[][4] = { {3,6,21,6},{21,6,21,18},{21,18,3,18},{3,18,3,6},{0,10,3,10},{0,14,3,14},{21,12,24,12},{7,2,17,2},{7,2,7,6},{17,2,17,6},{8,10,16,14},{16,10,8,14} };
     static const int8_t chart[][4] = { {2,2,2,22},{2,22,23,22},{5,16,10,10},{10,10,15,14},{15,14,22,5},{6,19,6,21},{12,17,12,21},{19,11,19,21} };
     static const int8_t lock[][4] = { {5,10,20,10},{20,10,20,23},{20,23,5,23},{5,23,5,10},{8,10,8,4},{8,4,11,1},{11,1,15,1},{15,1,18,4},{18,4,18,10},{12,14,12,19} };
-    const int8_t (*segments)[4] = icon == 0U ? motor : (icon == 1U ? chart : lock);
-    unsigned count = icon == 0U ? sizeof(motor)/sizeof(motor[0]) : (icon == 1U ? sizeof(chart)/sizeof(chart[0]) : sizeof(lock)/sizeof(lock[0]));
+    static const int8_t static_load[][4] = { {2,22,22,22},{6,22,6,16},{18,22,18,16},{4,16,20,16},{4,16,4,10},{20,16,20,10},{4,10,20,10},{8,10,8,4},{16,10,16,4},{8,4,16,4},{12,0,12,4},{10,2,12,4},{14,2,12,4} };
+    const int8_t (*segments)[4] = icon == 0U ? motor : (icon == 1U ? chart : (icon == 2U ? lock : static_load));
+    unsigned count = icon == 0U ? sizeof(motor)/sizeof(motor[0]) : (icon == 1U ? sizeof(chart)/sizeof(chart[0]) :
+        (icon == 2U ? sizeof(lock)/sizeof(lock[0]) : sizeof(static_load)/sizeof(static_load[0])));
     unsigned index;
     for (index = 0U; index < count; ++index)
         astra_line(context, x, y, scale, segments[index][0], segments[index][1], segments[index][2], segments[index][3], color);
@@ -138,6 +140,8 @@ static void astra_number_panel(lv_draw_ctx_t *context, const DebugUiViewPage *pa
     if (page->popup_marker >= 39 && page->popup_marker <= 241)
         astra_fill(context,page->popup_marker-3,138,page->popup_marker+3,148,0xFFFFFFU);
 }
+#include "debug_ui_static_icons.inc"
+
 /** @brief Draw parent context, Tile corners and scrollbar without additional objects. */
 static void astra_draw(lv_event_t *event)
 {
@@ -150,14 +154,16 @@ static void astra_draw(lv_event_t *event)
         astra_fill(context,12,211,268,211,0xFFFFFFU);
         astra_number_panel(context, page);
     } else {
-        astra_line(context, 0, 0, 1, 12, 29, 268, 29, 0x777777U);
-        astra_line(context, 0, 0, 1, 12, 211, 268, 211, 0x777777U);
+        uint32_t line_color = 0x777777U;
+        astra_line(context, 0, 0, 1, 12, 29, 268, 29, line_color);
+        astra_line(context, 0, 0, 1, 12, 211, 268, 211, line_color);
     }
+    if (page->decoration >= 4U) static_art_draw(context, page);
     if (page->decoration == 1U) {
         int offset = page->tile_offset;
-        astra_icon(context, (page->tile_focus + 2U) % 3U, 26 + offset, 96, 1, 0x777777U);
+        astra_icon(context, (page->tile_focus + 3U) % 4U, 26 + offset, 96, 1, 0x777777U);
         astra_icon(context, page->tile_focus, 116 + offset, 78, 2, 0xFFFFFFU);
-        astra_icon(context, (page->tile_focus + 1U) % 3U, 230 + offset, 96, 1, 0x777777U);
+        astra_icon(context, (page->tile_focus + 1U) % 4U, 230 + offset, 96, 1, 0x777777U);
         for (index = 0U; index < 4U; ++index) {
             int x = index % 2U ? 180 : 100, y = index / 2U ? 142 : 64;
             int dx = index % 2U ? -12 : 12, dy = index / 2U ? -12 : 12;
@@ -214,6 +220,36 @@ static void astra_entry(char *value, size_t capacity, const DebugUiModel *model,
     if (kind == DEBUG_UI_PAGE_ACTIONS) (void)snprintf(value, capacity, "%s", astra_actions[index % 6U]);
     else if (kind == DEBUG_UI_PAGE_RECOVERY) (void)snprintf(value, capacity, "%s", astra_recovery[index % 4U]);
     else if (kind == DEBUG_UI_PAGE_DIAGNOSTIC_MENU) (void)snprintf(value, capacity, "%s", astra_diagnostics[index % 3U]);
+    else if (kind == DEBUG_UI_PAGE_SINGLE_STATIC_IDS) {
+        motor = &model->snapshot.motors[index < DEBUG_UI_MOTOR_COUNT ? index : 0U];
+        (void)snprintf(value, capacity, "ID%u / %s", index + 1U,
+            motor->single_static_profile.configured ? "长时已配置" : "长时未配置");
+    }
+    else if (kind == DEBUG_UI_PAGE_SINGLE_STATIC_ACTIONS) {
+        uint8_t locked = (uint8_t)(model->static_locked && model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+            model->draft.target_motor_id == model->selected_motor + 1U);
+        if (index == 0U) (void)snprintf(value, capacity, "选择电机 / ID%u", model->selected_motor + 1U);
+        else if (index == 1U) (void)snprintf(value, capacity, "控制检查 / 先承托");
+        else if (index == 2U) (void)snprintf(value, capacity, "锁定当前姿态 / %s", locked ? "已锁定" : "未锁定");
+        else if (index == 3U) (void)snprintf(value, capacity, "保持时间 %lu ms", (unsigned long)(locked ? model->draft.hold_duration_ms : 0U));
+        else if (index == 4U) {
+            DebugUiReason reason = debug_ui_model_gate(model, DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD);
+            (void)snprintf(value, capacity, "开始 / %s", reason != DEBUG_UI_REASON_NONE ? debug_ui_reason_text(reason) :
+                (locked ? "长按确认" : "请先锁定姿态"));
+        } else (void)snprintf(value, capacity, "%s", index == 5U ? "结束 / STOP" : "查看保留结果");
+    }
+    else if (kind == DEBUG_UI_PAGE_STATIC_ACTIONS) {
+        uint8_t locked = (uint8_t)(model->static_locked && model->draft.operation == DEBUG_UI_OPERATION_STATIC_HOLD);
+        if (index == 0U) (void)snprintf(value, capacity, "控制检查 / 先承托");
+        else if (index == 1U) (void)snprintf(value, capacity, "锁定七轴姿态 / %s", locked ? "已锁定" : "未锁定");
+        else if (index == 2U) (void)snprintf(value, capacity, "保持时间 %lu ms",
+            (unsigned long)(model->draft.operation == DEBUG_UI_OPERATION_STATIC_HOLD ? model->draft.hold_duration_ms : 0U));
+        else if (index == 3U) {
+            DebugUiReason reason = debug_ui_model_gate(model, DEBUG_UI_OPERATION_STATIC_HOLD);
+            (void)snprintf(value, capacity, "开始 / %s", reason != DEBUG_UI_REASON_NONE ? debug_ui_reason_text(reason) :
+                (locked ? "长按确认" : "请先锁定姿态"));
+        } else (void)snprintf(value, capacity, "%s", index == 4U ? "结束 / STOP" : "查看保留结果");
+    }
     else if (kind == DEBUG_UI_PAGE_MODES) (void)snprintf(value, capacity, "%s  %s", index == 0U ? "POS" : "MIT",
         motor->mode_verified && motor->actual_mode == (index == 0U ? DEBUG_UI_MODE_POS_VEL : DEBUG_UI_MODE_MIT) ? "已读回" : (motor->mode_verified ? "待选择" : "模式未校验"));
     else if (kind == DEBUG_UI_PAGE_EDIT) {
@@ -224,20 +260,24 @@ static void astra_entry(char *value, size_t capacity, const DebugUiModel *model,
             astra_number(number, sizeof(number), &model->draft, field);
             (void)snprintf(value, capacity, "%s  %s", astra_fields[field], number); }
     } else if (kind == DEBUG_UI_PAGE_MOTORS) {
+        uint8_t snapshot_current=(uint8_t)(model->snapshot_seen && model->now_us>=model->snapshot.timestamp_us &&
+            model->now_us-model->snapshot.timestamp_us<DEBUG_UI_HEALTH_TIMEOUT_US);
         motor = &model->snapshot.motors[index < 7U ? index : 0U];
-        (void)snprintf(value, capacity, "M%02u  %s  %s", index + 1U, mode_text(motor->actual_mode),
-            motor->feedback_valid ? (motor->fault_flags ? "故障" : (motor->enabled ? "使能" : "失能")) : (motor->feedback_seen ? "上次反馈过期" : "未知"));
-    } else (void)snprintf(value, capacity, "%s", index < 3U ? (index == 0U ? "电机" : (index == 1U ? "诊断" : "本地控制")) : "");
+        (void)snprintf(value, capacity, "M%02u  %s  %s", index + 1U, motor->mode_verified?mode_text(motor->actual_mode):"模式未校验",
+            motor->feedback_valid && snapshot_current ? (motor->fault_flags ? "故障" : (motor->enabled ? "使能" : "失能")) : (motor->feedback_seen ? "上次反馈过期" : "未知"));
+    } else (void)snprintf(value, capacity, "%s", index < 4U ? (index == 0U ? "电机" : (index == 1U ? "诊断" : (index == 2U ? "本地控制" : "静载测试"))) : "");
 }
 /** @brief Count bounded menu rows; leaf pages have no selection. */
 static unsigned astra_count(const DebugUiModel *model, DebugUiPage kind)
 {
-    if (kind == DEBUG_UI_PAGE_MOTORS) return 7U;
+    if (kind == DEBUG_UI_PAGE_MOTORS || kind == DEBUG_UI_PAGE_SINGLE_STATIC_IDS) return 7U;
     if (kind == DEBUG_UI_PAGE_ACTIONS) return 6U;
     if (kind == DEBUG_UI_PAGE_EDIT) return debug_ui_model_parameter_count(model) + 1U;
     if (kind == DEBUG_UI_PAGE_MODES) return 2U;
     if (kind == DEBUG_UI_PAGE_RECOVERY) return 4U;
     if (kind == DEBUG_UI_PAGE_DIAGNOSTIC_MENU) return 3U;
+    if (kind == DEBUG_UI_PAGE_STATIC_ACTIONS) return 6U;
+    if (kind == DEBUG_UI_PAGE_SINGLE_STATIC_ACTIONS) return 7U;
     return 0U;
 }
 
@@ -273,6 +313,246 @@ static void astra_popup_label(lv_obj_t *label, const lv_font_t *font, const char
     style_set_number(label,LV_STYLE_PAD_LEFT,0); style_set_number(label,LV_STYLE_PAD_TOP,0);
     style_set_number(label,LV_STYLE_TEXT_ALIGN,align);
 }
+/** @brief Place one transparent text slot above retained monochrome line art. */
+static void instrument_slot(DebugUiViewPage *page, unsigned index, int x, int y, int width, int height,
+                            const char *text, const lv_font_t *font, uint32_t ink, uint8_t selected, uint8_t panel)
+{
+    lv_obj_t *label;
+    (void)panel;
+    assert(index < DEBUG_UI_VIEW_ROWS);
+    label = page->rows[index];
+    page->layout_row_mask |= (uint8_t)(1U << index);
+    object_set_pos(label, x, y); object_set_size(label, width, height);
+    style_set_pointer(label, LV_STYLE_TEXT_FONT, font);
+    style_set_number(label, LV_STYLE_TEXT_ALIGN, LV_TEXT_ALIGN_LEFT);
+    style_set_color(label, LV_STYLE_TEXT_COLOR, lv_color_hex(selected ? 0U : ink));
+    style_set_number(label, LV_STYLE_BG_OPA, LV_OPA_TRANSP);
+    style_set_number(label, LV_STYLE_RADIUS, 0);
+    style_set_number(label, LV_STYLE_BORDER_WIDTH, 0);
+    style_set_number(label, LV_STYLE_PAD_LEFT, 0);
+    style_set_number(label, LV_STYLE_PAD_TOP, 0);
+    text_set(label, page->display_text[index], sizeof(page->display_text[index]), text);
+}
+
+#include "debug_ui_load_trial_layout.inc"
+#include "debug_ui_pos_load_layout.inc"
+
+/** @brief Return the numeric part of a semantic measurement without changing its evidence. */
+static const char *static_value_part(const char *text)
+{
+    const char *space = strchr(text, ' ');
+    return space != NULL ? space + 1 : text;
+}
+
+/** @brief Format live output-axis error with explicit millidegrees only for coherent fresh evidence. */
+static void static_error_value(char *text,size_t capacity,const DebugUiModel *model,const char *fallback)
+{
+    const DebugUiStaticLoadReport *report=&model->snapshot.static_load;
+    unsigned target;
+    (void)snprintf(text,capacity,"%s",fallback);
+    if (model->single_static_flow && !load_view_timed_report(model)) return;
+    if (!report->active || !static_report_scope_valid(report) || report->operation!=DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD) return;
+    for (target=0U;target<DEBUG_UI_MOTOR_COUNT;++target)
+        if ((report->motor_mask&(1U<<target))!=0U) break;
+    if (target<DEBUG_UI_MOTOR_COUNT && single_static_feedback_fresh(model,target)) {
+        float error=debug_ui_radians_to_degrees(model->snapshot.motors[target].position_rad-report->target_position_rad[target]);
+        if (isfinite(error) && fabsf(error)<1000.0f)
+            (void)snprintf(text,capacity,"%+.3f°",(double)error);
+    }
+}
+
+/** @brief Render the guided flow with fixed labels, inverse controls and original line icons. */
+static void instrument_layout(DebugUiViewPage *page, const DebugUiModel *model)
+{
+    unsigned index;
+    char value[DEBUG_UI_VIEW_TEXT_BYTES];
+    const uint32_t primary = 0xFFFFFFU, muted = 0xAAAAAAU;
+    page->decoration = 4U;
+    page->popup_marker = 0;
+    if (model->page == DEBUG_UI_PAGE_STATIC_HUB) {
+        instrument_slot(page,0U,16,37,248,18,"选择测试范围",&ui_font_popup_12,muted,0U,0U);
+        for (index=0U; index<3U; ++index) {
+            uint8_t selected=(uint8_t)(model->focus==index);
+            int top=58+(int)index*50;
+            static_panel_add(page,12,top,268,top+44,selected);
+            static_icon_add(page,index==0U?STATIC_ICON_MOTOR:STATIC_ICON_ARM,24,top,2U,selected);
+            instrument_slot(page,1U+index*2U,83,top+3,171,23,index==0U?"单轴静载":(index==1U?"七轴静载":"POS带载自动测试"),
+                &ui_font_16,primary,selected,0U);
+            instrument_slot(page,2U+index*2U,83,top+26,171,18,
+                index==0U?"ID1~7 / 1~60秒":(index==1U?"七轴姿态 / 原有保护":"模式2 / 移动 > 保持"),
+                &ui_font_popup_12,muted,selected,0U);
+            static_icon_add(page,STATIC_ICON_RIGHT,239,top+17,1U,selected);
+        }
+        return;
+    }
+    if (model->page == DEBUG_UI_PAGE_RUNNING) {
+        const DebugUiLoadTrialRecord *record=load_view_bound_record(model);
+        uint8_t timed=load_view_timed_report(model);
+        uint32_t duration=model->submitted.hold_duration_ms;
+        uint32_t elapsed=timed?record->elapsed_ms:0U;
+        uint8_t stopped=(uint8_t)(model->stop_requested || model->snapshot.stop_pending);
+        page->decoration=5U;
+        if (model->snapshot.static_load.takeover_active) {
+            const DebugUiStaticLoadReport *report=&model->snapshot.static_load;
+            unsigned target;
+            /* The ordinary HOLD decoration paints fixed measurement captions under these slots. */
+            page->decoration=4U;
+            instrument_slot(page,0U,16,35,248,22,"前馈接入 / 保持尚未计时",&ui_font_16,primary,0U,0U);
+            (void)snprintf(value,sizeof(value),"%.2f / 1.00 s",(double)report->takeover_elapsed_ms/1000.0);
+            instrument_slot(page,1U,24,61,232,39,value,&ui_font_popup_30,primary,0U,0U);
+            (void)snprintf(value,sizeof(value),"目标 %+.2f / 请求 %+.2f Nm",(double)report->target_torque_ff_nm,
+                (double)report->requested_torque_ff_nm);
+            instrument_slot(page,2U,16,107,248,20,value,&ui_font_popup_12,primary,0U,0U);
+            (void)snprintf(value,sizeof(value),"已发 %+.2f Nm / 非承重确认",(double)report->transmitted_torque_ff_nm);
+            instrument_slot(page,3U,16,130,248,20,value,&ui_font_popup_12,primary,0U,0U);
+            for (target=0U;target<DEBUG_UI_MOTOR_COUNT;++target)
+                if ((report->motor_mask&(1U<<target))!=0U) break;
+            if (target<DEBUG_UI_MOTOR_COUNT && single_static_feedback_fresh(model,target)) {
+                const DebugUiMotorView *motor=&model->snapshot.motors[target];
+                float error=debug_ui_radians_to_degrees(motor->position_rad-report->target_position_rad[target]);
+                if (isfinite(error)) (void)snprintf(value,sizeof(value),"当前 %.3gNm / %+.3g°",
+                    (double)motor->torque_nm,(double)error);
+                else (void)snprintf(value,sizeof(value),"当前 -- / 反馈异常");
+            } else (void)snprintf(value,sizeof(value),"当前 -- / 反馈过期");
+            instrument_slot(page,4U,16,153,248,18,value,&ui_font_popup_12,primary,0U,0U);
+            instrument_slot(page,6U,16,173,248,16,page->row_text[6],&ui_font_popup_12,muted,0U,0U);
+            static_panel_add(page,12,191,268,210,1U);
+            instrument_slot(page,5U,24,192,232,18,"中键 STOP / 请求失能",&ui_font_popup_12,primary,1U,0U);
+            return;
+        }
+
+        if (timed && duration!=0U) {
+            page->static_art.progress_steps=(uint8_t)((uint64_t)(elapsed>duration?duration:elapsed)*24U/duration);
+            page->popup_marker=page->static_art.progress_steps;
+        }
+        (void)snprintf(value,sizeof(value),"%.100s / 保持计时",page->row_text[0]);
+        instrument_slot(page,0U,16,35,248,21,value,&ui_font_16,primary,0U,0U);
+        static_icon_add(page,stopped?STATIC_ICON_STOP:STATIC_ICON_TIMER,24,65,1U,0U);
+        if (timed) (void)snprintf(value,sizeof(value),"%.1f / %.0f s",(double)elapsed/1000.0,(double)duration/1000.0);
+        else (void)snprintf(value,sizeof(value),"-- / %.0f s",(double)duration/1000.0);
+        instrument_slot(page,1U,72,58,194,39,value,&ui_font_popup_30,primary,0U,0U);
+        static_icon_add(page,STATIC_ICON_ANGLE,14,117,1U,0U);
+        static_icon_add(page,STATIC_ICON_TORQUE,145,117,1U,0U);
+        static_error_value(value,sizeof(value),model,static_value_part(page->row_text[1]));
+        instrument_slot(page,2U,42,129,96,23,value,&ui_font_16,primary,0U,0U);
+        instrument_slot(page,3U,173,129,94,23,static_value_part(page->row_text[2]),&ui_font_16,primary,0U,0U);
+        static_icon_add(page,STATIC_ICON_TEMP,15,144,1U,0U);
+        instrument_slot(page,4U,48,154,218,19,page->row_text[3],&ui_font_popup_12,primary,0U,0U);
+        instrument_slot(page,6U,16,172,248,16,page->row_text[6],&ui_font_popup_12,muted,0U,0U);
+        static_panel_add(page,12,188,268,210,1U);
+        instrument_slot(page,5U,24,190,232,19,stopped?"STOP已请求 / 失能待确认":"中键 STOP / 请求失能",
+            &ui_font_popup_12,primary,1U,0U);
+        return;
+    }
+    if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_SETUP) {
+        static const uint8_t character_positions[4] = {0U, 1U, 3U, 4U};
+        char number[16];
+        (void)snprintf(value, sizeof(value), "参数 Kp %u / Kd %u.%02u / 中进入",
+            model->single_static_kp, model->single_static_kd_centi / 100U, model->single_static_kd_centi % 100U);
+        static_panel_add(page,12,33,268,53,(uint8_t)(model->focus == 4U));
+        instrument_slot(page,0U,16,35,248,18,model->selected_motor == 6U ? value : "参数 / 仅 ID7 可调",
+            &ui_font_popup_12,primary,(uint8_t)(model->focus == 4U),0U);
+        for (index=0U; index<2U; ++index) {
+            uint8_t selected=(uint8_t)(model->focus==index);
+            int top=55+(int)index*31;
+            static_panel_add(page,12,top,268,top+27,selected);
+            if (index==0U) (void)snprintf(value,sizeof(value),"电机 < ID%u >",model->selected_motor+1U);
+            else (void)snprintf(value,sizeof(value),"保持 < %u 秒 >",model->single_static_seconds);
+            instrument_slot(page,index+1U,24,top+3,232,23,value,&ui_font_16,primary,selected,0U);
+        }
+        static_panel_add(page,12,117,268,144,(uint8_t)(model->focus==2U));
+        instrument_slot(page,5U,24,120,232,23,page->row_text[5],&ui_font_16,primary,(uint8_t)(model->focus==2U),0U);
+        (void)snprintf(number,sizeof(number),"%c%u.%02u",model->single_static_ff_negative?'-':'+',
+            model->single_static_ff_centi/100U,model->single_static_ff_centi%100U);
+        if (model->single_static_ff_editing && model->single_static_ff_digit<4U) {
+            unsigned character=character_positions[model->single_static_ff_digit];
+            (void)snprintf(value,sizeof(value),"前馈 %.*s[%c]%s Nm",(int)character,number,number[character],number+character+1U);
+        } else (void)snprintf(value,sizeof(value),"前馈 %s Nm / 中编辑",number);
+        static_panel_add(page,12,148,268,176,(uint8_t)(model->focus==3U));
+        instrument_slot(page,3U,24,151,232,23,value,&ui_font_16,primary,(uint8_t)(model->focus==3U),0U);
+        instrument_slot(page,4U,16,176,248,17,model->single_static_ff_editing?"左右选位 上下调值 中保存 长左取消":
+            "输出轴 / 1kg 25cm 参考1.05Nm",&ui_font_popup_12,muted,0U,0U);
+        instrument_slot(page,6U,16,194,248,17,model->reason==DEBUG_UI_REASON_NONE?"前馈 +/- 需核对 / 不自动输出":page->row_text[6],
+            &ui_font_popup_12,muted,0U,0U);
+        return;
+    }
+    if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_CONFIG_REVIEW || model->page == DEBUG_UI_PAGE_REVIEW) {
+        uint8_t configuration=(uint8_t)(model->page==DEBUG_UI_PAGE_SINGLE_STATIC_CONFIG_REVIEW);
+        uint8_t acquire=(uint8_t)(!configuration && model->reviewed.operation==DEBUG_UI_OPERATION_ACQUIRE);
+        uint8_t pending=(uint8_t)(model->awaiting_result || model->single_static_wait_snapshot);
+        static_icon_add(page,configuration?STATIC_ICON_LOCK:(acquire?STATIC_ICON_CONTROL:STATIC_ICON_PLAY),20,43,2U,0U);
+        instrument_slot(page,0U,85,38,181,24,page->row_text[0],&ui_font_16,primary,0U,0U);
+        instrument_slot(page,1U,85,68,181,25,page->row_text[1],&ui_font_16,primary,0U,0U);
+        for (index=2U; index<6U; ++index)
+            instrument_slot(page,index,16,102+(int)(index-2U)*21,248,20,page->row_text[index],&ui_font_popup_12,muted,0U,0U);
+        static_panel_add(page,12,187,268,210,1U);
+        instrument_slot(page,6U,24,190,232,19,pending?"等待确认 / 中键 STOP":
+            (!model->review_released?"请先松开中键":"长按中键确认"),&ui_font_popup_12,primary,1U,0U);
+        if (!pending && model->review_released && model->confirm_elapsed_ms!=0U) {
+            uint32_t elapsed=model->confirm_elapsed_ms>800U?800U:model->confirm_elapsed_ms;
+            object_set_pos(page->confirm_bar,16,207); object_set_size(page->confirm_bar,(int)(248U*elapsed/800U),3);
+            style_set_color(page->confirm_bar,LV_STYLE_BG_COLOR,lv_color_hex(0x777777U));
+            page->layout_confirm_visible=1U;
+        }
+        return;
+    }
+    if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_READY) {
+        unsigned target=model->selected_motor<DEBUG_UI_MOTOR_COUNT?model->selected_motor:0U;
+        uint8_t configured=(uint8_t)(model->single_static_configured && model->snapshot.motors[target].single_static_profile.configured);
+        uint8_t local=(uint8_t)(model->snapshot.authority==DEBUG_UI_AUTHORITY_LOCAL_ARMED &&
+            model->snapshot.target_motor_id==target+1U && !model->single_static_wait_snapshot &&
+            single_static_feedback_fresh(model,target) &&
+            debug_ui_model_gate(model,DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD)==DEBUG_UI_REASON_NONE);
+        uint8_t locked=(uint8_t)(model->static_locked && model->draft.operation==DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+            model->draft.target_motor_id==target+1U && isfinite(model->draft.static_positions_rad[target]));
+        instrument_slot(page,0U,16,35,248,21,page->row_text[0],&ui_font_16,primary,0U,0U);
+        for (index=0U; index<3U; ++index) {
+            uint8_t complete=index==0U?configured:(index==1U?local:(uint8_t)(locked && local));
+            int top=62+(int)index*29;
+            static_icon_add(page,complete?STATIC_ICON_CHECK:STATIC_ICON_EMPTY,16,top,1U,0U);
+            instrument_slot(page,index+1U,53,top+4,212,22,page->row_text[index+1U],&ui_font_popup_12,complete?primary:muted,0U,0U);
+        }
+        instrument_slot(page,4U,16,153,248,18,page->row_text[4],&ui_font_popup_12,muted,0U,0U);
+        instrument_slot(page,6U,16,172,248,16,page->row_text[6],&ui_font_popup_12,muted,0U,0U);
+        static_panel_add(page,12,190,268,210,1U);
+        instrument_slot(page,5U,24,191,232,18,page->row_text[5],&ui_font_popup_12,primary,1U,0U);
+        return;
+    }
+    if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RESULT) {
+        uint8_t visible=static_report_visible(model);
+        uint8_t disabled=(uint8_t)(visible && model->snapshot.static_load.disabled_confirmed);
+        static_icon_add(page,disabled?STATIC_ICON_CHECK:STATIC_ICON_WARNING,16,35,1U,0U);
+        instrument_slot(page,0U,54,37,212,22,page->row_text[0],&ui_font_16,primary,0U,0U);
+        for (index=1U; index<7U; ++index) {
+            static_icon_add(page,index==1U?STATIC_ICON_ANGLE:(index==2U?STATIC_ICON_TORQUE:
+                (index==3U?STATIC_ICON_TEMP:(index==4U?STATIC_ICON_TIMER:(index==5U?STATIC_ICON_STOP:STATIC_ICON_CONTROL)))),
+                16,61+(int)(index-1U)*24,1U,0U);
+            instrument_slot(page,index,54,64+(int)(index-1U)*24,212,20,page->row_text[index],&ui_font_popup_12,
+                index==6U?muted:primary,0U,0U);
+        }
+        if (visible) {
+            const DebugUiStaticLoadReport *report=&model->snapshot.static_load;
+            unsigned target=0U;
+            for (index=0U;index<DEBUG_UI_MOTOR_COUNT;++index)
+                if ((report->motor_mask&(1U<<index))!=0U) { target=index; break; }
+            if ((report->valid_mask&(1U<<target))!=0U && report->samples[target]!=0U)
+                (void)snprintf(value,sizeof(value),"保持计时 %.1f/%.0fs 样本%lu",
+                    (double)report->elapsed_ms/1000.0,(double)report->duration_ms/1000.0,(unsigned long)report->samples[target]);
+            else (void)snprintf(value,sizeof(value),"保持计时 --/%.0fs 样本--",(double)report->duration_ms/1000.0);
+            instrument_slot(page,4U,54,136,212,20,value,&ui_font_popup_12,primary,0U,0U);
+        }
+        return;
+    }
+    /* Relock and cleanup failures retain every semantic line while leading with the true state icon. */
+    static_icon_add(page,model->page==DEBUG_UI_PAGE_SINGLE_STATIC_RELOCK && model->reason==DEBUG_UI_REASON_NONE?STATIC_ICON_LOCK:STATIC_ICON_WARNING,16,37,1U,0U);
+    instrument_slot(page,0U,54,39,212,22,page->row_text[0],&ui_font_16,primary,0U,0U);
+    for (index=1U;index<7U;++index)
+        instrument_slot(page,index,16,65+(int)(index-1U)*24,248,21,page->row_text[index],&ui_font_popup_12,
+            index==5U?primary:muted,0U,0U);
+}
+
+#include "debug_ui_mono_layout.inc"
+
 /** @brief Apply shared Tile/List/Overlay templates without model mutation or allocations. */
 static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_row, uint8_t page_changed)
 {
@@ -287,6 +567,7 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
     uint8_t old_scrollbar_first = page->scrollbar_first;
     uint8_t old_popup_focus = page->popup_focus;
     int16_t old_popup_marker = page->popup_marker;
+    DebugUiStaticArt old_static_art = page->static_art;
     char value[160];
     const DebugUiMotorView *motor = &model->snapshot.motors[model->selected_motor < 7U ? model->selected_motor : 0U];
     (void)focus_row;
@@ -294,12 +575,19 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
     page->layout_overlay_visible = 0U; page->layout_confirm_visible = 0U;
     page->layout_custom_changed = 0U;
     page->decoration = 0U; page->scrollbar_count = 0U;
+    memset(&page->static_art, 0, sizeof(page->static_art));
     style_set_number(page->overlay, LV_STYLE_BG_OPA, LV_OPA_COVER);
     style_set_number(page->overlay, LV_STYLE_BORDER_WIDTH, 2);
+    style_set_color(page->root, LV_STYLE_BG_COLOR, lv_color_hex(0x000000U));
+    style_set_color(page->confirm_bar, LV_STYLE_BG_COLOR, lv_color_hex(0xFFFFFFU));
     if (model->page != DEBUG_UI_PAGE_OVERVIEW || model->snapshot.active || model->snapshot.pending || model->stop_requested || model->snapshot.arm_fault || !model->input_valid || !model->display_valid) {
         page->animation_active = 0U; page->tile_offset = 0;
     }
-    if (count != 0U) {
+    if (pos_load_view_page(model)) pos_load_view_layout(page, model);
+    else if (load_view_page(model->page)) load_view_layout(page, model);
+    else if (single_static_instrument_page(model)) instrument_layout(page, model);
+    else if (mono_layout(page, model, count)) { /* Reuse the fixed monochrome family slots. */ }
+    else if (count != 0U) {
         unsigned first = model->list_first;
         if (count <= 5U) first = 0U; else if (first > count - 5U) first = count - 5U;
         page->scrollbar_count = (uint8_t)count; page->scrollbar_first = (uint8_t)first;
@@ -309,15 +597,33 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
             style_set_number(page->rows[index], LV_STYLE_PAD_LEFT, 10); style_set_number(page->rows[index], LV_STYLE_PAD_TOP, 7);
         }
     } else switch (model->page) {
+    case DEBUG_UI_PAGE_STATIC_LOAD:
+    case DEBUG_UI_PAGE_STATIC_RESULT:
+        if (model->page == DEBUG_UI_PAGE_STATIC_RESULT && model->static_result_retained &&
+            model->snapshot.static_load.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD) {
+            for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
+                slot(page, index, 10, 37+(int)index*24, 260, 23, page->row_text[index], NULL, 0U, 0xFFFFFFU, &ui_font_16);
+            break;
+        }
+        for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
+            slot(page, index, 10, 37+(int)index*24, 260, 23, page->row_text[index], NULL, 0U, 0xFFFFFFU, &ui_font_popup_12);
+        break;
+    case DEBUG_UI_PAGE_SINGLE_STATIC_LOAD:
+    case DEBUG_UI_PAGE_SINGLE_STATIC_RESULT:
+        for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
+            slot(page, index, 10, 37+(int)index*24, 260, 23, page->row_text[index], NULL, 0U, 0xFFFFFFU,
+                model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RESULT && model->static_result_retained &&
+                model->snapshot.static_load.operation == DEBUG_UI_OPERATION_STATIC_HOLD ? &ui_font_popup_12 : &ui_font_16);
+        break;
     case DEBUG_UI_PAGE_OVERVIEW:
         page->decoration = 1U;
         if (old_decoration == 1U && page->tile_focus != model->focus && !model->snapshot.active && !model->snapshot.pending && !model->stop_requested && !model->snapshot.arm_fault && model->input_valid && model->display_valid) {
-            page->animation_from = (int16_t)(((page->tile_focus + 1U) % 3U == model->focus) ? 28 : -28);
+            page->animation_from = (int16_t)(((page->tile_focus + 1U) % 4U == model->focus) ? 28 : -28);
             page->tile_offset = page->animation_from; page->animation_start = lv_tick_get(); page->animation_tick = page->animation_start; page->animation_active = 1U;
         }
-        page->tile_focus = model->focus % 3U;
+        page->tile_focus = model->focus % 4U;
         slot(page, 0U, 12, 35, 256, 22, page->row_text[0], NULL, 0U, 0xAAAAAAU, &ui_font_16);
-        slot(page, 1U, 80, 154, 190, 26, model->focus == 0U ? "电机" : (model->focus == 1U ? "诊断" : "本地控制"), NULL, 0U, 0xFFFFFFU, &ui_font_16);
+        slot(page, 1U, 80, 154, 190, 26, model->focus == 0U ? "电机" : (model->focus == 1U ? "诊断" : (model->focus == 2U ? "本地控制" : "静载测试")), NULL, 0U, 0xFFFFFFU, &ui_font_16);
         slot(page, 2U, 12, 186, 256, 22, page->row_text[2], NULL, 0U, 0xAAAAAAU, &ui_font_16);
         break;
     case DEBUG_UI_PAGE_NUMBER: {
@@ -354,7 +660,14 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
             else if (field == 1U) { maximum = debug_ui_radians_to_degrees(bounds.max_speed_rad_s); minimum = maximum < 1.0f ? maximum : 1.0f; current = debug_ui_radians_to_degrees(model->draft.speed_rad_s); }
             else if (field == 2U) { minimum = bounds.kp_min; maximum = bounds.kp_max; current = model->draft.kp; }
             else if (field == 3U) { minimum = bounds.kd_min; maximum = bounds.kd_max; current = model->draft.kd; }
-            else { minimum = (float)bounds.hold_min_ms; maximum = (float)bounds.hold_max_ms; current = (float)model->draft.hold_duration_ms; }
+            else {
+                uint32_t minimum_ms = bounds.hold_min_ms, maximum_ms = bounds.hold_max_ms;
+                if (model->draft.operation == DEBUG_UI_OPERATION_STATIC_HOLD)
+                    (void)debug_ui_model_static_duration_bounds(model, &minimum_ms, &maximum_ms);
+                else if (model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD)
+                    (void)debug_ui_model_single_static_duration_bounds(model, &minimum_ms, &maximum_ms);
+                minimum = (float)minimum_ms; maximum = (float)maximum_ms; current = (float)model->draft.hold_duration_ms;
+            }
             if (isfinite(current) && isfinite(minimum) && isfinite(maximum) && maximum > minimum) {
                 float fraction = field == 1U ? astra_speed_fraction(current,minimum,maximum) :
                     (current-minimum)/(maximum-minimum);
@@ -362,7 +675,8 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
                 page->popup_marker = (int16_t)(39.0f+202.0f*fraction+(field == 1U ? 0.5f : 0.0f));
             } else if (isfinite(current) && isfinite(minimum) && maximum == minimum && current == minimum) page->popup_marker=140;
         }
-        slot(page,2U,28,158,224,20,steps[field],NULL,0U,0xFFFFFFU,&ui_font_popup_12);
+        slot(page,2U,28,158,224,20,field == 4U && model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD ?
+            "每步 1000 ms" : steps[field],NULL,0U,0xFFFFFFU,&ui_font_popup_12);
         astra_popup_label(page->rows[2],&ui_font_popup_12,page->display_text[2],28,158,224,LV_TEXT_ALIGN_CENTER);
         slot(page,3U,28,184,224,20,"仅修改草稿",NULL,0U,0xFFFFFFU,&ui_font_popup_12);
         astra_popup_label(page->rows[3],&ui_font_popup_12,page->display_text[3],28,184,224,LV_TEXT_ALIGN_CENTER);
@@ -398,7 +712,9 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
         break;
     case DEBUG_UI_PAGE_DETAIL:
         slot(page, 0U, 12, 35, 256, 23, page->row_text[0], NULL, 0U, 0xFFFFFFU, &ui_font_16);
-        if (motor->feedback_seen && !motor->feedback_valid) {
+        if (!motor->feedback_valid && debug_ui_raw_position_current(model,motor)) {
+            slot(page, 1U, 12, 64, 256, 34, page->row_text[1], NULL, 0U, 0xFFFFFFU, &ui_font_16);
+        } else if (motor->feedback_seen && !motor->feedback_valid) {
             float last_degrees = debug_ui_radians_to_degrees(motor->position_rad);
             if (isfinite(last_degrees)) (void)snprintf(value, sizeof(value), "上次 %.1f° / %lums", (double)last_degrees, (unsigned long)motor->feedback_age_ms);
             else (void)snprintf(value, sizeof(value), "位置 -- / 反馈无效");
@@ -410,6 +726,12 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
         for (index = 2U; index < 6U; ++index) slot(page, index, 12, 107+(int)(index-2U)*24, 256, 23, page->row_text[index], NULL, 0U, 0xFFFFFFU, &ui_font_16);
         break;
     case DEBUG_UI_PAGE_RUNNING: {
+        if (static_load_running(model)) {
+            for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
+                slot(page, index, 10, 37+(int)index*24, 260, 23, page->row_text[index], NULL, 0U, 0xFFFFFFU,
+                    single_static_running(model) ? &ui_font_16 : &ui_font_popup_12);
+            break;
+        }
         uint8_t target = debug_ui_model_active_target(model);
         const DebugUiMotorView *active_motor = &model->snapshot.motors[target > 0U && target <= 7U ? target-1U : 0U];
         uint8_t seen = (uint8_t)(target != 0U && active_motor->feedback_seen && isfinite(debug_ui_radians_to_degrees(active_motor->position_rad)));
@@ -430,6 +752,7 @@ static void layout(DebugUiViewPage *page, const DebugUiModel *model, int focus_r
         for (index = 0U; index < 7U; ++index) slot(page, index, 12, 36+(int)index*24, 256, 23, page->row_text[index], NULL, 0U, 0xFFFFFFU, &ui_font_16);
         break;
     }
+    if (memcmp(&old_static_art, &page->static_art, sizeof(old_static_art)) != 0) page->layout_custom_changed = 1U;
     if (model->page != DEBUG_UI_PAGE_REVIEW) { object_set_pos(page->overlay, 16, 48); object_set_size(page->overlay, 248, 160); }
     if (page_changed || old_decoration != page->decoration) {
         lv_obj_invalidate(page->root);

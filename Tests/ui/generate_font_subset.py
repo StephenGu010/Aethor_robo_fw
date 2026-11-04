@@ -37,7 +37,14 @@ def generate(font_path: Path, license_path: Path) -> None:
     output = root / "Ui/fonts"
     output.mkdir(parents=True, exist_ok=True)
     codepoints = set(range(32, 127)) | {0xB0}
+    # Retain the previous firmware subset when adding pages; old glyphs stay addressable.
+    charset_path = output / "charset.txt"
+    if charset_path.exists():
+        codepoints.update(ord(character) for character in charset_path.read_text(encoding="utf-8") if ord(character) >= 32)
     for source in (root / "Ui/debug_ui_view.c", root / "Ui/debug_ui_astra_layout.inc",
+                   root / "Ui/debug_ui_load_trial_layout.inc", root / "Ui/debug_ui_static_icons.inc",
+                   root / "Ui/debug_ui_pos_load_layout.inc", root / "Ui/debug_ui_mono_layout.inc",
+                   root / "App/DebugUi/debug_ui_load_trial_pages.inc",
                    root / "App/DebugUi/debug_ui_model.c"):
         for literal in re.findall(r'"(?:\\.|[^"\\])*"', source.read_text(encoding="utf-8")):
             codepoints.update(ord(character) for character in literal if ord(character) > 127)
@@ -99,7 +106,10 @@ def generate(font_path: Path, license_path: Path) -> None:
     ])
     (output / "ui_font_16.c").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (output / "charset.txt").write_text("".join(chr(value) for value in ordered) + "\n", encoding="utf-8")
-    (output / "OFL.txt").write_bytes(license_path.read_bytes())
+    license_destination = output / "OFL.txt"
+    source_license = license_path.read_bytes()
+    if not license_destination.exists() or license_destination.read_bytes().replace(b"\r\n", b"\n") != source_license.replace(b"\r\n", b"\n"):
+        license_destination.write_bytes(source_license)
     metadata = {
         "font": "NotoSansCJKsc-Regular.otf",
         "tag": "Sans2.004",

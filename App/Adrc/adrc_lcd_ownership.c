@@ -55,12 +55,13 @@ AdrcLcdOwnershipStatus adrc_lcd_ownership_submit_release(
     return ADRC_LCD_OWNERSHIP_OK;
 }
 
-/** @brief Starts a new disable challenge only after its dedicated buffer accepts it. */
+/** @brief Tracks attempts until one transmits; retries then retain that successful challenge. */
 void adrc_lcd_ownership_report_disable_submit(
     AdrcLcdOwnership *ownership, uint64_t submitted_us)
 {
     if (ownership == NULL || ownership->state != ADRC_LCD_OWNER_RELEASING ||
-        submitted_us == 0ULL || submitted_us < ownership->release_started_us)
+        submitted_us == 0ULL || submitted_us < ownership->release_started_us ||
+        ownership->disable_transmitted_us != 0ULL)
     { return; }
     ownership->disable_submitted_us = submitted_us;
     ownership->disable_transmitted_us = 0ULL;
@@ -100,18 +101,18 @@ AdrcLcdOwnershipStatus adrc_lcd_ownership_service(
             ownership->state = ADRC_LCD_OWNER_LCD;
             return ADRC_LCD_OWNERSHIP_UNSAFE;
         }
+        if (evidence->now_us - ownership->acquire_started_us >=
+            ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US)
+        {
+            ownership->state = ADRC_LCD_OWNER_LCD;
+            return ADRC_LCD_OWNERSHIP_TIMEOUT;
+        }
         if (evidence->probe_transmitted != 0U && evidence->probe_submitted_us != 0ULL &&
             feedback_is_current(evidence) != 0U &&
             evidence->feedback_us > evidence->probe_submitted_us)
         {
             ownership->state = ADRC_LCD_OWNER_ADRC;
             return ADRC_LCD_OWNERSHIP_TRANSFERRED;
-        }
-        if (evidence->now_us - ownership->acquire_started_us >
-            ADRC_LCD_OWNER_ACQUIRE_TIMEOUT_US)
-        {
-            ownership->state = ADRC_LCD_OWNER_LCD;
-            return ADRC_LCD_OWNERSHIP_TIMEOUT;
         }
         return ADRC_LCD_OWNERSHIP_WAITING;
     }

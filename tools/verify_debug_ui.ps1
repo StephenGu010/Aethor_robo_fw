@@ -69,12 +69,16 @@ $testNames = @(
     'run_motor_core_tests', 'run_motion_tests', 'run_platform_io_tests',
     'run_protocol_tests', 'run_simulator_tests', 'run_debug_ui_input_tests',
     'run_lcd_transport_tests', 'run_debug_ui_mailbox_tests',
-    'run_debug_ui_app_tests', 'run_debug_ui_model_tests', 'run_debug_ui_soak_tests'
+    'run_debug_ui_app_tests', 'run_debug_ui_model_tests', 'run_debug_ui_soak_tests',
+    'run_static_load_tests', 'run_single_static_load_tests',
+    'run_single_static_lcd_config_tests', 'run_static_lcd_workflow_tests'
 )
 foreach ($name in $testNames) {
     $testArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', ('"' + (Join-Path $projectRoot ("Tests\host\$name.ps1")) + '"'))
-    if ($name -like 'run_debug_ui_*' -or $name -eq 'run_lcd_transport_tests') {
+    if ($name -like 'run_debug_ui_*' -or $name -eq 'run_lcd_transport_tests' -or
+        $name -eq 'run_static_load_tests' -or $name -eq 'run_single_static_load_tests' -or
+        $name -eq 'run_single_static_lcd_config_tests' -or $name -eq 'run_static_lcd_workflow_tests') {
         $testArguments += @('-Compiler', ('"' + $Compiler + '"'))
     }
     Invoke-RecordedCheck $name $powershell $testArguments

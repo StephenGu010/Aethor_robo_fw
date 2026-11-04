@@ -6,13 +6,13 @@ $buildDirectory = Join-Path $PSScriptRoot 'build'
 if (-not (Test-Path -LiteralPath $buildDirectory)) { New-Item -ItemType Directory -Path $buildDirectory | Out-Null }
 $executablePath = Join-Path $buildDirectory 'adrc_app_tests.exe'
 $sourceFiles = @(
-    'Tests/host/adrc_app_test_main.c', 'App/Adrc/adrc_app_bridge.c',
+    'Tests/host/adrc_app_test_main.c', 'App/Adrc/adrc_simple_trial.c', 'App/Adrc/adrc_feedback_adapter.c', 'App/Adrc/adrc_app_bridge.c', 'App/Adrc/adrc_shaft_pilot.c', 'App/Adrc/adrc_shaft_pilot_adapter.c',
     'App/Adrc/adrc_bench.c', 'App/Adrc/adrc_protocol.c', 'App/Adrc/adrc_experiment.c',
     'App/DebugUi/debug_ui_mailbox.c', 'App/Config/arm_config.c', 'App/Config/build_info.c',
     'App/Telemetry/diagnostics.c', 'App/Arm/arm_controller.c', 'App/Arm/joint_reference.c',
     'App/Motion/joint_motion.c', 'App/Motion/joint_motion_can.c', 'App/Motor/can_frame.c',
     'App/Motor/can_tx_scheduler.c', 'App/Motor/motor_bank.c', 'App/Motor/motor_discovery.c',
-    'App/Motor/motor_runtime.c', 'App/Motor/motor_adrc_command.c', 'App/Motor/s3519_codec.c', 'App/Protocol/ascii_protocol.c',
+    'App/Motor/motor_runtime.c', 'App/Motor/motor_capability_collector.c', 'App/Motor/motor_adrc_command.c', 'App/Motor/s3519_codec.c', 'App/Protocol/ascii_protocol.c',
     'App/Protocol/text_protocol.c', 'App/Protocol/protocol_engine.c'
 )
 $controllerOptions = @('-DADRC_APP_HOST_CONTROLLER_STUB=1')

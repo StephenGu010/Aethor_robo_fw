@@ -79,16 +79,23 @@ DebugUiReason debug_ui_mailbox_submit(DebugUiMailbox *mailbox, const DebugUiRequ
         (request->identity.origin != DEBUG_UI_ORIGIN_LOCAL_UI) ||
         (request->identity.request_id == 0U) || (request->identity.epoch == 0U) ||
         (request->target_motor_id == 0U) || (request->target_motor_id > DEBUG_UI_MOTOR_COUNT) ||
-        ((uint32_t)request->operation > (uint32_t)DEBUG_UI_OPERATION_STOP))
+        ((uint32_t)request->operation > (uint32_t)DEBUG_UI_OPERATION_HOME))
     { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
-    if (request->identity.request_id <= mailbox->last_request_id)
+    if ((uint32_t)request->single_static_preflight_purpose > DEBUG_UI_SINGLE_STATIC_PREFLIGHT_LOCK ||
+        (request->single_static_preflight_purpose != DEBUG_UI_SINGLE_STATIC_PREFLIGHT_NONE &&
+         request->operation != DEBUG_UI_OPERATION_SINGLE_STATIC_PREFLIGHT))
+    { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+    if ((request->remote_proxy != 0U) != ((request->identity.request_id & 0x80000000UL) != 0U))
+    { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+    if (request->identity.request_id <= (request->remote_proxy ? mailbox->remote_last_request_id : mailbox->last_request_id))
     { return DEBUG_UI_REASON_DUPLICATE; }
     stop = request->operation == DEBUG_UI_OPERATION_STOP;
     if (stop && (debug_ui_mailbox_busy(mailbox, true) ||
         (debug_ui_mailbox_result_count(mailbox) >= DEBUG_UI_RESULT_CAPACITY)))
     {
         mailbox->stop_intent_mask |= (uint8_t)(1U << (request->target_motor_id - 1U));
-        mailbox->last_request_id = request->identity.request_id;
+        if (request->remote_proxy) mailbox->remote_last_request_id = request->identity.request_id;
+        else mailbox->last_request_id = request->identity.request_id;
         return DEBUG_UI_REASON_STOP_LATCHED;
     }
     if (debug_ui_mailbox_busy(mailbox, stop)) { return DEBUG_UI_REASON_BUSY; }
@@ -109,7 +116,8 @@ DebugUiReason debug_ui_mailbox_submit(DebugUiMailbox *mailbox, const DebugUiRequ
             memset(transaction, 0, sizeof(*transaction));
             transaction->request = *request;
             transaction->used = 1U;
-            mailbox->last_request_id = request->identity.request_id;
+            if (request->remote_proxy) mailbox->remote_last_request_id = request->identity.request_id;
+            else mailbox->last_request_id = request->identity.request_id;
             return DEBUG_UI_REASON_NONE;
         }
     }
@@ -177,7 +185,7 @@ bool debug_ui_mailbox_poll_admission(DebugUiMailbox *mailbox, DebugUiAdmission *
     for (slot_index = 0U; slot_index < DEBUG_UI_RESULT_CAPACITY; ++slot_index)
     {
         DebugUiMailboxTransaction *transaction = &mailbox->transactions[slot_index];
-        if ((transaction->used != 0U) && (transaction->admission_ready != 0U) &&
+        if ((transaction->used != 0U) && !transaction->request.remote_proxy && (transaction->admission_ready != 0U) &&
             (transaction->admission_consumed == 0U))
         {
             *admission = transaction->admission;
@@ -197,7 +205,7 @@ bool debug_ui_mailbox_poll_completion(DebugUiMailbox *mailbox, DebugUiCompletion
     for (slot_index = 0U; slot_index < DEBUG_UI_RESULT_CAPACITY; ++slot_index)
     {
         DebugUiMailboxTransaction *transaction = &mailbox->transactions[slot_index];
-        if ((transaction->used != 0U) && (transaction->completion_ready != 0U) &&
+        if ((transaction->used != 0U) && !transaction->request.remote_proxy && (transaction->completion_ready != 0U) &&
             (transaction->completion_consumed == 0U))
         {
             *completion = transaction->completion;

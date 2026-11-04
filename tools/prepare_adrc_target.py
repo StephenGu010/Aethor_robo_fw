@@ -82,9 +82,11 @@ def prepare_target(project: Path, run_directory: Path) -> Path:
         if path.is_file() and path.suffix in ('.c', '.h') and path.name != 'ert_main.c')
     copied_hashes = [{'name': path.name, 'sha256': sha256(path)} for path in generated_files]
     handwritten = ['adrc_experiment.c', 'adrc_protocol.c', 'adrc_bench.c',
-        'adrc_app_bridge.c', 'adrc_generated_adapter.c']
+        'adrc_app_bridge.c', 'adrc_feedback_adapter.c', 'adrc_simple_trial.c',
+        'adrc_shaft_pilot.c', 'adrc_shaft_pilot_adapter.c', 'adrc_generated_adapter.c']
     paths = [f'../App/Adrc/{name}' for name in handwritten]
     paths.append('../App/Motor/motor_adrc_command.c')
+    paths.append('../App/Motor/motor_capability_collector.c')
     paths.append('../App/Platform/stm32_adrc_channel.c')
     for relative_path in paths:
         if not (project / 'MDK-ARM' / relative_path).resolve().is_file():

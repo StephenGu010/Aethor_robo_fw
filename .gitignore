@@ -40,3 +40,12 @@ Tests/ui/artifacts/*.ppm
 Tests/ui/artifacts-astra/*.ppm
 Middlewares/Third_Party/LVGL/src/extra/libs/freetype/arial.ttf
 Middlewares/Third_Party/LVGL/src/font/korean.ttf
+# Source publication: generated load-test products and local candidate inventory.
+MDK-ARM/LCD-POS-Load-Test/
+MDK-ARM/LCD-SingleStatic-Test/
+baseline.json
+# This maintained target requires its frozen RTE component definition.
+!MDK-ARM/RTE/_LCD-POS-Load-Test/
+!MDK-ARM/RTE/_LCD-POS-Load-Test/RTE_Components.h
+!MDK-ARM/RTE/_LCD-SingleStatic-Test/
+!MDK-ARM/RTE/_LCD-SingleStatic-Test/RTE_Components.h

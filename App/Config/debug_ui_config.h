@@ -16,9 +16,39 @@
 #ifndef AETHOR_DEBUG_UI_ALLOW_MIT
 #define AETHOR_DEBUG_UI_ALLOW_MIT (0U)
 #endif
+/* Separate, default-locked seven-axis static-test gate; never enabled by a page or same-model preset. */
+#ifndef AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD
+#define AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD (0U)
+#endif
+#if (AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD != 0) && (AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD != 1)
+#error "Static load flag must be zero or one."
+#endif
+#if AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD && (!AETHOR_DEBUG_UI_ENABLE || !AETHOR_DEBUG_UI_ALLOW_MOTION || !AETHOR_DEBUG_UI_ALLOW_MIT)
+#error "Static holding requires the existing UI, motion and MIT gates."
+#endif
+/* Independent long single-axis candidate; existing MIT profiles never enable it. */
+#ifndef AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD
+#define AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD (0U)
+#endif
+#if (AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD != 0) && (AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD != 1)
+#error "Single static load flag must be zero or one."
+#endif
+#if AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD && (!AETHOR_DEBUG_UI_ENABLE || !AETHOR_DEBUG_UI_ALLOW_MOTION || !AETHOR_DEBUG_UI_ALLOW_MIT)
+#error "Single static holding requires the existing UI, motion and MIT gates."
+#endif
 /* Opt-in motor7 POS protocol envelope; requires discovery and does not authorize MIT. */
 #ifndef AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE
 #define AETHOR_DEBUG_UI_MOTOR7_POS_PROFILE (0U)
+#endif
+/* Independent POS loaded-motion/hold gate; never requires or grants MIT authority. */
+#ifndef AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST
+#define AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST (0U)
+#endif
+#if (AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST != 0) && (AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST != 1)
+#error "POS load test flag must be zero or one."
+#endif
+#if AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST && (!AETHOR_DEBUG_UI_ENABLE || !AETHOR_DEBUG_UI_ALLOW_MOTION)
+#error "POS load testing requires the UI and motion gates."
 #endif
 /* Opt-in bounded motor7 MIT trial; independent of the POS protocol envelope. */
 #ifndef AETHOR_DEBUG_UI_MOTOR7_MIT_PROFILE

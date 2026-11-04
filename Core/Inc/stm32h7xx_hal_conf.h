@@ -173,7 +173,13 @@
   * @brief This is the HAL system configuration section
   */
 #define  VDD_VALUE                    (3300UL) /*!< Value of VDD in mv */
-#define  TICK_INT_PRIORITY            (15UL) /*!< tick interrupt priority */
+/* ADRC TIM23 performs the bounded stop without FreeRTOS calls. Priority 4
+ * remains above the BASEPRI syscall mask (5); PRIMASK still masks it. */
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+#define  TICK_INT_PRIORITY            (4UL)
+#else
+#define  TICK_INT_PRIORITY            (15UL)
+#endif
 #define  USE_RTOS                     0
 #define  USE_SD_TRANSCEIVER           0U               /*!< use uSD Transceiver */
 #define  USE_SPI_CRC	              0U               /*!< use CRC in SPI */

@@ -13,9 +13,25 @@
 #define ADRC_ENABLE_TIMEOUT_US (100000ULL)
 #define ADRC_STOP_TIMEOUT_US (500000ULL)
 #define ADRC_LOW_SPEED_DWELL_US (100000ULL)
+#define ADRC_POSITION32_STOP_GAIN_RAD_S (14.0F)
 #define ADRC_STEP_SECONDS (0.004F)
 
 typedef char AdrcTraceRecordSizeCheck[(sizeof(AdrcExperimentTrace) <= 64U) ? 1 : -1];
+
+/** @brief Compares the full semantic contract; padding bytes never revoke trusted evidence. */
+uint8_t adrc_experiment_config_equal(const AdrcExperimentConfig *left, const AdrcExperimentConfig *right)
+{
+    return (uint8_t)(left != NULL && right != NULL && left->mode == right->mode &&
+        left->interface_profile == right->interface_profile && left->axis_index == right->axis_index &&
+        left->duration_us == right->duration_us && left->identify_pulse_us == right->identify_pulse_us &&
+        left->identify_torque_nm == right->identify_torque_nm && left->reference_rad_s == right->reference_rad_s &&
+        left->reference_accel_rad_s2 == right->reference_accel_rad_s2 &&
+        left->stop_accel_rad_s2 == right->stop_accel_rad_s2 && left->torque_limit_nm == right->torque_limit_nm &&
+        left->torque_slew_nm_s == right->torque_slew_nm_s &&
+        left->velocity_quantum_rad_s == right->velocity_quantum_rad_s &&
+        left->standstill_noise_rad_s == right->standstill_noise_rad_s && left->near_zero_rad_s == right->near_zero_rad_s &&
+        left->b0 == right->b0 && left->wc_rad_s == right->wc_rad_s && left->wo_rad_s == right->wo_rad_s);
+}
 
 /** @brief Tests float finiteness without depending on a particular C library isfinite macro. */
 static int finite_value(float value)
@@ -65,7 +81,7 @@ static int fresh_feedback(const AdrcExperimentInput *input, uint8_t axis_index)
 {
     return input != NULL && input->feedback_valid == 1U && input->axis_index == axis_index &&
         input->enabled <= 1U && input->driver_fault <= 1U &&
-        input->feedback_us <= input->now_us &&
+        input->feedback_us != 0ULL && input->feedback_us <= input->now_us &&
         input->now_us - input->feedback_us <= ADRC_MAX_FEEDBACK_AGE_US &&
         finite_value(input->position_rad) && finite_value(input->velocity_rad_s) &&
         finite_value(input->mos_temperature_c) && finite_value(input->rotor_temperature_c);
@@ -75,7 +91,11 @@ static int fresh_feedback(const AdrcExperimentInput *input, uint8_t axis_index)
 static int safe_disabled(const AdrcExperimentConfig *config,
     const AdrcExperimentQualification *qualification, const AdrcExperimentInput *input)
 {
-    return fresh_feedback(input, config->axis_index) && input->enabled == 0U &&
+    return fresh_feedback(input, config->axis_index) &&
+        (config->interface_profile == ADRC_INTERFACE_LEGACY_RAW ||
+         (input->velocity_estimate_ready == 1U && finite_value(input->raw_velocity_rad_s) &&
+          magnitude(input->raw_velocity_rad_s) <= 0.3F &&
+          magnitude(input->raw_velocity_rad_s) <= qualification->velocity_max_rad_s)) && input->enabled == 0U &&
         input->driver_fault == 0U && input->mos_temperature_c < 50.0F &&
         input->rotor_temperature_c < 50.0F &&
         magnitude(input->velocity_rad_s) <= config->near_zero_rad_s &&
@@ -90,6 +110,7 @@ static int valid_configuration(const AdrcExperimentConfig *config,
     if (config == NULL || qualification == NULL || config->axis_index >= 7U ||
         qualification->axis_index != config->axis_index ||
         (unsigned)config->mode > (unsigned)ADRC_MODE_LADRC ||
+        (unsigned)config->interface_profile > (unsigned)ADRC_INTERFACE_POSITION32_QUANTIZED ||
         config->duration_us == 0U || config->duration_us > 3000000U ||
         (config->identify_pulse_us != 20000U && config->identify_pulse_us != 40000U &&
          config->identify_pulse_us != 80000U) ||
@@ -107,7 +128,8 @@ static int valid_configuration(const AdrcExperimentConfig *config,
         config->reference_accel_rad_s2 > 0.3F || config->stop_accel_rad_s2 <= 0.0F ||
         config->stop_accel_rad_s2 > 0.5F || config->torque_limit_nm <= 0.0F ||
         config->torque_limit_nm > 0.1F || config->torque_limit_nm > qualification->torque_max_nm ||
-        config->torque_slew_nm_s <= 0.0F || config->torque_slew_nm_s > 0.5F ||
+        config->torque_slew_nm_s <= 0.0F || config->torque_slew_nm_s >
+            (config->interface_profile == ADRC_INTERFACE_POSITION32_QUANTIZED ? 1.25F : 0.5F) ||
         magnitude(config->reference_rad_s) > 0.2F ||
         magnitude(config->reference_rad_s) > qualification->velocity_max_rad_s ||
         magnitude(config->identify_torque_nm) > 0.05F || config->identify_torque_nm == 0.0F ||
@@ -133,6 +155,8 @@ static int qualified(const AdrcExperiment *experiment, const AdrcExperimentConfi
 {
     uint32_t required = config->mode == ADRC_MODE_IDENTIFY ? ADRC_QUAL_IDENTIFY_REQUIRED :
         ADRC_QUAL_CLOSED_LOOP_REQUIRED;
+    if (config->interface_profile == ADRC_INTERFACE_POSITION32_QUANTIZED)
+    { required |= ADRC_QUAL_POSITION32_REQUIRED; }
     return qualification->provenance == experiment->environment &&
         (qualification->verified_flags & required) == required;
 }
@@ -186,6 +210,8 @@ static void append_trace(AdrcExperiment *experiment, const AdrcExperimentInput *
     record->reference_rad_s = experiment->reference_rad_s;
     record->position_rad = input->position_rad;
     record->velocity_rad_s = input->velocity_rad_s;
+    record->raw_velocity_rad_s = experiment->config.interface_profile == ADRC_INTERFACE_LEGACY_RAW ?
+        input->velocity_rad_s : input->raw_velocity_rad_s;
     record->torque_raw_nm = controller->torque_raw_nm;
     record->torque_requested_nm = output->torque_nm;
     record->torque_sent_previous_nm = experiment->previous_sent_nm;
@@ -197,7 +223,9 @@ static void append_trace(AdrcExperiment *experiment, const AdrcExperimentInput *
     record->flags = (uint8_t)((new_sample ? 1U : 0U) |
         (experiment->status.disable_requested ? 2U : 0U) |
         (experiment->status.disabled_confirmed ? 4U : 0U) |
-        (input->prev_sent_valid ? 8U : 0U) | (output->send_torque ? 16U : 0U));
+        (input->prev_sent_valid ? 8U : 0U) | (output->send_torque ? 16U : 0U) |
+        (input->velocity_estimate_ready ? 32U : 0U) |
+        (experiment->config.interface_profile == ADRC_INTERFACE_POSITION32_QUANTIZED ? 64U : 0U));
 }
 
 /** @brief Accepts only fresh, non-regressing feedback after the disable request as disable evidence. */
@@ -281,6 +309,8 @@ AdrcExperimentResult adrc_experiment_run(AdrcExperiment *experiment,
     { return ADRC_RESULT_INVALID_ARGUMENT; }
     if (!experiment->configured) { return ADRC_RESULT_UNQUALIFIED; }
     if (experiment->status.state != ADRC_STATE_PREPARED) { return ADRC_RESULT_INVALID_STATE; }
+    if (!qualified(experiment, &experiment->config, &experiment->qualification))
+    { return ADRC_RESULT_UNQUALIFIED; }
     if (!safe_disabled(&experiment->config, &experiment->qualification, input) ||
         input->now_us < experiment->last_tick_us || input->feedback_us < experiment->last_feedback_us)
     { return ADRC_RESULT_UNSAFE_FEEDBACK; }
@@ -364,6 +394,16 @@ static AdrcExperimentFault active_fault(const AdrcExperiment *experiment,
     if (input->now_us - experiment->last_tick_us > ADRC_MAX_PERIOD_US) { return ADRC_FAULT_PERIOD; }
     if (!fresh_feedback(input, experiment->config.axis_index) ||
         input->feedback_us < experiment->last_feedback_us) { return ADRC_FAULT_FEEDBACK; }
+    if (!experiment->configured || !qualified(experiment, &experiment->config, &experiment->qualification))
+    { return ADRC_FAULT_FEEDBACK; }
+    if (experiment->config.interface_profile == ADRC_INTERFACE_POSITION32_QUANTIZED)
+    {
+        if (!finite_value(input->raw_velocity_rad_s) || input->velocity_estimate_ready != 1U)
+        { return ADRC_FAULT_FEEDBACK; }
+        if (magnitude(input->raw_velocity_rad_s) > 0.3F ||
+            magnitude(input->raw_velocity_rad_s) > experiment->qualification.velocity_max_rad_s)
+        { return ADRC_FAULT_SPEED; }
+    }
     if (input->driver_fault) { return ADRC_FAULT_DRIVER; }
     if (input->mos_temperature_c >= 50.0F || input->rotor_temperature_c >= 50.0F)
     { return ADRC_FAULT_TEMPERATURE; }
@@ -380,7 +420,7 @@ static AdrcExperimentFault active_fault(const AdrcExperiment *experiment,
     return ADRC_FAULT_NONE;
 }
 
-/** @brief Produces one limited torque using only an injected controller or finite identification pulse. */
+/** @brief Limits RUN controller, finite pulse, or POSITION32 stop damping through the same actuator guards. */
 static int produce_torque(AdrcExperiment *experiment, const AdrcExperimentInput *input,
     AdrcExperimentOutput *output, AdrcControllerOutput *controller_output, uint8_t new_sample)
 {
@@ -390,6 +430,17 @@ static int produce_torque(AdrcExperiment *experiment, const AdrcExperimentInput 
     {
         controller_output->torque_raw_nm = experiment->status.state == ADRC_STATE_RUNNING ?
             experiment->config.identify_torque_nm : 0.0F;
+    }
+    else if (experiment->status.state == ADRC_STATE_STOPPING &&
+        experiment->config.interface_profile == ADRC_INTERFACE_POSITION32_QUANTIZED)
+    {
+        /* RUN integral/ESO memory must not sustain torque during the quantized stop.
+         * The reference still ramps to zero; slew, magnitude, dwell and deadline are unchanged.
+         * Here z1 is measured speed and z2 is zero, not a continuing ESO estimate. */
+        controller_output->torque_raw_nm = ADRC_POSITION32_STOP_GAIN_RAD_S / experiment->config.b0 *
+            (experiment->reference_rad_s - input->velocity_rad_s);
+        controller_output->z1 = input->velocity_rad_s;
+        controller_output->z2 = 0.0F;
     }
     else
     {
@@ -496,7 +547,12 @@ AdrcExperimentResult adrc_experiment_tick(AdrcExperiment *experiment,
                     reference_increment * ADRC_STEP_SECONDS);
                 if (experiment->status.state == ADRC_STATE_STOPPING)
                 {
-                    if (magnitude(input->velocity_rad_s) <= experiment->config.near_zero_rad_s &&
+                    /* A causal position difference can understate its window average by one
+                     * configured quantum. This bound is not an instantaneous-speed certificate. */
+                    float stopping_speed = magnitude(input->velocity_rad_s) +
+                        (experiment->config.interface_profile == ADRC_INTERFACE_POSITION32_QUANTIZED ?
+                         experiment->config.velocity_quantum_rad_s : 0.0F);
+                    if (stopping_speed <= experiment->config.near_zero_rad_s &&
                         experiment->reference_rad_s == 0.0F && new_sample)
                     {
                         if (!experiment->low_speed_tracking)
@@ -507,7 +563,7 @@ AdrcExperimentResult adrc_experiment_tick(AdrcExperiment *experiment,
                         if (input->now_us - experiment->low_speed_started_us >= ADRC_LOW_SPEED_DWELL_US)
                         { request_disable(experiment, input->now_us); }
                     }
-                    else if (magnitude(input->velocity_rad_s) > experiment->config.near_zero_rad_s ||
+                    else if (stopping_speed > experiment->config.near_zero_rad_s ||
                         experiment->reference_rad_s != 0.0F)
                     { experiment->low_speed_tracking = 0U; }
                 }

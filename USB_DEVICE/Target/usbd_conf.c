@@ -26,7 +26,9 @@
 #include "usbd_cdc.h"
 
 /* USER CODE BEGIN Includes */
-
+#if defined(AETHOR_MOTOR_PERSISTENCE_TRANSPORT) && AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+#include "usbd_cdc_if.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -220,6 +222,11 @@ void HAL_PCD_SuspendCallback(PCD_HandleTypeDef *hpcd)
 {
   /* Inform USB library that core enters in suspend Mode. */
   USBD_LL_Suspend((USBD_HandleTypeDef*)hpcd->pData);
+#if defined(AETHOR_MOTOR_PERSISTENCE_TRANSPORT) && AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+  /* VBUS sensing is disabled on this board. A suspend observation conservatively
+   * invalidates the maintenance binding without claiming a measured cable disconnect. */
+  CDC_PersistenceLinkEvent_HS(0U);
+#endif
   __HAL_PCD_GATE_PHYCLOCK(hpcd);
   /* Enter in STOP mode. */
   /* USER CODE BEGIN 2 */
@@ -247,6 +254,11 @@ void HAL_PCD_ResumeCallback(PCD_HandleTypeDef *hpcd)
 
   /* USER CODE END 3 */
   USBD_LL_Resume((USBD_HandleTypeDef*)hpcd->pData);
+#if defined(AETHOR_MOTOR_PERSISTENCE_TRANSPORT) && AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+  /* Reconfiguration state is known only after the library restores dev_old_state.
+   * A new generation preserves an entire suspend/resume pair missed by task polling. */
+  CDC_PersistenceLinkEvent_HS((uint8_t)(((USBD_HandleTypeDef*)hpcd->pData)->dev_state == USBD_STATE_CONFIGURED));
+#endif
 }
 
 /**

@@ -96,7 +96,25 @@ uint8_t UserRxBufferHS[APP_RX_DATA_SIZE];
 uint8_t UserTxBufferHS[APP_TX_DATA_SIZE];
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
-
+/* BEGIN_PERSISTENCE_USB_LINK */
+#if defined(AETHOR_MOTOR_PERSISTENCE_TRANSPORT) && AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+/** @brief Single aligned word preserves a reset/disconnect event across task polling gaps. */
+static volatile uint32_t cdc_persistence_link_state;
+/** @brief Publishes configuration and a new nonzero 31-bit generation in one ISR-side store. */
+void CDC_PersistenceLinkEvent_HS(uint8_t configured)
+{
+  uint32_t generation = ((cdc_persistence_link_state & CDC_PERSISTENCE_LINK_GENERATION_MASK) + 1UL) &
+      CDC_PERSISTENCE_LINK_GENERATION_MASK;
+  if (!generation) { generation = 1UL; }
+  cdc_persistence_link_state = generation | (configured ? CDC_PERSISTENCE_LINK_CONFIGURED : 0UL);
+}
+/** @brief Reads the atomic event binding; it cannot grant motor authority or restart maintenance. */
+uint32_t CDC_PersistenceLinkState_HS(void)
+{
+  return cdc_persistence_link_state;
+}
+#endif
+/* END_PERSISTENCE_USB_LINK */
 /* USER CODE END PRIVATE_VARIABLES */
 
 /**
@@ -158,6 +176,9 @@ static int8_t CDC_Init_HS(void)
   /* Set Application Buffers */
   USBD_CDC_SetTxBuffer(&hUsbDeviceHS, UserTxBufferHS, 0);
   USBD_CDC_SetRxBuffer(&hUsbDeviceHS, UserRxBufferHS);
+#if defined(AETHOR_MOTOR_PERSISTENCE_TRANSPORT) && AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+  CDC_PersistenceLinkEvent_HS(1U);
+#endif
   return (USBD_OK);
   /* USER CODE END 8 */
 }
@@ -170,6 +191,9 @@ static int8_t CDC_Init_HS(void)
 static int8_t CDC_DeInit_HS(void)
 {
   /* USER CODE BEGIN 9 */
+#if defined(AETHOR_MOTOR_PERSISTENCE_TRANSPORT) && AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+  CDC_PersistenceLinkEvent_HS(0U);
+#endif
   return (USBD_OK);
   /* USER CODE END 9 */
 }

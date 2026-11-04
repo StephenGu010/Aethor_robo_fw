@@ -2,6 +2,7 @@
  * @brief Offline fault-injection contract tests; fixtures never constitute hardware evidence.
  */
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include "adrc_experiment.h"
@@ -399,12 +400,22 @@ static void test_identification_hard_deadlines(void)
     const uint32_t pulse_durations[] = { 20000U, 40000U, 80000U };
     unsigned scenario;
     unsigned step;
-    for (scenario = 0U; scenario < sizeof(pulse_durations) / sizeof(pulse_durations[0]); scenario++)
+    for (scenario = 0U; scenario < 2U * sizeof(pulse_durations) / sizeof(pulse_durations[0]); scenario++)
     {
         fixture(); configuration.mode = ADRC_MODE_IDENTIFY;
-        configuration.identify_pulse_us = pulse_durations[scenario];
+        configuration.identify_pulse_us = pulse_durations[scenario % 3U];
+        if (scenario >= 3U)
+        {
+            configuration.interface_profile = ADRC_INTERFACE_POSITION32_QUANTIZED;
+            configuration.torque_slew_nm_s = 1.25F;
+            configuration.velocity_quantum_rad_s = 0.012F;
+            configuration.near_zero_rad_s = 0.024F;
+            qualification.verified_flags |= ADRC_QUAL_POSITION32_REQUIRED;
+            feedback.velocity_estimate_ready = 1U;
+            feedback.raw_velocity_rad_s = 0.04884F;
+        }
         start(); feedback.enabled = 1U;
-        for (step = 1U; step < pulse_durations[scenario] / 4000U; step++) { advance(4000ULL, 1); }
+        for (step = 1U; step < pulse_durations[scenario % 3U] / 4000U; step++) { advance(4000ULL, 1); }
         expect(action.send_torque && action.torque_nm > 0.0F && !action.disable_requested,
             "identification excitation remains active before its finite deadline");
         advance(4000ULL, 1);
@@ -445,11 +456,187 @@ static void test_identification_early_stop(void)
 }
 #endif
 
+#ifndef ADRC_TEST_RED_BASELINE
+/** @brief Candidate qualification, raw-speed guard and estimator readiness remain independent. */
+static void test_position32_profile(void)
+{
+    fixture();
+    {
+        AdrcExperimentConfig equal_config = configuration;
+        size_t semantic_end = offsetof(AdrcExperimentConfig, axis_index) + sizeof(equal_config.axis_index);
+        memset((unsigned char *)&equal_config + semantic_end, 0xA5, sizeof(equal_config) - semantic_end);
+        expect(adrc_experiment_config_equal(&configuration, &equal_config), "configuration equality ignores padding");
+        equal_config.interface_profile = ADRC_INTERFACE_POSITION32_QUANTIZED;
+        expect(!adrc_experiment_config_equal(&configuration, &equal_config), "profile participates in configuration identity");
+    }
+    configuration.interface_profile = ADRC_INTERFACE_POSITION32_QUANTIZED;
+    configuration.torque_slew_nm_s = 1.25F;
+    configuration.velocity_quantum_rad_s = 0.012F;
+    configuration.near_zero_rad_s = 0.024F;
+    feedback.raw_velocity_rad_s = 0.04884F;
+    feedback.velocity_estimate_ready = 1U;
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) ==
+        ADRC_RESULT_UNQUALIFIED, "candidate rejects legacy 0xff evidence");
+    qualification.verified_flags |= ADRC_QUAL_POSITION32_REQUIRED;
+    feedback.velocity_estimate_ready = 0U;
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) ==
+        ADRC_RESULT_UNSAFE_FEEDBACK, "candidate requires warmed estimator");
+    feedback.velocity_estimate_ready = 1U;
+    configuration.torque_slew_nm_s = 1.251F;
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) ==
+        ADRC_RESULT_INVALID_ARGUMENT, "candidate slew ceiling stays hard");
+    configuration.torque_slew_nm_s = 1.25F;
+    start(); feedback.enabled = 1U;
+    feedback.raw_velocity_rad_s = 0.31F;
+    advance(4000ULL, 1);
+    expect(experiment.status.fault == ADRC_FAULT_SPEED && action.disable_requested,
+        "raw overspeed is never hidden by zero position estimate");
+    expect(sizeof(AdrcExperimentTrace) <= 64U && experiment.trace[0].raw_velocity_rad_s == 0.31F,
+        "trace records raw velocity within fixed record budget");
+    fixture();
+    configuration.interface_profile = ADRC_INTERFACE_POSITION32_QUANTIZED;
+    configuration.torque_slew_nm_s = 1.25F;
+    configuration.velocity_quantum_rad_s = 0.012F;
+    configuration.near_zero_rad_s = 0.024F;
+    feedback.velocity_estimate_ready = 1U;
+    feedback.raw_velocity_rad_s = -0.04884F;
+    qualification.verified_flags |= ADRC_QUAL_INTERFACE_QUANTIZATION;
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) ==
+        ADRC_RESULT_UNQUALIFIED, "timing uncertainty requires its own local evidence");
+    qualification.verified_flags |= ADRC_QUAL_ESTIMATOR_TIMING;
+    qualification.provenance = ADRC_ENV_HARDWARE;
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) ==
+        ADRC_RESULT_UNQUALIFIED, "candidate rejects wrong evidence source");
+    qualification.provenance = ADRC_ENV_OFFLINE_FIXTURE;
+    feedback.raw_velocity_rad_s = NAN;
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) ==
+        ADRC_RESULT_UNSAFE_FEEDBACK, "candidate rejects nonfinite raw velocity");
+    feedback.raw_velocity_rad_s = -0.04884F;
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) ==
+        ADRC_RESULT_OK, "negative raw center is plausible but estimate supplies near zero");
+    expect(adrc_experiment_prepare(&experiment, &feedback) == ADRC_RESULT_OK, "candidate prepare");
+    experiment.qualification.verified_flags &= ~ADRC_QUAL_INTERFACE_QUANTIZATION;
+    expect(adrc_experiment_run(&experiment, &feedback, &action) == ADRC_RESULT_UNQUALIFIED,
+        "run rechecks qualification after prepare");
+    experiment.qualification = qualification;
+    expect(adrc_experiment_run(&experiment, &feedback, &action) == ADRC_RESULT_OK, "qualified run");
+    feedback.enabled = 1U; advance(4000ULL, 1);
+    expect(adrc_experiment_stop(&experiment, feedback.now_us) == ADRC_RESULT_OK, "candidate stop");
+    feedback.velocity_estimate_ready = 0U; advance(4000ULL, 1);
+    expect(experiment.status.fault == ADRC_FAULT_FEEDBACK && action.disable_requested,
+        "STOPPING estimator failure immediately disables");
+    feedback.velocity_estimate_ready = 1U; advance(504000ULL, 1);
+    expect(experiment.status.fault == ADRC_FAULT_FEEDBACK && action.disable_requested,
+        "later recovery or stop timeout cannot erase first estimator fault");
+    fixture(); feedback.feedback_us = 0ULL; feedback.now_us = 4000ULL;
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) ==
+        ADRC_RESULT_UNSAFE_FEEDBACK, "unknown feedback time never authorizes configuration");
+}
+#endif
+
+#ifndef ADRC_TEST_RED_BASELINE
+/** @brief Three trials reuse one initialized supervisor and monotonic time without reset or power cycling. */
+static void test_repeated_trials_without_reset(void)
+{
+    unsigned trial;
+    unsigned tick;
+    unsigned controller_calls_before;
+    uint64_t previous_end;
+    fixture();
+    expect(adrc_experiment_configure(&experiment, &configuration, &qualification, &feedback) == ADRC_RESULT_OK,
+        "one-time offline qualification before repeated trials");
+    previous_end = feedback.now_us;
+    for (trial = 0U; trial < 3U; ++trial)
+    {
+        controller_calls_before = callback_calls;
+        expect(adrc_experiment_prepare(&experiment, &feedback) == ADRC_RESULT_OK,
+            "same supervisor prepares the next trial");
+        expect(adrc_experiment_run(&experiment, &feedback, &action) == ADRC_RESULT_OK,
+            "same supervisor accepts one new explicit RUN");
+        feedback.enabled = 1U;
+        for (tick = 0U; tick < 10U; ++tick) { advance(4000ULL, 1); }
+        expect(callback_calls > controller_calls_before, "each trial executes the injected controller");
+        expect(adrc_experiment_stop(&experiment, feedback.now_us) == ADRC_RESULT_OK,
+            "each trial accepts explicit STOP without resetting state");
+        for (tick = 0U; tick < 120U && !action.disable_requested; ++tick) { advance(4000ULL, 1); }
+        expect(action.disable_requested && !experiment.status.disabled_confirmed,
+            "DISABLE request alone cannot complete the trial");
+        feedback.enabled = 0U; advance(4000ULL, 1);
+        expect(experiment.status.state == ADRC_STATE_DISABLED && experiment.status.disabled_confirmed &&
+            experiment.status.fault == ADRC_FAULT_NONE && experiment.status.trace_frozen,
+            "fresh disabled feedback closes this trial before the next");
+        expect(feedback.now_us > previous_end, "session clock never resets between trials");
+        previous_end = feedback.now_us;
+    }
+}
+
+/** @brief Position-window mode requires uninterrupted original low-speed evidence. */
+static void test_position32_stop_dwell(void)
+{
+    unsigned step;
+    fixture();
+    configuration.interface_profile = ADRC_INTERFACE_POSITION32_QUANTIZED;
+    configuration.torque_slew_nm_s = 1.25F;
+    configuration.velocity_quantum_rad_s = 0.012F;
+    configuration.near_zero_rad_s = 0.024F;
+    qualification.verified_flags |= ADRC_QUAL_POSITION32_REQUIRED;
+    feedback.velocity_estimate_ready = 1U;
+    start(); feedback.enabled = 1U; advance(4000ULL, 1);
+    expect(adrc_experiment_stop(&experiment, feedback.now_us) == ADRC_RESULT_OK,
+        "candidate dwell STOP accepted");
+    advance(4000ULL, 1);
+    for (step = 0U; step < 20U; step++) { advance(4000ULL, 1); }
+    expect(!action.disable_requested, "candidate must not disable after only 80ms");
+    feedback.velocity_rad_s = 0.02384F; advance(4000ULL, 1);
+    expect(!experiment.low_speed_tracking, "quantized mean plus one quantum must reset dwell");
+    feedback.velocity_rad_s = 0.03F; advance(4000ULL, 1);
+    expect(!experiment.low_speed_tracking, "candidate excursion resets entire dwell");
+    feedback.velocity_rad_s = 0.0F; advance(4000ULL, 1);
+    for (step = 0U; step < 24U; step++) { advance(4000ULL, 1); }
+    expect(!action.disable_requested, "candidate waits through 96ms after reset");
+    advance(4000ULL, 1);
+    expect(action.disable_requested && experiment.status.fault == ADRC_FAULT_NONE,
+        "candidate requests disable after 100ms continuous low speed");
+}
+
+/** @brief Stop damping must not reuse RUN integral/observer torque and still obey actuator slew. */
+static void test_position32_stop_damping(void)
+{
+    unsigned calls;
+    float previous;
+    fixture();
+    configuration.interface_profile = ADRC_INTERFACE_POSITION32_QUANTIZED;
+    configuration.torque_slew_nm_s = 1.25F;
+    configuration.velocity_quantum_rad_s = 0.012F;
+    configuration.near_zero_rad_s = 0.025F;
+    configuration.b0 = 10.0F;
+    qualification.verified_flags |= ADRC_QUAL_POSITION32_REQUIRED;
+    feedback.velocity_estimate_ready = 1U;
+    start(); feedback.enabled = 1U; advance(4000ULL, 1);
+    calls = callback_calls; previous = action.torque_nm;
+    feedback.velocity_rad_s = 0.05F;
+    expect(adrc_experiment_stop(&experiment, feedback.now_us) == ADRC_RESULT_OK,
+        "damping STOP admitted");
+    advance(4000ULL, 1);
+    expect(callback_calls == calls, "POSITION32 stopping does not reuse RUN controller memory");
+    expect(action.torque_nm < previous && fabsf(action.torque_nm - previous) <= 0.005001F,
+        "stop opposes positive motion within unchanged torque slew");
+    expect(fabsf(experiment.trace[experiment.status.trace_count - 1U].torque_raw_nm + 0.07F) < 0.00001F,
+        "stop uses gain14 divided by b0 with zero reference");
+    expect(!action.disable_requested && !experiment.low_speed_tracking,
+        "stop damping cannot bypass the speed/dwell guard");
+}
+#endif
+
 /** @brief Runs contract tests and returns nonzero for any observable safety regression. */
 int main(void)
 {
     test_boot_rejects_run();
 #ifndef ADRC_TEST_RED_BASELINE
+    test_position32_profile();
+    test_repeated_trials_without_reset();
+    test_position32_stop_dwell();
+    test_position32_stop_damping();
     test_configuration_gates(); test_controller_contract(); test_immediate_faults();
     test_stop_and_disable_evidence(); test_deadlines_and_trace();
     test_additional_safety_boundaries();

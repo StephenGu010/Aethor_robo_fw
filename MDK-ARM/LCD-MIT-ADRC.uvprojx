@@ -2387,6 +2387,26 @@
               <FilePath>../App/Adrc/adrc_bench.c</FilePath>
             </File>
             <File>
+              <FileName>adrc_simple_trial.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Adrc/adrc_simple_trial.c</FilePath>
+            </File>
+            <File>
+              <FileName>adrc_shaft_pilot.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Adrc/adrc_shaft_pilot.c</FilePath>
+            </File>
+            <File>
+              <FileName>adrc_shaft_pilot_adapter.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Adrc/adrc_shaft_pilot_adapter.c</FilePath>
+            </File>
+            <File>
+              <FileName>adrc_feedback_adapter.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Adrc/adrc_feedback_adapter.c</FilePath>
+            </File>
+            <File>
               <FileName>adrc_app_bridge.c</FileName>
               <FileType>1</FileType>
               <FilePath>../App/Adrc/adrc_app_bridge.c</FilePath>
@@ -2395,6 +2415,11 @@
               <FileName>adrc_generated_adapter.c</FileName>
               <FileType>1</FileType>
               <FilePath>../App/Adrc/adrc_generated_adapter.c</FilePath>
+            </File>
+            <File>
+              <FileName>motor_capability_collector.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../App/Motor/motor_capability_collector.c</FilePath>
             </File>
             <File>
               <FileName>motor_adrc_command.c</FileName>

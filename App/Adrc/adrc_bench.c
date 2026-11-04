@@ -25,12 +25,15 @@ static int editable(const AdrcBench *bench, const AdrcExperimentInput *input)
         bench->experiment.status.state == ADRC_STATE_PREPARED) && input != NULL &&
         input->feedback_valid == 1U && input->enabled == 0U && input->driver_fault == 0U &&
         input->axis_index == bench->draft_config.axis_index &&
-        input->feedback_us <= input->now_us && input->now_us - input->feedback_us <= 8000ULL &&
+        input->feedback_us != 0ULL && input->feedback_us <= input->now_us && input->now_us - input->feedback_us <= 8000ULL &&
         input->now_us >= bench->experiment.last_tick_us &&
         input->feedback_us >= bench->experiment.last_feedback_us &&
         finite_value(input->position_rad) && finite_value(input->velocity_rad_s) &&
         finite_value(input->mos_temperature_c) && finite_value(input->rotor_temperature_c) &&
         input->mos_temperature_c < 50.0F && input->rotor_temperature_c < 50.0F &&
+        (bench->draft_config.interface_profile == ADRC_INTERFACE_LEGACY_RAW ||
+         (input->velocity_estimate_ready == 1U && finite_value(input->raw_velocity_rad_s) &&
+          input->raw_velocity_rad_s >= -0.3F && input->raw_velocity_rad_s <= 0.3F)) &&
         input->velocity_rad_s >= -bench->draft_config.near_zero_rad_s &&
         input->velocity_rad_s <= bench->draft_config.near_zero_rad_s;
 }
@@ -40,6 +43,8 @@ static uint8_t qualified(const AdrcBench *bench)
 {
     uint32_t required = bench->draft_config.mode == ADRC_MODE_IDENTIFY ?
         ADRC_QUAL_IDENTIFY_REQUIRED : ADRC_QUAL_CLOSED_LOOP_REQUIRED;
+    if (bench->draft_config.interface_profile == ADRC_INTERFACE_POSITION32_QUANTIZED)
+    { required |= ADRC_QUAL_POSITION32_REQUIRED; }
     return (uint8_t)(bench->trusted_qualification.provenance == bench->experiment.environment &&
         bench->trusted_qualification.axis_index == bench->draft_config.axis_index &&
         (bench->trusted_qualification.verified_flags & required) == required);
@@ -113,6 +118,7 @@ static AdrcExperimentResult apply_config(AdrcBench *bench, const AdrcProtocolCom
                 bench->mapping[index] = command->values[index];
                 bench->trusted_qualification.verified_flags = 0U;
                 bench->experiment.configured = 0U;
+                bench->experiment.qualification.verified_flags = 0U;
             }
         }
         return ADRC_RESULT_OK;
@@ -143,6 +149,15 @@ static AdrcExperimentResult apply_config(AdrcBench *bench, const AdrcProtocolCom
     if (config.b0 != bench->draft_config.b0)
     { bench->trusted_qualification.verified_flags &= ~ADRC_QUAL_IDENTIFIED_MODEL; }
     (void)adrc_experiment_stop(&bench->experiment, input->now_us);
+    if (!adrc_experiment_config_equal(&config, &bench->draft_config))
+    {
+        bench->experiment.configured = 0U;
+        if (config.interface_profile == ADRC_INTERFACE_POSITION32_QUANTIZED)
+        {
+            bench->trusted_qualification.verified_flags &= ~ADRC_QUAL_POSITION32_REQUIRED;
+            bench->experiment.qualification.verified_flags &= ~ADRC_QUAL_POSITION32_REQUIRED;
+        }
+    }
     bench->draft_config = config;
     return ADRC_RESULT_OK;
 }
@@ -262,7 +277,8 @@ AdrcExperimentResult adrc_bench_service(AdrcBench *bench, const AdrcExperimentIn
         case ADRC_PROTOCOL_CLEAR:
             result = adrc_experiment_clear(&bench->experiment, input); break;
         case ADRC_PROTOCOL_RUN:
-            result = adrc_experiment_run(&bench->experiment, input, output);
+            result = qualified(bench) ? adrc_experiment_run(&bench->experiment, input, output) :
+                ADRC_RESULT_UNQUALIFIED;
             if (result == ADRC_RESULT_OK)
             { bench->run_request_id = command.request_id; started_run = 1U; }
             break;

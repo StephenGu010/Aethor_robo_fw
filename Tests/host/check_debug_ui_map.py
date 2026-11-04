@@ -10,6 +10,7 @@ import json
 import re
 
 TARGETS = ("CtrBoard-H7_FDCAN", "LCD-ReadOnly", "LCD-POS", "LCD-MIT")
+SELECTABLE_TARGETS = TARGETS + ("LCD-SingleStatic-Test", "LCD-POS-Load-Test", "LCD-MIT-ADRC", "ADRC-Bench")
 
 
 def verify_known_stack_depth(contents: str, callgraph: str, with_ui: bool) -> list[dict]:
@@ -45,13 +46,28 @@ def read_symbol(contents: str, name: str) -> tuple[int, int]:
     return int(match[1], 16), int(match[2])
 
 
-def verify_target(root: Path, target: str) -> dict:
-    """Validate final addresses and budgets, retaining the exact firmware hash."""
-    output = root / "MDK-ARM" / target
+def verify_static_trace_memory(contents: str, target: str) -> dict:
+    """Check final trace storage is bounded AXI RAM and absent from feature-off images."""
+    allocated = re.search(r"^\s*application_static_trace\s+0x", contents, re.M)
+    if target not in ("LCD-SingleStatic-Test", "LCD-POS-Load-Test"):
+        assert not allocated, (target, "Unexpected default-off startup trace allocation")
+        return dict(absent=True)
+    address, size = read_symbol(contents, "application_static_trace")
+    assert 0 < size <= 14 * 1024, (target, "Trace exceeds its reviewed 14 KiB budget", size)
+    assert 0x24010000 <= address and address + size <= 0x24050000, (target, "Trace is not in ordinary AXI RAM")
+    return dict(absent=False, address=hex(address), bytes=size, maximum_bytes=14 * 1024)
+
+
+def verify_target(root: Path, target: str, evidence_directory: Path | None = None) -> dict:
+    """Validate retained run artifacts when supplied; never fall back to shared build outputs."""
+    output = evidence_directory if evidence_directory is not None else root / "MDK-ARM" / target
     map_path = output / f"{target}.map"
     hex_path = output / f"{target}.hex"
+    callgraph_path = output / f"{target}.htm"
+    log_path = (output / f"{target}.keil.log" if evidence_directory is not None else
+                root / "Tests/host/build/keil" / f"{target}.log")
     contents = map_path.read_text(encoding="utf-8", errors="replace")
-    log = (root / "Tests/host/build/keil" / f"{target}.log").read_text(errors="replace")
+    log = log_path.read_text(errors="replace")
     assert "0 Error(s), 0 Warning(s)" in log, target
     size = re.search(r"Program Size: Code=(\d+) RO-data=(\d+) RW-data=(\d+) ZI-data=(\d+)", log)
     assert size, target
@@ -61,8 +77,11 @@ def verify_target(root: Path, target: str) -> dict:
     report = dict(target=target, code_bytes=code, ro_bytes=ro, rw_bytes=rw, zi_bytes=zi,
                   ram_bytes=rw + zi, hex_sha256=hashlib.sha256(hex_path.read_bytes()).hexdigest(),
                   map=str(map_path), hardware_timing_verified=False)
+    report["checked_inputs"] = [{"path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        for path in (map_path, hex_path, callgraph_path, log_path)]
+    report["startup_trace"] = verify_static_trace_memory(contents, target)
     report["task_stack_lower_bounds"] = verify_known_stack_depth(
-        contents, (output / f"{target}.htm").read_text(errors="replace"), target != TARGETS[0])
+        contents, callgraph_path.read_text(errors="replace"), target != TARGETS[0])
     if target == TARGETS[0]:
         assert not re.search(r"^\s*(?:draw_buffer_first|draw_buffer_second|debug_ui_lvgl_pool|debugUiTaskBuffer)\s+0x", contents, re.M)
         assert not re.search(r"^\s*StartDebugUiTask\s+0x.*Thumb Code", contents, re.M)
@@ -88,10 +107,12 @@ def verify_target(root: Path, target: str) -> dict:
 def main() -> None:
     """Check selected targets, defaulting to the complete four-target build matrix."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=TARGETS, action="append")
+    parser.add_argument("--target", choices=SELECTABLE_TARGETS, action="append")
+    parser.add_argument("--evidence-directory", type=Path,
+                        help="Check only the immutable run's flat map/htm/hex/keil.log artifacts")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    reports = [verify_target(root, target) for target in (args.target or TARGETS)]
+    reports = [verify_target(root, target, args.evidence_directory) for target in (args.target or TARGETS)]
     output = root / "Tests/host/build/verification/memory-layout.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({"software_only": True, "targets": reports}, indent=2) + "\n", encoding="utf-8")

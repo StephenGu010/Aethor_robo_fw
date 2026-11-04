@@ -32,6 +32,7 @@ static DebugUiSnapshot fixture(void)
         motor->motor_id = (uint8_t)(index + 1U);
         motor->feedback_seen = motor->feedback_valid = 1U;
         motor->identity_verified = motor->mode_verified = motor->ranges_verified = 1U;
+        motor->torque_max_nm = 10.0f;
         motor->actual_mode = DEBUG_UI_MODE_POS_VEL;
         motor->reference_generation = 3U;
         motor->position_max_rad = 12.5f;
@@ -73,7 +74,7 @@ static void test_overview_horizontal_navigation(void)
 {
     DebugUiModel model;
     DebugUiSnapshot snapshot=fixture();
-    static const DebugUiPage destinations[]={DEBUG_UI_PAGE_MOTORS,DEBUG_UI_PAGE_DIAGNOSTIC_MENU,DEBUG_UI_PAGE_PREPARE};
+    static const DebugUiPage destinations[]={DEBUG_UI_PAGE_MOTORS,DEBUG_UI_PAGE_DIAGNOSTICS,DEBUG_UI_PAGE_PREPARE,DEBUG_UI_PAGE_STATIC_HUB};
     unsigned focus,enter_key;
     snapshot.authority=DEBUG_UI_AUTHORITY_REMOTE;
     debug_ui_model_init(&model);
@@ -83,7 +84,7 @@ static void test_overview_horizontal_navigation(void)
     key(&model,DEBUG_UI_INPUT_EVENT_REPEAT,DEBUG_UI_KEY_RIGHT,1001U,0U);
     assert(model.page==DEBUG_UI_PAGE_OVERVIEW && model.focus==2U);
     key(&model,DEBUG_UI_INPUT_EVENT_PRESS,DEBUG_UI_KEY_RIGHT,1002U,0U);
-    assert(model.focus==0U);
+    assert(model.focus==3U);
     key(&model,DEBUG_UI_INPUT_EVENT_PRESS,DEBUG_UI_KEY_LEFT,1003U,0U);
     assert(model.page==DEBUG_UI_PAGE_OVERVIEW && model.focus==2U);
     key(&model,DEBUG_UI_INPUT_EVENT_REPEAT,DEBUG_UI_KEY_LEFT,1004U,0U);
@@ -91,7 +92,7 @@ static void test_overview_horizontal_navigation(void)
     key(&model,DEBUG_UI_INPUT_EVENT_PRESS,DEBUG_UI_KEY_UP,1005U,0U);
     key(&model,DEBUG_UI_INPUT_EVENT_REPEAT,DEBUG_UI_KEY_DOWN,1006U,0U);
     assert(model.page==DEBUG_UI_PAGE_OVERVIEW && model.focus==1U);
-    for(focus=0U;focus<3U;++focus) for(enter_key=0U;enter_key<2U;++enter_key) {
+    for(focus=0U;focus<4U;++focus) for(enter_key=0U;enter_key<2U;++enter_key) {
         debug_ui_model_init(&model);
         debug_ui_model_update(&model,&snapshot,snapshot.timestamp_us,1U,1U);
         model.focus=(uint8_t)focus;
@@ -100,6 +101,118 @@ static void test_overview_horizontal_navigation(void)
         assert(!model.outgoing_ready && !model.stop_ready);
     }
     puts("OVERVIEW_HORIZONTAL_KEYS_PASS wrap=1 repeat_selection=1 center_down_enter=1 no_requests=1");
+}
+
+/** @brief Direct diagnostic tabs retain their source and never create ordinary requests. */
+static void test_direct_diagnostic_tabs(void)
+{
+    static const DebugUiPage sources[] = {DEBUG_UI_PAGE_OVERVIEW, DEBUG_UI_PAGE_RESULT, DEBUG_UI_PAGE_FAULT};
+    static const DebugUiKey tab_keys[] = {DEBUG_UI_KEY_UP, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT};
+    static const uint8_t tab_values[] = {0U, 1U, 2U, 3U, 254U, 255U};
+    unsigned source_index, key_index, tab_index, repeat_index, step;
+    for (source_index = 0U; source_index < 3U; ++source_index) {
+        DebugUiModel model;
+        DebugUiSnapshot snapshot = fixture();
+        DebugUiRequest request, original_draft;
+        snapshot.authority = DEBUG_UI_AUTHORITY_REMOTE;
+        debug_ui_model_init(&model);
+        debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+        model.page = sources[source_index];
+        model.focus = source_index == 0U ? 1U : 0U;
+        model.selected_motor = 6U;
+        model.diagnostic_page = 255U;
+        original_draft = model.draft;
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, source_index == 0U ? DEBUG_UI_KEY_DOWN : DEBUG_UI_KEY_RIGHT, 1000U, 0U);
+        assert(model.page == DEBUG_UI_PAGE_DIAGNOSTICS && model.diagnostic_page < 3U);
+        assert(model.diagnostic_return_page == sources[source_index]);
+        for (key_index = 0U; key_index < 3U; ++key_index)
+            for (tab_index = 0U; tab_index < sizeof(tab_values) / sizeof(tab_values[0]); ++tab_index)
+                for (repeat_index = 0U; repeat_index < 2U; ++repeat_index) {
+                    unsigned expected = tab_values[tab_index] < 3U ? tab_values[tab_index] : 0U;
+                    model.diagnostic_page = tab_values[tab_index];
+                    for (step = 0U; step < 6U; ++step) {
+                        expected = (expected + (key_index == 0U ? 2U : 1U)) % 3U;
+                        key(&model, repeat_index ? DEBUG_UI_INPUT_EVENT_REPEAT : DEBUG_UI_INPUT_EVENT_PRESS,
+                            tab_keys[key_index], 1001U + step, 0U);
+                        assert(model.page == DEBUG_UI_PAGE_DIAGNOSTICS && model.diagnostic_page == expected);
+                        assert(!debug_ui_model_take_request(&model, &request));
+                    }
+                }
+        model.diagnostic_page = 1U;
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_UNKNOWN, 1010U, 0U);
+        key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_RIGHT, 1011U, 0U);
+        key(&model, DEBUG_UI_INPUT_EVENT_HOLD, DEBUG_UI_KEY_DOWN, 1012U, 900U);
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1013U, 0U);
+        key(&model, DEBUG_UI_INPUT_EVENT_REPEAT, DEBUG_UI_KEY_CENTER, 1014U, 900U);
+        key(&model, DEBUG_UI_INPUT_EVENT_HOLD, DEBUG_UI_KEY_CENTER, 2013U, 1000U);
+        key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_CENTER, 2014U, 0U);
+        assert(model.page == DEBUG_UI_PAGE_DIAGNOSTICS && model.diagnostic_page == 1U);
+        assert(!debug_ui_model_take_request(&model, &request));
+        assert(memcmp(&snapshot, &model.snapshot, sizeof(snapshot)) == 0);
+        assert(memcmp(&original_draft, &model.draft, sizeof(original_draft)) == 0);
+        assert(model.selected_motor == 6U && !model.awaiting_result);
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 2015U, 0U);
+        assert(model.page == sources[source_index]);
+        if (source_index == 0U) assert(model.focus == 1U);
+    }
+    puts("DIAGNOSTIC_DIRECT_TABS_PASS sources=3 directions=3 repeats=1 malformed_tabs=3 readonly=1");
+}
+
+/** @brief Legacy diagnostic menu keeps its focus and original parent after tab browsing. */
+static void test_legacy_diagnostic_menu_return(void)
+{
+    unsigned focus;
+    for (focus = 0U; focus < 3U; ++focus) {
+        DebugUiModel model;
+        DebugUiSnapshot snapshot = fixture();
+        DebugUiRequest request;
+        debug_ui_model_init(&model);
+        debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+        model.page = DEBUG_UI_PAGE_DIAGNOSTIC_MENU;
+        model.diagnostic_return_page = DEBUG_UI_PAGE_FAULT;
+        model.focus = (uint8_t)focus;
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1000U, 0U);
+        assert(model.page == DEBUG_UI_PAGE_DIAGNOSTICS && model.diagnostic_page == focus);
+        key(&model, DEBUG_UI_INPUT_EVENT_REPEAT, DEBUG_UI_KEY_DOWN, 1001U, 0U);
+        assert(model.diagnostic_page == (focus + 1U) % 3U);
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1002U, 0U);
+        assert(model.page == DEBUG_UI_PAGE_DIAGNOSTIC_MENU && model.focus == focus);
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1003U, 0U);
+        assert(model.page == DEBUG_UI_PAGE_FAULT && !debug_ui_model_take_request(&model, &request));
+    }
+    puts("DIAGNOSTIC_LEGACY_RETURN_PASS menu_focus=3 parent_retained=1");
+}
+
+/** @brief Browsing diagnostics cannot acknowledge a failed disable from either terminal page. */
+static void test_diagnostic_failed_disable_retained(void)
+{
+    unsigned source_index;
+    for (source_index = 0U; source_index < 2U; ++source_index) {
+        DebugUiModel model;
+        DebugUiSnapshot snapshot = fixture();
+        DebugUiRequest request;
+        debug_ui_model_init(&model);
+        debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+        model.page = source_index ? DEBUG_UI_PAGE_FAULT : DEBUG_UI_PAGE_RESULT;
+        model.stop_latch_state = DEBUG_UI_STOP_LATCH_UNCONFIRMED;
+        model.completion_seen = 1U;
+        model.completion.operation = DEBUG_UI_OPERATION_POS_MOVE;
+        model.completion.disabled_confirmed = 0U;
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1000U, 0U);
+        assert(model.page == DEBUG_UI_PAGE_DIAGNOSTICS);
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1001U, 0U);
+        key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_CENTER, 1002U, 0U);
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1003U, 0U);
+        assert(model.page == (source_index ? DEBUG_UI_PAGE_FAULT : DEBUG_UI_PAGE_RESULT));
+        assert(model.completion_seen && debug_ui_model_result_requires_check(&model));
+        assert(model.stop_latch_state == DEBUG_UI_STOP_LATCH_UNCONFIRMED);
+        assert(debug_ui_model_gate(&model, DEBUG_UI_OPERATION_POS_MOVE) == DEBUG_UI_REASON_NOT_DISABLED);
+        key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1004U, 0U);
+        assert(model.page == DEBUG_UI_PAGE_PREPARE && model.completion_seen);
+        assert(model.stop_latch_state == DEBUG_UI_STOP_LATCH_UNCONFIRMED);
+        assert(!debug_ui_model_take_request(&model, &request));
+    }
+    puts("DIAGNOSTIC_DISABLE_LOCK_PASS result_fault=2 completion_retained=1 no_requests=1");
 }
 
 /** @brief Start with no inferred feedback, and scroll all seven rows using keys. */
@@ -209,14 +322,11 @@ static void test_astra_overlay_returns(void)
     model.selected_motor = 6U;
     model.stop_latch_state = DEBUG_UI_STOP_LATCH_UNCONFIRMED;
     key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1000U, 0U);
-    assert(model.page == DEBUG_UI_PAGE_DIAGNOSTIC_MENU);
+    assert(model.page == DEBUG_UI_PAGE_DIAGNOSTICS);
     key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_DOWN, 1000U, 0U);
-    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1000U, 0U);
     assert(model.page == DEBUG_UI_PAGE_DIAGNOSTICS && model.diagnostic_page == 1U);
     key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_DOWN, 1000U, 0U);
-    assert(model.diagnostic_page == 1U);
-    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1000U, 0U);
-    assert(model.page == DEBUG_UI_PAGE_DIAGNOSTIC_MENU && model.focus == 1U);
+    assert(model.diagnostic_page == 2U);
     key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1000U, 0U);
     assert(model.page == DEBUG_UI_PAGE_FAULT && model.selected_motor == 6U);
     key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1000U, 0U);
@@ -806,9 +916,166 @@ static void test_fault_recheck_refreshes_disabled_feedback(void)
     }
 }
 
+/** @brief Require every static axis and freeze all references before confirmation. */
+static void test_static_hold_group_contract(void)
+{
+    DebugUiModel model;
+    DebugUiSnapshot snapshot = fixture();
+    DebugUiRequest request;
+    unsigned index;
+    snapshot.static_load_enabled = 1U;
+    snapshot.target_motor_id = 7U;
+    for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
+        snapshot.motors[index].actual_mode = DEBUG_UI_MODE_MIT;
+    snapshot.motors[3].profile.hold_min_ms = 300U;
+    snapshot.motors[4].profile.hold_max_ms = 500U;
+    debug_ui_model_init(&model);
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    assert(debug_ui_model_gate(&model, DEBUG_UI_OPERATION_STATIC_HOLD) == DEBUG_UI_REASON_NONE);
+    assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_STATIC_HOLD, DEBUG_UI_MODE_MIT));
+    assert(model.draft.target_motor_id == 7U && model.draft.hold_duration_ms == 300U);
+    assert(debug_ui_model_parameter_count(&model) == 1U);
+    assert(debug_ui_model_parameter_field(&model, 0U) == 4U);
+    for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index) {
+        assert(model.draft.static_references[index] == snapshot.motors[index].reference_generation);
+        assert(model.draft.static_positions_rad[index] == snapshot.motors[index].position_rad);
+    }
+    model.focus = 1U;
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1000U, 0U);
+    assert(model.page == DEBUG_UI_PAGE_REVIEW);
+    model.selected_motor = 5U; /* This frozen group is independent of the browsing row. */
+    key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_CENTER, 1001U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1010U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_HOLD, DEBUG_UI_KEY_CENTER, 1810U, 800U);
+    assert(debug_ui_model_take_request(&model, &request));
+    assert(request.operation == DEBUG_UI_OPERATION_STATIC_HOLD && request.target_motor_id == 7U);
+    assert(!debug_ui_model_take_request(&model, &request));
+    key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_CENTER, 1811U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1820U, 0U);
+    assert(debug_ui_model_take_request(&model, &request) && request.operation == DEBUG_UI_OPERATION_STOP);
+    assert(model.stop_motor_mask == 0x7FU);
+
+    for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index) {
+        DebugUiSnapshot invalid = snapshot;
+        invalid.motors[index].feedback_valid = 0U;
+        debug_ui_model_init(&model);
+        debug_ui_model_update(&model, &invalid, invalid.timestamp_us, 1U, 1U);
+        assert(debug_ui_model_gate(&model, DEBUG_UI_OPERATION_STATIC_HOLD) == DEBUG_UI_REASON_STALE_FEEDBACK);
+    }
+    debug_ui_model_init(&model);
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_STATIC_HOLD, DEBUG_UI_MODE_MIT));
+    ++snapshot.motors[5].reference_generation;
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    assert(model.page == DEBUG_UI_PAGE_NOTICE && model.reason == DEBUG_UI_REASON_OLD_EPOCH);
+    assert(!debug_ui_model_take_request(&model, &request));
+    puts("STATIC_UI_GROUP_CONTRACT_PASS all_axes=7 intersection=1 reference_revoke=1 stop_mask=127");
+}
+
+/** @brief Deny malformed/missing evidence for every axis and revoke any stale lock. */
+static void test_static_hold_refusals_and_navigation(void)
+{
+    DebugUiModel model;
+    DebugUiSnapshot snapshot = fixture();
+    DebugUiRequest request;
+    unsigned index, failure;
+    snapshot.static_load_enabled = 1U;
+    for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
+        snapshot.motors[index].actual_mode = DEBUG_UI_MODE_MIT;
+    for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index) {
+        for (failure = 0U; failure < 11U; ++failure) {
+            DebugUiSnapshot invalid = snapshot;
+            DebugUiReason expected = DEBUG_UI_REASON_NOT_READY;
+            DebugUiMotorView *motor = &invalid.motors[index];
+            if (failure == 0U) motor->motor_id = 0U;
+            else if (failure == 1U) motor->actual_mode = DEBUG_UI_MODE_POS_VEL;
+            else if (failure == 2U) motor->identity_verified = 0U;
+            else if (failure == 3U) motor->ranges_verified = 0U;
+            else if (failure == 4U) { motor->feedback_age_ms = 150U; expected = DEBUG_UI_REASON_STALE_FEEDBACK; }
+            else if (failure == 5U) { motor->position_rad = NAN; expected = DEBUG_UI_REASON_STALE_FEEDBACK; }
+            else if (failure == 6U) { motor->enabled = 1U; expected = DEBUG_UI_REASON_NOT_DISABLED; }
+            else if (failure == 7U) motor->velocity_rad_s = 0.051f;
+            else if (failure == 8U) { motor->profile.mit_valid = 0U; expected = DEBUG_UI_REASON_UNCALIBRATED; }
+            else if (failure == 9U) motor->reference_generation = 0U;
+            else motor->fault_flags = 1U;
+            debug_ui_model_init(&model);
+            debug_ui_model_update(&model, &invalid, invalid.timestamp_us, 1U, 1U);
+            assert(debug_ui_model_gate(&model, DEBUG_UI_OPERATION_STATIC_HOLD) == expected);
+            assert(!debug_ui_model_begin(&model, DEBUG_UI_OPERATION_STATIC_HOLD, DEBUG_UI_MODE_MIT));
+            assert(!debug_ui_model_take_request(&model, &request));
+        }
+    }
+    debug_ui_model_init(&model);
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    model.page = DEBUG_UI_PAGE_STATIC_HUB; model.focus = 0U;
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_DOWN, 1000U, 0U);
+    assert(model.focus == 1U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1001U, 0U);
+    assert(model.page == DEBUG_UI_PAGE_STATIC_LOAD);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1002U, 0U);
+    assert(model.page == DEBUG_UI_PAGE_STATIC_ACTIONS);
+    model.focus = 1U;
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1003U, 0U);
+    assert(model.static_locked && model.page == DEBUG_UI_PAGE_STATIC_ACTIONS);
+    model.focus = 2U;
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1004U, 0U);
+    assert(model.page == DEBUG_UI_PAGE_EDIT);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1005U, 0U);
+    assert(model.page == DEBUG_UI_PAGE_NUMBER && model.edit_field == 4U);
+    for (index = 0U; index < 20U; ++index)
+        key(&model, DEBUG_UI_INPUT_EVENT_REPEAT, DEBUG_UI_KEY_UP, 1006U + index, 0U);
+    assert(model.draft.hold_duration_ms == 1000U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1030U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_LEFT, 1031U, 0U);
+    assert(model.page == DEBUG_UI_PAGE_STATIC_ACTIONS);
+    snapshot.motors[6].position_rad += debug_ui_degrees_to_radians(0.51f);
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    assert(!model.static_locked);
+    model.focus = 3U;
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1032U, 0U);
+    assert(model.page == DEBUG_UI_PAGE_NOTICE && !model.outgoing_ready);
+    snapshot.static_load_enabled = 0U;
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    assert(debug_ui_model_gate(&model, DEBUG_UI_OPERATION_STATIC_HOLD) == DEBUG_UI_REASON_DISABLED);
+    puts("STATIC_UI_REFUSALS_PASS per_axis_cases=77 nav=1 duration_cap=1000 pose_revoke=1 runtime_lock=1");
+}
+
+/** @brief STOP cancels the unsent group slot and retains every potential cleanup target. */
+static void test_static_unsent_stop_mask(void)
+{
+    DebugUiModel model;
+    DebugUiSnapshot snapshot = fixture();
+    DebugUiRequest request;
+    unsigned index;
+    snapshot.static_load_enabled = 1U;
+    for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
+        snapshot.motors[index].actual_mode = DEBUG_UI_MODE_MIT;
+    debug_ui_model_init(&model);
+    debug_ui_model_update(&model, &snapshot, snapshot.timestamp_us, 1U, 1U);
+    assert(debug_ui_model_begin(&model, DEBUG_UI_OPERATION_STATIC_HOLD, DEBUG_UI_MODE_MIT));
+    model.focus = 1U;
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_RIGHT, 1000U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_CENTER, 1001U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1010U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_HOLD, DEBUG_UI_KEY_CENTER, 1810U, 800U);
+    assert(model.outgoing_ready);
+    key(&model, DEBUG_UI_INPUT_EVENT_RELEASE, DEBUG_UI_KEY_CENTER, 1811U, 0U);
+    key(&model, DEBUG_UI_INPUT_EVENT_PRESS, DEBUG_UI_KEY_CENTER, 1820U, 0U);
+    assert(model.stop_motor_mask == 0x7FU);
+    assert(debug_ui_model_take_request(&model, &request) && request.operation == DEBUG_UI_OPERATION_STOP);
+    assert(!debug_ui_model_take_request(&model, &request));
+    puts("STATIC_UI_UNSENT_STOP_OK mask=127 ordinary_cancelled=1");
+}
+
 /** @brief Execute behavior groups and expose a simple nonzero failure contract. */
 int main(void)
 {
+    test_direct_diagnostic_tabs();
+    test_legacy_diagnostic_menu_return();
+    test_diagnostic_failed_disable_retained();
+    test_static_hold_group_contract();
+    test_static_hold_refusals_and_navigation();
+    test_static_unsent_stop_mask();
     test_revoked_draft_notice_exit();
     test_right_key_review_confirmation();
     test_recovery_confirmation_retains_lock();

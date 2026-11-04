@@ -250,6 +250,8 @@ static void test_landscape_key_navigation(void)
 {
     DebugUiModel navigation;
     DebugUiInputEvent event;
+    DebugUiRequest request;
+    unsigned source_index;
     debug_ui_model_init(&navigation);
     navigation.input_valid = 1U; /* Model normally receives ADC health from UiTask. */
     memset(&event, 0, sizeof(event));
@@ -261,7 +263,18 @@ static void test_landscape_key_navigation(void)
     /* Screen down is decoded as LEFT; a new press must enter diagnostics. */
     event.key = DEBUG_UI_KEY_LEFT;
     lv_port_indev_event(&navigation, &event);
-    assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTIC_MENU);
+    assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTICS && navigation.diagnostic_page == 0U);
+    /* Screen UP/DOWN/RIGHT cycle tabs; screen LEFT returns directly to the home source. */
+    event.key = DEBUG_UI_KEY_RIGHT;
+    lv_port_indev_event(&navigation, &event);
+    assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTICS && navigation.diagnostic_page == 2U);
+    event.key = DEBUG_UI_KEY_LEFT;
+    lv_port_indev_event(&navigation, &event);
+    assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTICS && navigation.diagnostic_page == 0U);
+    event.key = DEBUG_UI_KEY_DOWN;
+    lv_port_indev_event(&navigation, &event);
+    assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTICS && navigation.diagnostic_page == 1U);
+    assert(!debug_ui_model_take_request(&navigation, &request));
     event.key = DEBUG_UI_KEY_UP;
     lv_port_indev_event(&navigation, &event);
     assert(navigation.page == DEBUG_UI_PAGE_OVERVIEW);
@@ -271,7 +284,23 @@ static void test_landscape_key_navigation(void)
     event.key = DEBUG_UI_KEY_CENTER;
     lv_port_indev_event(&navigation, &event);
     assert(navigation.page == DEBUG_UI_PAGE_MOTORS);
-    puts("LANDSCAPE_KEY_NAVIGATION_PASS right_select_down_enter_left_back_left_select_center_enter");
+    for (source_index = 0U; source_index < 2U; ++source_index) {
+        DebugUiPage source = source_index ? DEBUG_UI_PAGE_FAULT : DEBUG_UI_PAGE_RESULT;
+        debug_ui_model_init(&navigation);
+        navigation.input_valid = 1U;
+        navigation.page = source;
+        navigation.stop_latch_state = DEBUG_UI_STOP_LATCH_UNCONFIRMED;
+        event.key = DEBUG_UI_KEY_DOWN; /* Physical screen RIGHT opens the direct diagnostic tabs. */
+        lv_port_indev_event(&navigation, &event);
+        assert(navigation.page == DEBUG_UI_PAGE_DIAGNOSTICS);
+        event.key = DEBUG_UI_KEY_UP; /* Physical screen LEFT returns to the actual terminal page. */
+        lv_port_indev_event(&navigation, &event);
+        assert(navigation.page == source);
+        assert(navigation.stop_latch_state == DEBUG_UI_STOP_LATCH_UNCONFIRMED);
+        assert(debug_ui_model_result_requires_check(&navigation));
+        assert(!debug_ui_model_take_request(&navigation, &request));
+    }
+    puts("LANDSCAPE_KEY_NAVIGATION_PASS direct_tabs=3 sources=3 right_select_down_enter_left_back_left_select_center_enter readonly=1 disable_lock_retained=1");
 }
 
 /** @brief Require queued model events to redraw immediately instead of waiting 100 ms. */

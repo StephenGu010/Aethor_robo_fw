@@ -35,6 +35,7 @@ typedef struct
     float target_position_rad;
     float target_velocity_rad_s;
     uint32_t active_request_id;
+    uint32_t feedback_generation; /**< Per-ID accepted sample sequence; unrelated motors cannot advance it. */
     uint16_t esc_id;
     uint16_t master_id;
     uint16_t parameter_valid_mask;

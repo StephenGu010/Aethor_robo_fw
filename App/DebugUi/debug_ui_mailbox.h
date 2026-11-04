@@ -27,6 +27,7 @@ typedef struct
     DebugUiMailboxTransaction transactions[DEBUG_UI_RESULT_CAPACITY];
     DebugUiHealth health;
     uint32_t last_request_id;
+    uint32_t remote_last_request_id; /**< Independent high-bit proxy identity domain. */
     /** @brief Coalesced unaccepted STOP intents, independent of all retained identities. */
     uint8_t stop_intent_mask;
 } DebugUiMailbox;

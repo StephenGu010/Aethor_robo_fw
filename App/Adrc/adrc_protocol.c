@@ -210,14 +210,14 @@ ProtocolEngineStatus adrc_protocol_handle_request(void *context, const TextProto
             (gateway->trace_reader(gateway->trace_context, integer_value, &record) == 0U))
         { return reject(output, request->request_id, "trace_unavailable"); }
         return format_output(output, PROTOCOL_ENGINE_STATUS_OK,
-            "ok %lu adrc trace index=%lu t=%llu fb=%llu ref=%.6g pos=%.6g vel=%.6g raw=%.6g req=%.6g sent=%.6g z1=%.6g z2=%.6g state=%u fault=%u flags=%u seq=%lu motor=%u",
+            "ok %lu adrc trace index=%lu t=%llu fb=%llu ref=%.6g pos=%.6g vel=%.6g raw=%.6g req=%.6g sent=%.6g z1=%.6g z2=%.6g state=%u fault=%u flags=%u seq=%lu motor=%u vel_raw=%.6g",
             (unsigned long)request->request_id, (unsigned long)integer_value,
             (unsigned long long)record.timestamp_us, (unsigned long long)record.feedback_us,
             (double)record.reference_rad_s, (double)record.position_rad, (double)record.velocity_rad_s,
             (double)record.torque_raw_nm, (double)record.torque_requested_nm, (double)record.torque_sent_previous_nm,
             (double)record.z1, (double)record.z2, (unsigned int)record.state, (unsigned int)record.fault,
             (unsigned int)record.flags, (unsigned long)record.sequence,
-            (unsigned int)record.axis_index + 1U);
+            (unsigned int)record.axis_index + 1U, (double)record.raw_velocity_rad_s);
     }
     memset(&command, 0, sizeof(command));
     command.request_id = request->request_id;

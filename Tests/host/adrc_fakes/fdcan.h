@@ -6,13 +6,22 @@
 #include <stdint.h>
 typedef enum { HAL_OK = 0, HAL_ERROR = 1 } HAL_StatusTypeDef;
 /** @brief Fake hardware status registers; values are controlled by the test. */
-typedef struct { uint32_t TXBRP, TXBTO, TXBCR, TXBCF, PSR; } FDCAN_GlobalTypeDef;
+typedef struct { uint32_t TXBRP, TXBTO, TXBCR, TXBCF, PSR, TXBAR, CCCR; } FDCAN_GlobalTypeDef;
 /** @brief Only members referenced by the channel under test. */
-typedef struct { FDCAN_GlobalTypeDef *Instance; struct { uint32_t TxBuffersNbr; } Init; } FDCAN_HandleTypeDef;
+typedef struct { FDCAN_GlobalTypeDef *Instance; struct { uint32_t TxBuffersNbr; } Init; uint32_t State; } FDCAN_HandleTypeDef;
 /** @brief Classic transmit metadata copied by the fake HAL. */
 typedef struct { uint32_t Identifier, IdType, TxFrameType, DataLength,
     ErrorStateIndicator, BitRateSwitch, FDFormat, TxEventFifoControl, MessageMarker; } FDCAN_TxHeaderTypeDef;
 #define FDCAN_TX_BUFFER0 1U
+#define FDCAN_TX_BUFFER1 2U
+#define HAL_FDCAN_STATE_READY 1U
+#define HAL_FDCAN_STATE_BUSY 2U
+#define FDCAN_CCCR_INIT 1U
+extern uint32_t adrc_test_irq_mask;
+#define __get_PRIMASK() (adrc_test_irq_mask)
+#define __disable_irq() ((void)(adrc_test_irq_mask = 1U))
+#define __set_PRIMASK(value) ((void)(adrc_test_irq_mask = (value)))
+#define __DMB() ((void)0)
 #define FDCAN_PSR_BO 128U
 #define FDCAN_STANDARD_ID 0U
 #define FDCAN_DATA_FRAME 0U

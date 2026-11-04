@@ -23,7 +23,9 @@ function Invoke-LvglRenderSmoke {
         'Tests/ui/ui_render_smoke.c')
     $arguments = @('-std=c99', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-O1', '-g',
         '-DLV_CONF_INCLUDE_SIMPLE', '-DAETHOR_DEBUG_UI_ENABLE=1', '-DAETHOR_DEBUG_UI_ALLOW_MOTION=1',
-        '-DAETHOR_DEBUG_UI_ALLOW_MIT=1', '-IUi', '-IMiddlewares/Third_Party/LVGL', '-IApp/DebugUi')
+        '-DAETHOR_DEBUG_UI_ALLOW_MIT=1', '-DAETHOR_DEBUG_UI_ALLOW_STATIC_LOAD=1', '-DAETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD=1',
+        '-DAETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST=1',
+        '-IUi', '-IMiddlewares/Third_Party/LVGL', '-IApp/DebugUi')
     $arguments += $sourcePaths
     $arguments += @('-lm', '-o', 'Tests/ui/build/render/ui_render_smoke.exe')
     $responsePath = Join-Path $buildDirectory 'compile.rsp'

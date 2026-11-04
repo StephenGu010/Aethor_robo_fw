@@ -147,6 +147,8 @@ MotorBankStatus motor_bank_update_feedback(MotorBank *bank,
     motor->feedback_valid = 1U;
     bank->valid_joint_mask |= (uint8_t)(1U << joint_index);
     bank->bus_state = MOTOR_BUS_ACTIVE;
+    ++motor->feedback_generation;
+    if (motor->feedback_generation == 0U) ++motor->feedback_generation;
     ++bank->generation;
     motor_bank_compiler_barrier();
     ++bank->publication_sequence;

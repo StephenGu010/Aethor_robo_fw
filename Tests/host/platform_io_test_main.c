@@ -231,11 +231,40 @@ static void test_monotonic_time_handles_increment_and_repeated_tick(void)
     assert(aethor_monotonic_time_update(&time_state, 126U) == 126000ULL);
 }
 
+/** @brief Old FIFO backlog and uncompleted TX cannot establish post-challenge timing. */
+static void test_can_rx_boundary_requires_empty_hardware(void)
+{
+    assert(can_rx_inbox_observe_lower_bound(0ULL, 100ULL, 1U, 0U, 0U) == 0ULL);
+    assert(can_rx_inbox_observe_lower_bound(0ULL, 100ULL, 0U, 1U, 0U) == 0ULL);
+    assert(can_rx_inbox_observe_lower_bound(0ULL, 100ULL, 0U, 0U, 1U) == 0ULL);
+    assert(can_rx_inbox_observe_lower_bound(0ULL, 100ULL, 0U, 0U, 0U) == 100ULL);
+    assert(can_rx_inbox_observe_lower_bound(100ULL, 200ULL, 1U, 0U, 0U) == 100ULL);
+    assert(can_rx_inbox_observe_lower_bound(100ULL, 0ULL, 0U, 0U, 0U) == 0ULL);
+    assert(can_rx_inbox_observe_lower_bound(100ULL, 99ULL, 0U, 0U, 0U) == 0ULL);
+}
+
+/** @brief Retains unknown and old arrival bounds across delayed software dequeue. */
+static void test_can_rx_arrival_bounds_survive_queue_delay(void)
+{
+    CanRxInbox inbox;
+    CanFrame frame = {0};
+    uint64_t lower_bound_us = 123ULL;
+    can_rx_inbox_init(&inbox);
+    assert(can_rx_inbox_push_isr_at(&inbox, &frame, 0ULL) == CAN_RX_INBOX_STATUS_OK);
+    assert(can_rx_inbox_push_isr_at(&inbox, &frame, 4294967297000ULL) == CAN_RX_INBOX_STATUS_OK);
+    assert(can_rx_inbox_pop_at(&inbox, &frame, &lower_bound_us) == CAN_RX_INBOX_STATUS_OK);
+    assert(lower_bound_us == 0ULL);
+    assert(can_rx_inbox_pop_at(&inbox, &frame, &lower_bound_us) == CAN_RX_INBOX_STATUS_OK);
+    assert(lower_bound_us == 4294967297000ULL);
+}
+
 /**
  * @brief Runs all ISR-to-task platform queue tests.
  */
 int main(void)
 {
+    test_can_rx_boundary_requires_empty_hardware();
+    test_can_rx_arrival_bounds_survive_queue_delay();
     test_can_rx_inbox();
     test_usb_receive_line_assembly();
     test_usb_transmit_lifetime_and_priority();

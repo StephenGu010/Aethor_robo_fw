@@ -3,6 +3,7 @@
   ******************************************************************************
   * File Name          : freertos.c
   * Description        : Code for freertos applications
+  * Maintenance CAN bridging is opt-in; default builds retain the existing transport.
   ******************************************************************************
   * @attention
   *
@@ -29,9 +30,17 @@
 #include "monotonic_time.h"
 #include "stm32_platform.h"
 #include "debug_ui_config.h"
+#include "aethor_task_stacks.h"
 #include "adrc_build_config.h"
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+#include "motor_persistence_app_port.h"
+#include "usbd_cdc_if.h"
+#endif
 #if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
 #include "stm32_adrc_channel.h"
+#if TICK_INT_PRIORITY >= configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY
+#error "ADRC stop timer must remain above the FreeRTOS BASEPRI mask."
+#endif
 #endif
 #if AETHOR_DEBUG_UI_ENABLE
 #include "debug_ui_task.h"
@@ -75,10 +84,10 @@ osThreadId ArmControlTaskHandle;
 uint32_t armControlTaskBuffer[ 1280 ];
 osStaticThreadDef_t armControlTaskControlBlock;
 osThreadId CanRxTaskHandle;
-uint32_t canRxTaskBuffer[ 384 ];
+uint32_t canRxTaskBuffer[ AETHOR_CAN_RX_TASK_STACK_WORDS ];
 osStaticThreadDef_t canRxTaskControlBlock;
 osThreadId ProtocolTaskHandle;
-uint32_t protocolTaskBuffer[ 1280 ];
+uint32_t protocolTaskBuffer[ AETHOR_PROTOCOL_TASK_STACK_WORDS ];
 osStaticThreadDef_t protocolTaskControlBlock;
 osThreadId UsbTxTaskHandle;
 uint32_t usbTxTaskBuffer[ 384 ];
@@ -87,7 +96,7 @@ osThreadId TelemetryTaskHandle;
 uint32_t telemetryTaskBuffer[ 1024 ];
 osStaticThreadDef_t telemetryTaskControlBlock;
 osThreadId DiagnosticsTaskHandle;
-uint32_t diagnosticsTaskBuffer[ 384 ];
+uint32_t diagnosticsTaskBuffer[ AETHOR_DIAGNOSTICS_TASK_STACK_WORDS ];
 osStaticThreadDef_t diagnosticsTaskControlBlock;
 
 /* Private function prototypes -----------------------------------------------*/
@@ -99,6 +108,107 @@ static void QueueProtocolOutputBatch(const ProtocolOutputBatch *outputBatch);
 static uint64_t AethorMonotonicTimestampUs(void);
 static void EnterAethorAppTaskCritical(void);
 static void ExitAethorAppTaskCritical(void);
+/* BEGIN_PERSISTENCE_CORE_BRIDGE */
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+/** @brief Recheck the entire USB callback word under Platform's IRQ mask before committing the parameter pair. */
+static uint8_t PersistenceParameterSubmitted(const MotorPersistenceIdentity *identity, uint64_t boundaryUs)
+{
+  aethor_app_persistence_observe_link(CDC_PersistenceLinkState_HS(), boundaryUs);
+  return aethor_app_persistence_parameter_submitted(identity, boundaryUs);
+}
+
+/** @brief Recheck the current USB binding before committing the independent maintenance DISABLE identity. */
+static uint8_t PersistenceDisableSubmitted(const DebugUiStaticTxIdentity *identity, uint64_t boundaryUs)
+{
+  aethor_app_persistence_observe_link(CDC_PersistenceLinkState_HS(), boundaryUs);
+  return aethor_app_persistence_disable_submitted(identity, boundaryUs);
+}
+
+/** @brief Cancel only the outstanding original identity; Platform retains ownership until its hardware debt clears. */
+static void CancelPersistenceTransfer(void)
+{
+  MotorPersistenceIdentity identity;
+  if (aethor_app_persistence_cancel_identity(&identity))
+  { (void)stm32_platform_can_cancel_persistence(&identity); }
+}
+
+/** @brief Sole maintenance receipt consumer preserves immutable identity and completion-observation time. */
+static void CollectPersistenceReceipt(uint64_t observedUs)
+{
+  MotorPersistenceIdentity identity;
+  uint64_t completedObservedUs;
+  uint8_t succeeded;
+  CancelPersistenceTransfer();
+  if (stm32_platform_can_collect_persistence(&identity, observedUs, &completedObservedUs, &succeeded))
+  { aethor_app_persistence_parameter_transmitted(&identity, succeeded, completedObservedUs, observedUs); }
+}
+
+/** @brief Route one immutable maintenance pair before legacy byte classifiers; refusal never falls through or retries. */
+static void ServicePersistenceTransfer(uint64_t observedUs)
+{
+  AethorPersistenceTransfer transfer;
+  uint8_t accepted = 0U;
+  CancelPersistenceTransfer();
+  if (!aethor_app_persistence_next_transfer(observedUs, &transfer)) return;
+  if (transfer.kind == AETHOR_PERSISTENCE_TRANSFER_PARAMETER)
+  {
+    accepted = stm32_platform_can_submit_persistence(&transfer.frame, &transfer.parameter_identity,
+        observedUs, MOTOR_PERSISTENCE_FRAME_BUDGET_US, PersistenceParameterSubmitted);
+  }
+  else if (transfer.kind == AETHOR_PERSISTENCE_TRANSFER_DISABLE)
+  {
+    accepted = stm32_platform_can_submit_static(&transfer.frame, &transfer.disable_identity,
+        aethor_app_debug_ui_preflight_timeout_us(), PersistenceDisableSubmitted);
+  }
+  if (!accepted) aethor_app_persistence_transfer_rejected(&transfer, observedUs);
+}
+#endif
+/* END_PERSISTENCE_CORE_BRIDGE */
+#if AETHOR_DEBUG_UI_ALLOW_MOTION && (AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST)
+/** @brief Forward only the dedicated LCD DISABLE receipt; polling time never becomes feedback time. */
+static void CollectSingleStaticReceipt(void)
+{
+  DebugUiStaticTxIdentity identity;
+  uint8_t succeeded;
+  uint16_t sof;
+  if (stm32_platform_can_collect_static(&identity, &succeeded, &sof))
+  {
+    uint64_t observedUs = AethorMonotonicTimestampUs();
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+    if (aethor_app_persistence_disable_transmitted(&identity, succeeded, sof, observedUs)) return;
+#endif
+    aethor_app_static_transmitted(&identity, succeeded, sof, observedUs);
+  }
+}
+/* BEGIN_SINGLE_STATIC_RX_BRIDGE */
+/** @brief Decode the immutable SOF tag and full strict identity; raw RX remains separate from accepted decode. */
+static void ReceiveSingleStaticFrame(const CanFrame *frame, uint64_t arrivalLowerUs, uint64_t observedUs)
+{
+  DebugUiStaticTxIdentity orderedIdentity;
+  uint16_t sof = 0U;
+  uint8_t ordered, sofValid = 0U;
+  CollectSingleStaticReceipt();
+  ordered = stm32_platform_can_static_rx_identity(frame, &orderedIdentity, &sof, &sofValid);
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+  /* A collected receipt can cross a board tick; retain arrival/SOF and refresh only the decode upper bound. */
+  observedUs = AethorMonotonicTimestampUs();
+  if (aethor_app_persistence_receive(frame, arrivalLowerUs, observedUs,
+      ordered ? &orderedIdentity : NULL, sof, sofValid)) return;
+#endif
+  (void)aethor_app_receive_static_frame(frame, arrivalLowerUs, observedUs, ordered ? &orderedIdentity : NULL, sof, sofValid);
+}
+/* END_SINGLE_STATIC_RX_BRIDGE */
+#endif
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+/** @brief Forwards only the fixed capability FIFO receipt under the caller's task critical boundary. */
+static void CollectCapabilityReceipt(uint64_t observed_us)
+{
+  CanFrame receiptFrame;
+  uint8_t succeeded;
+  if (stm32_platform_can_collect_capability_receipt(&receiptFrame, &succeeded))
+  { aethor_app_adrc_report_capability_transmit(&receiptFrame, succeeded, observed_us); }
+}
+#endif
 
 /* USER CODE END FunctionPrototypes */
 
@@ -169,11 +279,11 @@ void MX_FREERTOS_Init(void) {
   ArmControlTaskHandle = osThreadCreate(osThread(ArmControlTask), NULL);
 
   /* definition and creation of CanRxTask */
-  osThreadStaticDef(CanRxTask, StartCanRxTask, osPriorityHigh, 0, 384, canRxTaskBuffer, &canRxTaskControlBlock);
+  osThreadStaticDef(CanRxTask, StartCanRxTask, osPriorityHigh, 0, AETHOR_CAN_RX_TASK_STACK_WORDS, canRxTaskBuffer, &canRxTaskControlBlock);
   CanRxTaskHandle = osThreadCreate(osThread(CanRxTask), NULL);
 
   /* definition and creation of ProtocolTask */
-  osThreadStaticDef(ProtocolTask, StartProtocolTask, osPriorityAboveNormal, 0, 1280, protocolTaskBuffer, &protocolTaskControlBlock);
+  osThreadStaticDef(ProtocolTask, StartProtocolTask, osPriorityAboveNormal, 0, AETHOR_PROTOCOL_TASK_STACK_WORDS, protocolTaskBuffer, &protocolTaskControlBlock);
   ProtocolTaskHandle = osThreadCreate(osThread(ProtocolTask), NULL);
 
   /* definition and creation of UsbTxTask */
@@ -185,7 +295,7 @@ void MX_FREERTOS_Init(void) {
   TelemetryTaskHandle = osThreadCreate(osThread(TelemetryTask), NULL);
 
   /* definition and creation of DiagnosticsTask */
-  osThreadStaticDef(DiagnosticsTask, StartDiagnosticsTask, osPriorityLow, 0, 384, diagnosticsTaskBuffer, &diagnosticsTaskControlBlock);
+  osThreadStaticDef(DiagnosticsTask, StartDiagnosticsTask, osPriorityLow, 0, AETHOR_DIAGNOSTICS_TASK_STACK_WORDS, diagnosticsTaskBuffer, &diagnosticsTaskControlBlock);
   DiagnosticsTaskHandle = osThreadCreate(osThread(DiagnosticsTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -214,6 +324,22 @@ void MX_FREERTOS_Init(void) {
   * @retval None
   */
 /* USER CODE END Header_StartArmControlTask */
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+/** @brief Samples the independent timer immediately, avoiding an older control-task timestamp. */
+static uint8_t ArmSimpleGuard(const CanFrame *frame, uint32_t sampled_ms)
+{
+  (void)sampled_ms;
+  return stm32_adrc_guard_arm_trial(frame, HAL_GetTick());
+}
+
+/** @brief Renews only through the platform's hardware-clock and expiry checks. */
+static uint8_t RenewSimpleGuard(uint32_t sampled_ms)
+{
+  (void)sampled_ms;
+  return stm32_adrc_guard_renew_trial(HAL_GetTick());
+}
+#endif
+
 void StartArmControlTask(void const * argument)
 {
   /* USER CODE BEGIN StartArmControlTask */
@@ -223,6 +349,19 @@ void StartArmControlTask(void const * argument)
 #if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
   /* Dedicated buffer bookkeeping is owned only by this control task. */
   stm32_adrc_channel_init();
+  {
+    AdrcStopGuardHooks guardHooks;
+    guardHooks.arm = stm32_adrc_guard_arm;
+    guardHooks.observe = stm32_adrc_guard_observe;
+    guardHooks.ack_disabled = stm32_adrc_guard_ack_disabled;
+    aethor_app_adrc_set_guard_hooks(&guardHooks);
+    {
+      AdrcSimpleGuardHooks simpleHooks;
+      simpleHooks.arm_trial = ArmSimpleGuard;
+      simpleHooks.renew_trial = RenewSimpleGuard;
+      aethor_app_adrc_set_simple_guard_hooks(&simpleHooks);
+    }
+  }
 #endif
   for(;;)
   {
@@ -239,21 +378,48 @@ void StartArmControlTask(void const * argument)
     AdrcCanReceipt adrcReceipt = stm32_adrc_channel_collect();
     if (adrcReceipt.available != 0U)
     {
+      uint64_t completedObservedUs;
+      /* Sample after TXBTO collection: this is the decode observation upper bound. */
+      taskENTER_CRITICAL();
+      completedObservedUs = AethorMonotonicTimestampUs();
+      taskEXIT_CRITICAL();
 #if AETHOR_ADRC_LCD_INTEGRATED
       if (adrcReceipt.kind == ADRC_CAN_PROBE)
-      { aethor_app_integrated_report_probe_transmit(adrcReceipt.transmitted, timestampUs); }
+      { aethor_app_integrated_report_probe_transmit(adrcReceipt.transmitted, completedObservedUs); }
       else
       { aethor_app_adrc_report_transmit_at((uint8_t)adrcReceipt.kind,
-          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted, timestampUs); }
+          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted, completedObservedUs); }
 #else
-      aethor_app_adrc_report_transmit((uint8_t)adrcReceipt.kind,
-          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted);
+      aethor_app_adrc_report_transmit_at((uint8_t)adrcReceipt.kind,
+          adrcReceipt.decoded_torque_nm, adrcReceipt.transmitted, completedObservedUs);
 #endif
     }
 #endif
 #if AETHOR_ADRC_LCD_INTEGRATED
     aethor_app_integrated_set_can_idle(stm32_platform_can_is_idle(), timestampUs);
 #endif
+    /* Time is sampled before FIFO inspection; critical protects the shared 64-bit bound. */
+    taskENTER_CRITICAL();
+    timestampUs = AethorMonotonicTimestampUs();
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+    aethor_app_persistence_observe_link(CDC_PersistenceLinkState_HS(), timestampUs);
+    CollectPersistenceReceipt(timestampUs);
+#endif
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+    CollectCapabilityReceipt(timestampUs);
+#endif
+    stm32_platform_can_observe_rx_boundary(timestampUs);
+#if AETHOR_DEBUG_UI_ALLOW_MOTION && (AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST)
+    CollectSingleStaticReceipt();
+#endif
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+    aethor_app_adrc_observe_capability_rx_boundary(stm32_platform_can_capability_rx_boundary());
+#endif
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+    /* A receipt may have advanced the maintenance clock after the FIFO lower bound was sampled. */
+    timestampUs = AethorMonotonicTimestampUs();
+#endif
+    taskEXIT_CRITICAL();
     if ((aethor_app_service(timestampUs) != 0U) &&
         (ProtocolTaskHandle != NULL))
     {
@@ -261,31 +427,59 @@ void StartArmControlTask(void const * argument)
     }
 #if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
     {
+      uint8_t guardPauseMs = aethor_app_adrc_take_guard_pause();
+      if (guardPauseMs != 0U)
+      {
+        /* Disabled-only proof: leave interrupts and other tasks running, with
+         * no control service or transmission collection until after deadline. */
+        vTaskDelay(pdMS_TO_TICKS(guardPauseMs));
+        lastWakeTime = xTaskGetTickCount();
+        continue;
+      }
+    }
+    {
       uint8_t adrcKind = 0U;
       float decodedTorqueNm = 0.0F;
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      uint32_t admissionGeneration;
+#endif
+      /* Preserve one ordering: previous RX bound <= challenge timestamp <= TX request. */
+      taskENTER_CRITICAL();
+      timestampUs = AethorMonotonicTimestampUs();
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      admissionGeneration = aethor_app_persistence_admission_generation();
+      if (!aethor_app_persistence_locked())
+      {
+#endif
 #if AETHOR_ADRC_LCD_INTEGRATED
       if (aethor_app_integrated_pop_probe_frame(&pendingFrame, timestampUs) != 0U)
       {
-        if (stm32_adrc_channel_submit(&pendingFrame, ADRC_CAN_PROBE, 0.0F) == 0U)
+        if (
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+            !aethor_app_persistence_allow_ordinary(admissionGeneration) ||
+#endif
+            stm32_adrc_channel_submit(&pendingFrame, ADRC_CAN_PROBE, 0.0F) == 0U)
         { aethor_app_integrated_report_probe_transmit(0U, timestampUs); }
       }
       else
 #endif
       if (aethor_app_adrc_pop_frame(&pendingFrame, &adrcKind, &decodedTorqueNm) != 0U)
       {
-        if (stm32_adrc_channel_submit(&pendingFrame, (AdrcCanKind)adrcKind, decodedTorqueNm) == 0U)
-        {
-#if AETHOR_ADRC_LCD_INTEGRATED
-          aethor_app_adrc_report_transmit_at(adrcKind, decodedTorqueNm, 0U, timestampUs);
-#else
-          aethor_app_adrc_report_transmit(adrcKind, decodedTorqueNm, 0U);
+        if (
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+            !aethor_app_persistence_allow_ordinary(admissionGeneration) ||
 #endif
+            stm32_adrc_channel_submit(&pendingFrame, (AdrcCanKind)adrcKind, decodedTorqueNm) == 0U)
+        {
+          aethor_app_adrc_report_transmit_at(adrcKind, decodedTorqueNm, 0U, timestampUs);
         }
-#if AETHOR_ADRC_LCD_INTEGRATED
         else
         { aethor_app_adrc_report_disable_submit_at(adrcKind, timestampUs); }
-#endif
       }
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      }
+#endif
+      taskEXIT_CRITICAL();
     }
 #endif
     while (aethor_app_pop_emergency_can_frame(&pendingFrame) != 0U)
@@ -293,16 +487,58 @@ void StartArmControlTask(void const * argument)
 #if AETHOR_ADRC_LCD_INTEGRATED
       aethor_app_integrated_note_legacy_can_activity();
 #endif
-      (void)stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY,
-                                      &pendingFrame);
+      CanTxSchedulerStatus emergencyStatus;
+#if AETHOR_DEBUG_UI_ALLOW_MOTION && (AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST)
+      DebugUiStaticTxIdentity terminalIdentity;
+      uint8_t strictTerminal = 0U;
+      taskENTER_CRITICAL();
+      /* A POS stop must retain actual TX/SOF proof even when the result ring is full. */
+      if (aethor_app_pos_load_terminal_frame_identity(&pendingFrame, &terminalIdentity) &&
+          terminalIdentity.phase == DEBUG_UI_STATIC_TX_POS_DISABLE)
+      {
+        strictTerminal = 1U;
+        emergencyStatus = stm32_platform_can_submit_static(&pendingFrame, &terminalIdentity,
+            aethor_app_debug_ui_preflight_timeout_us(), aethor_app_static_submitted)
+            ? CAN_TX_SCHEDULER_STATUS_OK : CAN_TX_SCHEDULER_STATUS_FULL;
+        if (emergencyStatus != CAN_TX_SCHEDULER_STATUS_OK)
+        {
+          /* Still attempt physical DISABLE; missing strict proof must remain unconfirmed. */
+          aethor_app_static_transmitted(&terminalIdentity, 0U, 0U, AethorMonotonicTimestampUs());
+          strictTerminal = 0U;
+          emergencyStatus = stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY, &pendingFrame);
+        }
+      }
+      else { emergencyStatus = stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY, &pendingFrame); }
+      taskEXIT_CRITICAL();
+      aethor_app_static_can_queued(&pendingFrame, emergencyStatus == CAN_TX_SCHEDULER_STATUS_OK,
+          strictTerminal, AethorMonotonicTimestampUs());
+#else
+      emergencyStatus = stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY, &pendingFrame);
+      (void)emergencyStatus;
+#endif
     }
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+    taskENTER_CRITICAL();
+    timestampUs = AethorMonotonicTimestampUs();
+    ServicePersistenceTransfer(timestampUs);
+    taskEXIT_CRITICAL();
+    {
+      uint32_t groupAdmissionGeneration;
+      taskENTER_CRITICAL();
+      groupAdmissionGeneration = aethor_app_persistence_admission_generation();
+#endif
     if (aethor_app_pop_control_group(controlGroup) != 0U)
     {
 #if AETHOR_ADRC_LCD_INTEGRATED
       aethor_app_integrated_note_legacy_can_activity();
 #endif
-      CanTxSchedulerStatus controlGroupStatus =
-          stm32_platform_can_submit_control_group(controlGroup,
+      CanTxSchedulerStatus controlGroupStatus;
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      if (!aethor_app_persistence_allow_ordinary(groupAdmissionGeneration))
+      { controlGroupStatus = CAN_TX_SCHEDULER_STATUS_GROUP_REJECTED; }
+      else
+#endif
+      controlGroupStatus = stm32_platform_can_submit_control_group(controlGroup,
                                                   ARM_JOINT_COUNT);
 
       if ((controlGroupStatus != CAN_TX_SCHEDULER_STATUS_OK) &&
@@ -313,17 +549,93 @@ void StartArmControlTask(void const * argument)
         (void)xTaskNotifyGive((TaskHandle_t)ProtocolTaskHandle);
       }
     }
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      taskEXIT_CRITICAL();
+    }
+    {
+      uint32_t frameAdmissionGeneration;
+      taskENTER_CRITICAL();
+      frameAdmissionGeneration = aethor_app_persistence_admission_generation();
+#endif
     if (aethor_app_next_can_frame(timestampUs,
                                   &pendingFrame,
                                   &pendingPriority) ==
         MOTOR_RUNTIME_STATUS_FRAME_READY)
     {
 #if AETHOR_ADRC_LCD_INTEGRATED
-      aethor_app_integrated_note_legacy_can_activity();
+      if (pendingPriority == CAN_TX_PRIORITY_FEEDBACK_QUERY)
+      { aethor_app_integrated_note_idle_feedback_activity(); }
+      else { aethor_app_integrated_note_legacy_can_activity(); }
 #endif
-      (void)stm32_platform_can_submit(pendingPriority, &pendingFrame);
+      CanTxSchedulerStatus submitStatus;
+#if AETHOR_DEBUG_UI_ALLOW_MOTION && (AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST)
+      DebugUiStaticTxIdentity preflightIdentity;
+      uint8_t strictSubmission = 0U;
+#if !AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      taskENTER_CRITICAL();
+#endif
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      if (pendingPriority != CAN_TX_PRIORITY_EMERGENCY &&
+          !aethor_app_persistence_allow_ordinary(frameAdmissionGeneration))
+      { submitStatus = CAN_TX_SCHEDULER_STATUS_GROUP_REJECTED; }
+      else
+#endif
+      if (aethor_app_static_frame_identity(&pendingFrame, &preflightIdentity))
+      {
+        strictSubmission = 1U;
+        submitStatus = stm32_platform_can_submit_static(&pendingFrame,
+            &preflightIdentity, aethor_app_debug_ui_preflight_timeout_us(), aethor_app_static_submitted)
+            ? CAN_TX_SCHEDULER_STATUS_OK : CAN_TX_SCHEDULER_STATUS_FULL;
+        if (submitStatus != CAN_TX_SCHEDULER_STATUS_OK)
+        {
+          aethor_app_static_transmitted(&preflightIdentity, 0U, 0U, AethorMonotonicTimestampUs());
+          if (preflightIdentity.phase == DEBUG_UI_STATIC_TX_POS_DISABLE)
+          {
+            /* Failed receipt reservation never suppresses the emergency physical stop. */
+            strictSubmission = 0U;
+            submitStatus = stm32_platform_can_submit(CAN_TX_PRIORITY_EMERGENCY, &pendingFrame);
+          }
+        }
+      }
+      else
+      { submitStatus = stm32_platform_can_submit(pendingPriority, &pendingFrame); }
+#if !AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      taskEXIT_CRITICAL();
+#endif
+      aethor_app_static_can_queued(&pendingFrame, submitStatus == CAN_TX_SCHEDULER_STATUS_OK,
+          strictSubmission, AethorMonotonicTimestampUs());
+#else
+      submitStatus = stm32_platform_can_submit(pendingPriority, &pendingFrame);
+#endif
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+      if (submitStatus != CAN_TX_SCHEDULER_STATUS_OK)
+      { aethor_app_adrc_report_capability_transmit(&pendingFrame, 0U, AethorMonotonicTimestampUs()); }
+#else
+      (void)submitStatus;
+#endif
     }
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+      taskEXIT_CRITICAL();
+    }
+    /* The strict maintenance DISABLE hook is deferred until service_tx immediately before HAL.
+     * Keep its App owner decision inside the task boundary as well as Platform's IRQ mask. */
+    taskENTER_CRITICAL();
+#endif
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+    /* The fixed-read collector waits a full clock advance after request creation.
+     * Publishing here never invents microsecond resolution for the 1 ms board clock. */
+    taskENTER_CRITICAL();
+    timestampUs = AethorMonotonicTimestampUs();
+    stm32_platform_can_observe_rx_boundary(timestampUs);
+    aethor_app_adrc_observe_capability_rx_boundary(stm32_platform_can_capability_rx_boundary());
+    taskEXIT_CRITICAL();
     (void)stm32_platform_can_service_tx(ARM_JOINT_COUNT);
+#else
+    (void)stm32_platform_can_service_tx(ARM_JOINT_COUNT);
+#endif
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+    taskEXIT_CRITICAL();
+#endif
 #if AETHOR_DEBUG_UI_ENABLE
     if (cyclesPerMicrosecond != 0U)
     {
@@ -365,15 +677,32 @@ void StartCanRxTask(void const * argument)
   {
     uint8_t processedFrameCount = 0U;
     CanFrame receivedFrame;
+    uint64_t arrivalLowerBoundUs = 0ULL;
 
     while ((processedFrameCount < CAN_RX_INBOX_CAPACITY) &&
-           (stm32_platform_can_pop_received(&receivedFrame) ==
+           (stm32_platform_can_pop_received_at(&receivedFrame, &arrivalLowerBoundUs) ==
             CAN_RX_INBOX_STATUS_OK))
     {
-      uint64_t timestampUs = AethorMonotonicTimestampUs();
-
       taskENTER_CRITICAL();
-      (void)aethor_app_receive_can_frame(&receivedFrame, timestampUs);
+#if AETHOR_DEBUG_UI_ALLOW_MOTION && (AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD || AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST)
+      {
+        uint64_t receivedObservedUs = AethorMonotonicTimestampUs();
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+        CollectCapabilityReceipt(receivedObservedUs);
+#endif
+        ReceiveSingleStaticFrame(&receivedFrame, arrivalLowerBoundUs, receivedObservedUs);
+      }
+#else
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+      {
+        uint64_t receivedObservedUs = AethorMonotonicTimestampUs();
+        CollectCapabilityReceipt(receivedObservedUs);
+        (void)aethor_app_receive_can_frame_observed(&receivedFrame, arrivalLowerBoundUs, receivedObservedUs);
+      }
+#else
+      (void)aethor_app_receive_can_frame(&receivedFrame, arrivalLowerBoundUs);
+#endif
+#endif
       taskEXIT_CRITICAL();
       ++processedFrameCount;
     }
@@ -426,11 +755,18 @@ void StartProtocolTask(void const * argument)
                                                 &lineLength);
       if (lineStatus == USB_CDC_STREAM_STATUS_OK)
       {
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+        /* Keep sampling and maintenance dispatch atomic against the higher-priority Control/RX tasks. */
+        taskENTER_CRITICAL();
+#endif
         (void)aethor_app_process_protocol_line(
             protocolLine,
             lineLength,
             AethorMonotonicTimestampUs(),
             &outputBatch);
+#if AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+        taskEXIT_CRITICAL();
+#endif
         QueueProtocolOutputBatch(&outputBatch);
       }
       else if (lineStatus == USB_CDC_STREAM_STATUS_LINE_TOO_LONG)

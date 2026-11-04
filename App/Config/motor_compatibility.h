@@ -14,6 +14,9 @@
  * output-side on this controller. Only LCD bench commands opt into conversion.
  * Recommission this constant when replacing the motor/driver or changing Gr. */
 #define AETHOR_S3519_MOTOR7_POSITION_RATIO (19.2032F)
+/* User-confirmed rotor to final flange total ratio, including the internal reducer.
+ * Only the independently enabled ID7 POS load workflow publishes this mapping. */
+#define AETHOR_S3519_MOTOR7_FLANGE_TOTAL_RATIO (44.8F)
 
 #ifndef AETHOR_S3519_SAME_MODEL_MASK
 #if AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE

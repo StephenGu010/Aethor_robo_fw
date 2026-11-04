@@ -2020,9 +2020,74 @@ static void test_text_rtos_stack_samples(void)
     assert(output.count == 0U);
 }
 
+/** @brief Large PMAX coordinates, stale ages and maximum request IDs keep every public motor field. */
+static void test_text_show_motor_wide_range_capacity(void)
+{
+    ProtocolEngine engine;
+    ProtocolOutputBatch output;
+    ProtocolQueryContext context = make_query_context();
+    MotorJointFeedback *feedback = &context.motors.joints[6];
+    const float native_positions[] = {512.0F, -512.0F, 1024.0F, -1024.0F};
+    size_t scenario;
+    size_t longest_response = 0U;
+    context.motors.valid_joint_mask = 0x40U;
+    context.motor_motion_limits_valid_mask = 0x40U;
+    context.motor_velocity_max_rad_s[6] = 200.0F;
+    context.motor_maximum_speed_rad_s[6] = 200.0F;
+    feedback->timestamp_us = 1U;
+    feedback->driver_state = S3519_DRIVER_STATE_DISABLED;
+    feedback->velocity_rad_s = -199.951F;
+    feedback->torque_nm = -9.995F;
+    feedback->mos_temperature_c = 255.0F;
+    feedback->rotor_temperature_c = 255.0F;
+    for (scenario = 0U; scenario < sizeof(native_positions) / sizeof(native_positions[0]); ++scenario)
+    {
+        const char *response;
+        char retained_response[PROTOCOL_ENGINE_MESSAGE_CAPACITY];
+        char position_field[64];
+        char range_field[64];
+        float position_degrees = native_positions[scenario] * 57.295779513082320876F;
+        context.motor_position_max_rad[6] = scenario < 2U ? 512.0F : 1024.0F;
+        feedback->position_rad = native_positions[scenario];
+        feedback->fault_flags = scenario == 3U ? UINT32_MAX : 0U;
+        feedback->mos_temperature_c = scenario == 3U ? -255.125F : 255.0F;
+        feedback->rotor_temperature_c = scenario == 3U ? -255.125F : 255.0F;
+        protocol_engine_init(&engine, 1U);
+        protocol_engine_update_query_context(&engine, &context);
+        response = process_text_request(&engine, "4294967295 show motor 7\n",
+            ((uint64_t)UINT32_MAX + 1ULL) * 1000ULL + 1ULL,
+            PROTOCOL_ENGINE_STATUS_OK, &output);
+        assert(snprintf(position_field, sizeof(position_field), " pos_deg=%.3f ", (double)position_degrees) > 0);
+        assert(snprintf(range_field, sizeof(range_field), " pmax_deg=%.3f ",
+            (double)(context.motor_position_max_rad[6] * 57.295779513082320876F)) > 0);
+        assert(strstr(response, "ok 4294967295 show motor joint=7 esc=07 master=17 state=") == response);
+        assert(strstr(response, position_field) != NULL);
+        assert(strstr(response, range_field) != NULL);
+        assert(strstr(response, " speed_deg_s=-11456.349 torque_nm=-9.995 ") != NULL);
+        assert(strstr(response, scenario == 3U ? " mos_c=-255.125 rotor_c=-255.125 fault=4294967295 " :
+            " mos_c=255 rotor_c=255 fault=0 ") != NULL);
+        assert(strstr(response, " age_ms=4294967295 ") != NULL);
+        assert(strstr(response, " vmax_deg_s=11459.156 max_speed_deg_s=11459.156 move_speed_limit_deg_s=11459.156\n") != NULL);
+        assert(output.messages[0].priority == PROTOCOL_OUTPUT_QUERY);
+        assert(output.messages[0].length == strlen(response));
+        assert(output.messages[0].length < PROTOCOL_ENGINE_MESSAGE_CAPACITY);
+        assert(strlen(response) > TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH);
+        if (strlen(response) > longest_response) { longest_response = strlen(response); }
+        memcpy(retained_response, response, strlen(response) + 1U);
+        response = process_text_request(&engine, "4294967295 show motor 7\n",
+            ((uint64_t)UINT32_MAX + 1ULL) * 1000ULL + 2ULL,
+            PROTOCOL_ENGINE_STATUS_REPLAYED, &output);
+        assert(strcmp(response, retained_response) == 0);
+    }
+    printf("SHOW_MOTOR_WIDE_RANGE_CAPACITY cases=4 max_response=%lu message_capacity=%u other_text_limit=%u\n",
+        (unsigned long)longest_response, (unsigned)PROTOCOL_ENGINE_MESSAGE_CAPACITY,
+        (unsigned)TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH);
+}
+
 /** @brief Runs the aethor-text-v1 engine lifecycle tests. */
 int main(void)
 {
+    test_text_show_motor_wide_range_capacity();
     test_text_rtos_stack_samples();
     test_text_lifecycle();
     test_text_request_replay();

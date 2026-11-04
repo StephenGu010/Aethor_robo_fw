@@ -112,7 +112,8 @@ typedef enum
     PROTOCOL_COMMAND_MOVE_RELATIVE,
     PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED,
     PROTOCOL_COMMAND_MIT_ACTION,
-    PROTOCOL_COMMAND_LINK_TIMEOUT
+    PROTOCOL_COMMAND_LINK_TIMEOUT,
+    PROTOCOL_COMMAND_HOME_PREPARE /**< Non-motion ID7 intent: may issue selected DISABLE only. */
 } ProtocolCommandType;
 
 /** @brief Selects the bounded single-motor MIT bench action. */
@@ -147,6 +148,13 @@ typedef struct
     DebugUiOperation local_operation;
     uint64_t created_at_us;
     uint32_t reference_generation;
+    uint32_t home_boot_id; /**< Exact boot binding for independent fixed-target HOME. */
+    float home_target_position_rad; /**< Immutable native target, independent of the post-preparation relative displacement. */
+    uint8_t home_prepared; /**< Set only after the original post-DISABLE new-feedback gate and complete motion validation. */
+    uint32_t single_static_evidence_generation; /**< Frozen discovery/profile generation for explicit local preflight. */
+    DebugUiSingleStaticPreflightPurpose single_static_preflight_purpose; /**< Local selected DISABLE purpose; never motion authority. */
+    /** @brief Per-axis frozen reference generations for local static HOLD only. */
+    uint32_t static_reference_generations[ARM_JOINT_COUNT];
     uint8_t values_in_radians;
     uint8_t relative_target;
     uint8_t cleanup_after_stop;
@@ -213,6 +221,7 @@ typedef struct
     DebugUiOrigin origin;
     DebugUiOperation local_operation;
     uint8_t disabled_confirmed;
+    uint64_t feedback_timestamp_us; /**< Selected runtime arrival lower bound retained by completed local preflight. */
     DebugUiReason local_reason;
     /** @brief Init verification masks captured by the owner at terminal creation. */
     uint8_t discovery_identity_mask;
@@ -227,6 +236,8 @@ typedef struct
     const ArmConfig *configuration;
     ProtocolAdrcHandler adrc_handler;
     void *adrc_context;
+    /** @brief Immutable USB configured/generation probe; absence cannot qualify maintenance identity. */
+    uint32_t (*ui_link_word)(void);
     /** @brief Accepted ADRC commands cannot expire or be evicted before terminal publication. */
     ProtocolRecentResult adrc_retained_results[PROTOCOL_ENGINE_ADRC_RETAINED_CAPACITY];
     ProtocolRecentResult recent_results[PROTOCOL_ENGINE_RECENT_RESULT_CAPACITY];
@@ -243,6 +254,10 @@ typedef struct
     uint32_t boot_id;
     uint32_t session_id;
     uint32_t next_session_nonce;
+    /** @brief Last challenge-bound UI identity; equality to next_session_nonce excludes legacy sessions. */
+    uint32_t ui_session_nonce;
+    /** @brief Configured USB generation captured by the successful challenge-bound hello itself. */
+    uint32_t ui_session_link;
     uint32_t telemetry_sequence;
     uint32_t event_sequence;
     uint32_t active_motion_request_id;
@@ -279,6 +294,8 @@ typedef struct
 
 /** @brief Installs the optional ADRC adapter before concurrent request processing starts. */
 void protocol_engine_set_adrc_handler(ProtocolEngine *engine, ProtocolAdrcHandler handler, void *context);
+/** @brief Bind the trusted USB identity probe once; binding alone never qualifies a previous hello. */
+void protocol_engine_bind_ui_link_probe(ProtocolEngine *engine, uint32_t (*link_word)(void));
 /** @brief Replaces a retained/cached accepted reply with its terminal; caller serializes engine access. */
 uint8_t protocol_engine_complete_adrc_request(ProtocolEngine *engine, uint32_t request_id,
     uint64_t timestamp_us, const ProtocolOutputBatch *output_batch);

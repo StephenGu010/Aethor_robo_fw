@@ -23,4 +23,12 @@ typedef struct
  */
 MotorRuntimeStatus motor_adrc_build_torque_frame(const MotorRuntime *runtime,
     const MotorAdrcTorqueRequest *request, CanFrame *frame, float *decoded_torque_nm);
+/** @brief Packs the existing zero-request MIT probe only with discovered MIT ranges.
+ * This encoding is not physical zero torque and grants no ownership or actuation permission.
+ */
+MotorRuntimeStatus motor_adrc_build_neutral_probe(const MotorRuntime *runtime,
+    uint8_t axis_index, CanFrame *frame);
+/** @brief Packs only the existing 4/8-byte read-only vendor query for a configured axis. */
+MotorRuntimeStatus motor_adrc_build_feedback_query(const MotorRuntime *runtime,
+    uint8_t axis_index, uint8_t frame_length, CanFrame *frame);
 #endif

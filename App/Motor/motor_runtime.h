@@ -117,6 +117,8 @@ typedef struct
     uint8_t pending_register;
     uint8_t pending;
     uint8_t seen_mask;
+    float estimated_native_rad_s; /**< Display-only 0x50 finite difference; never safety feedback. */
+    uint8_t estimated_velocity_valid;
 } MotorRegisterPosition;
 
 /** @brief Receive-side timing for the latest uninterrupted enabled-feedback burst. */
@@ -155,6 +157,8 @@ typedef struct
     MotorParameterResponseSet parameter_expectations;
     MotorParameterResponseSet parameter_quarantine;
     MotorRegisterPosition position_read;
+    MotorRegisterPosition idle_position_read; /**< Display-only cache, isolated from coordinate evidence. */
+    uint8_t position_read_reserved; /**< Explicit coordinate owner retains RX routing between both reads. */
 } MotorRuntime;
 
 /** @brief Produces one read-only 0x50/0x51 request when the App owner permits idle reads.
@@ -162,6 +166,10 @@ typedef struct
  * Does not discover identity, authorize motion, or refresh standard feedback.
  */
 MotorRuntimeStatus motor_runtime_next_position_read(MotorRuntime *runtime,
+    uint8_t joint_index, uint64_t timestamp_us, uint8_t allowed, CanFrame *frame);
+
+/** @brief Schedule/cancel display-only reads without changing the explicit coordinate reader. */
+MotorRuntimeStatus motor_runtime_next_idle_position_read(MotorRuntime *runtime,
     uint8_t joint_index, uint64_t timestamp_us, uint8_t allowed, CanFrame *frame);
 
 /**

@@ -171,6 +171,21 @@ static void test_release_waits_for_physical_disable(void)
     assert(adrc_lcd_ownership_submit_release(&owner, 2U, 19000ULL) == ADRC_LCD_OWNERSHIP_STALE_ID);
 }
 
+/** @brief Repeated DISABLE does not move a successfully transmitted challenge beyond every reply. */
+static void test_release_retries_preserve_successful_challenge(void)
+{
+    AdrcLcdOwnership owner;
+    AdrcLcdOwnershipEvidence evidence;
+    acquire_probed_owner(&owner);
+    assert(adrc_lcd_ownership_submit_release(&owner, 2U, 12000ULL) == ADRC_LCD_OWNERSHIP_OK);
+    adrc_lcd_ownership_report_disable_submit(&owner, 13000ULL);
+    adrc_lcd_ownership_report_disable_transmit(&owner, 17000ULL, 1U);
+    adrc_lcd_ownership_report_disable_submit(&owner, 18000ULL);
+    evidence = safe_evidence(21000ULL);
+    evidence.feedback_us = 17000ULL;
+    assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_RELEASED);
+}
+
 /** @brief A timed-out release remains locked until later measured disable. */
 static void test_release_timeout_stays_locked(void)
 {
@@ -184,14 +199,34 @@ static void test_release_timeout_stays_locked(void)
     assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 3U) == ADRC_LCD_OWNERSHIP_BUSY);
 }
 
+/** @brief The 100 ms window is half-open, including when late evidence is otherwise safe. */
+static void test_acquire_deadline_precedes_success(void)
+{
+    const uint64_t elapsed[] = {99999ULL, 100000ULL, 100001ULL};
+    unsigned int index;
+    for (index = 0U; index < 3U; ++index)
+    {
+        AdrcLcdOwnership owner;
+        AdrcLcdOwnershipEvidence evidence = safe_evidence(10000ULL);
+        adrc_lcd_ownership_init(&owner);
+        assert(adrc_lcd_ownership_submit_acquire(&owner, 6U, 1U) == ADRC_LCD_OWNERSHIP_OK);
+        assert(adrc_lcd_ownership_service(&owner, &evidence) == ADRC_LCD_OWNERSHIP_WAITING);
+        evidence = probed_evidence(10000ULL + elapsed[index], 10000ULL);
+        assert(adrc_lcd_ownership_service(&owner, &evidence) ==
+            (index == 0U ? ADRC_LCD_OWNERSHIP_TRANSFERRED : ADRC_LCD_OWNERSHIP_TIMEOUT));
+    }
+}
+
 /** @brief Runs the deterministic ownership contract on a host without CAN hardware. */
 int main(void)
 {
+    test_acquire_deadline_precedes_success();
     test_acquire_requires_every_gate();
     test_acquire_waits_for_feedback_probe();
     test_acquire_rejects_replay_and_bad_time();
     test_release_waits_for_physical_disable();
     test_release_timeout_stays_locked();
+    test_release_retries_preserve_successful_challenge();
     puts("ADRC_LCD_OWNERSHIP_TESTS_PASSED");
     return 0;
 }

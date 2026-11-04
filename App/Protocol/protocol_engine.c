@@ -990,12 +990,13 @@ static ProtocolEngineStatus protocol_engine_append_text_format(
 }
 
 /**
- * @brief Appends one prebuilt bounded body as an LF-terminated text response.
+ * @brief Appends a prebuilt LF-terminated response under both its caller limit and actual output capacity.
  */
-static ProtocolEngineStatus protocol_engine_append_text_body(
+static ProtocolEngineStatus protocol_engine_append_text_body_limit(
     ProtocolOutputBatch *output_batch,
     ProtocolOutputPriority priority,
-    const char *body)
+    const char *body,
+    size_t maximum_line_length)
 {
     ProtocolOutputMessage *message;
     size_t body_length;
@@ -1006,11 +1007,12 @@ static ProtocolEngineStatus protocol_engine_append_text_body(
         return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
     }
     body_length = strlen(body);
-    if ((body_length + 1U) > TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH)
+    message = &output_batch->messages[output_batch->count];
+    if ((body_length + 1U) > maximum_line_length ||
+        (body_length + 2U) > sizeof(message->data))
     {
         return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
     }
-    message = &output_batch->messages[output_batch->count];
     memcpy(message->data, body, body_length);
     message->data[body_length] = '\n';
     message->data[body_length + 1U] = '\0';
@@ -1018,6 +1020,16 @@ static ProtocolEngineStatus protocol_engine_append_text_body(
     message->priority = priority;
     ++output_batch->count;
     return PROTOCOL_ENGINE_STATUS_OK;
+}
+
+/** @brief Preserves the existing public line limit for ordinary prebuilt text responses. */
+static ProtocolEngineStatus protocol_engine_append_text_body(
+    ProtocolOutputBatch *output_batch,
+    ProtocolOutputPriority priority,
+    const char *body)
+{
+    return protocol_engine_append_text_body_limit(output_batch, priority, body,
+        TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH);
 }
 
 /**
@@ -1915,6 +1927,8 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
     ProtocolOutputBatch *output_batch)
 {
     const BuildInfo *build_info = build_info_get();
+    TextProtocolSpan ui_challenge;
+    uint32_t ui_link_before = engine->ui_link_word ? engine->ui_link_word() : 0U;
 #if (AETHOR_ACTIVE_PROFILE == AETHOR_PROFILE_USB_BENCH_RELATIVE)
     static const char profile[] = "bench";
 #else
@@ -1931,7 +1945,41 @@ static ProtocolEngineStatus protocol_engine_handle_text_hello(
                                                         "busy");
         return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
     }
-    if ((request->positional_count != 0U) || (request->field_count != 0U))
+    /* A challenge-bound UI hello only rotates identity. It never arms the legacy USB watchdog,
+     * flushes queues/results, changes streams or touches local LCD work. Cache replay remains
+     * safe because both canonical request and returned ACK include the per-connection challenge. */
+    if (request->field_count != 0U)
+    {
+        size_t character_index;
+        if (request->positional_count != 0U || request->field_count != 1U ||
+            !request->has_request_id || !request->request_id ||
+            !text_protocol_find_field(request, "ui", &ui_challenge) || ui_challenge.length != 32U ||
+            engine->next_session_nonce == UINT32_MAX)
+        {
+            (void)protocol_engine_append_text_command_error(output_batch, request, "bad_argument");
+            return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+        }
+        for (character_index = 0U; character_index < ui_challenge.length; ++character_index)
+        {
+            char character = ui_challenge.data[character_index];
+            if (!((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')))
+            {
+                (void)protocol_engine_append_text_command_error(output_batch, request, "bad_argument");
+                return PROTOCOL_ENGINE_STATUS_BAD_REQUEST;
+            }
+        }
+        engine->session_id = protocol_engine_create_session(engine, request->request_id, timestamp_us);
+        engine->ui_session_nonce = engine->next_session_nonce;
+        engine->ui_session_link = (ui_link_before & 0x80000000UL) && engine->ui_link_word &&
+            engine->ui_link_word() == ui_link_before ? ui_link_before : 0U;
+        return protocol_engine_append_text_format(output_batch, PROTOCOL_OUTPUT_QUERY,
+            "ok %lu hello protocol=aethor-text-v1 fw=%s profile=%s dof=%u boot=%lu ui=%.*s session=%lu nonce=%lu",
+            (unsigned long)request->request_id, build_info->firmware_version, profile,
+            (unsigned int)ARM_JOINT_COUNT, (unsigned long)engine->boot_id,
+            (int)ui_challenge.length, ui_challenge.data, (unsigned long)engine->session_id,
+            (unsigned long)engine->next_session_nonce);
+    }
+    if (request->positional_count != 0U)
     {
         (void)protocol_engine_append_text_command_error(output_batch,
                                                         request,
@@ -2338,7 +2386,7 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_motor(
     TextProtocolSpan joint_span;
     const JointConfig *joint_configuration;
     const MotorJointFeedback *feedback;
-    char body[TEXT_PROTOCOL_MAX_RESPONSE_LINE_LENGTH];
+    char body[PROTOCOL_ENGINE_MESSAGE_CAPACITY];
     size_t body_length = 0U;
     float move_speed_limit_rad_s;
     uint32_t joint_number;
@@ -2488,9 +2536,10 @@ static ProtocolEngineStatus protocol_engine_handle_text_show_motor(
     {
         return PROTOCOL_ENGINE_STATUS_OUTPUT_TOO_SMALL;
     }
-    return protocol_engine_append_text_body(output_batch,
-                                            PROTOCOL_OUTPUT_QUERY,
-                                            body);
+    return protocol_engine_append_text_body_limit(output_batch,
+                                                  PROTOCOL_OUTPUT_QUERY,
+                                                  body,
+                                                  PROTOCOL_ENGINE_MESSAGE_CAPACITY - 1U);
 }
 
 /** @brief Computes a deterministic checksum over the configured CAN map. */
@@ -4848,12 +4897,93 @@ uint8_t protocol_engine_submit_command_result(
     return 1U;
 }
 
+/** @brief Only the separately enabled local static workflow may request a seven-axis MIT HOLD. */
+static uint8_t protocol_engine_is_static_hold(const ProtocolCommand *command)
+{
+    return (uint8_t)(AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD && command != NULL &&
+        command->origin == DEBUG_UI_ORIGIN_LOCAL_UI && command->local_operation == DEBUG_UI_OPERATION_STATIC_HOLD &&
+        command->type == PROTOCOL_COMMAND_MIT_ACTION && command->mit_action == PROTOCOL_MIT_ACTION_HOLD &&
+        command->motor_mask == 0x7FU && command->control_mode == ARM_CONTROL_MODE_MIT &&
+        command->values_in_radians && command->bench_relative_scope &&
+        command->mit_torque_ff_nm == 0.0F && !command->relative_target);
+}
+
+/** @brief Recognize only the independently gated, exact one-axis local long-HOLD shape. */
+static uint8_t protocol_engine_is_single_static_hold(const ProtocolCommand *command)
+{
+    return (uint8_t)(AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD && command != NULL &&
+        command->origin == DEBUG_UI_ORIGIN_LOCAL_UI &&
+        command->local_operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+        command->type == PROTOCOL_COMMAND_MIT_ACTION && command->mit_action == PROTOCOL_MIT_ACTION_HOLD &&
+        command->motor_mask != 0U && (command->motor_mask & 0x80U) == 0U &&
+        (command->motor_mask & (command->motor_mask - 1U)) == 0U &&
+        command->control_mode == ARM_CONTROL_MODE_MIT && command->values_in_radians &&
+        command->bench_relative_scope && isfinite(command->mit_torque_ff_nm) &&
+        fabsf(command->mit_torque_ff_nm) <= 3.5F && !command->relative_target);
+}
+
 /** @brief Validates typed values shared by USB parse output and local SI requests. */
 DebugUiReason protocol_engine_validate_typed_command(const ProtocolCommand *command)
 {
     uint8_t joint_index;
     uint8_t finite_motion;
     if (command == NULL) { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+    if (command->type == PROTOCOL_COMMAND_HOME_PREPARE && command->local_operation != DEBUG_UI_OPERATION_HOME)
+        return DEBUG_UI_REASON_INVALID_ARGUMENT;
+    if (command->origin == DEBUG_UI_ORIGIN_LOCAL_UI &&
+        (uint32_t)command->local_operation > (uint32_t)DEBUG_UI_OPERATION_HOME)
+        return DEBUG_UI_REASON_INVALID_ARGUMENT;
+    if (debug_ui_is_pos_load_operation(command->local_operation))
+    {
+#if !AETHOR_DEBUG_UI_ALLOW_POS_LOAD_TEST
+        return DEBUG_UI_REASON_DISABLED;
+#else
+        if (command->origin != DEBUG_UI_ORIGIN_LOCAL_UI ||
+            (command->local_operation == DEBUG_UI_OPERATION_HOME ?
+                (command->type != PROTOCOL_COMMAND_HOME_PREPARE &&
+                 command->type != PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) :
+                command->type != PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
+            command->control_mode != ARM_CONTROL_MODE_POSITION_VELOCITY ||
+            !command->bench_relative_scope || !command->values_in_radians ||
+            (command->local_operation == DEBUG_UI_OPERATION_HOME ?
+                (command->motor_mask != 0x40U || !command->home_boot_id || !isfinite(command->home_target_position_rad) ||
+                 (command->type == PROTOCOL_COMMAND_HOME_PREPARE ?
+                    (command->relative_target || command->home_prepared || command->values[6] != 0.0F) :
+                    (!command->relative_target || !command->home_prepared)) ||
+                 !command->reference_generation || command->hold_duration_us != 1000000ULL) : !command->relative_target) ||
+            !command->motor_mask || (command->motor_mask & (command->motor_mask - 1U)) ||
+            command->hold_duration_us < 1000000ULL || command->hold_duration_us > 60000000ULL ||
+            command->mit_kp != 0.0F || command->mit_kd != 0.0F || command->mit_torque_ff_nm != 0.0F)
+            return DEBUG_UI_REASON_INVALID_ARGUMENT;
+        if (command->local_operation == DEBUG_UI_OPERATION_HOME &&
+            (!isfinite(command->speeds[6]) || command->speeds[6] <= 0.0F)) return DEBUG_UI_REASON_OUT_OF_RANGE;
+#endif
+    }
+    if ((uint32_t)command->single_static_preflight_purpose > DEBUG_UI_SINGLE_STATIC_PREFLIGHT_LOCK ||
+        (command->single_static_preflight_purpose != DEBUG_UI_SINGLE_STATIC_PREFLIGHT_NONE &&
+         command->local_operation != DEBUG_UI_OPERATION_SINGLE_STATIC_PREFLIGHT))
+    { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+    /* RAM configuration belongs to the facade mailbox and can never actuate through this ring. */
+    if (command->local_operation == DEBUG_UI_OPERATION_SINGLE_STATIC_CONFIGURE ||
+        command->local_operation == DEBUG_UI_OPERATION_SINGLE_STATIC_LOCK)
+    { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+    if (command->local_operation == DEBUG_UI_OPERATION_STATIC_HOLD && !protocol_engine_is_static_hold(command))
+    { return AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD ? DEBUG_UI_REASON_INVALID_ARGUMENT : DEBUG_UI_REASON_DISABLED; }
+    if (command->local_operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD && !protocol_engine_is_single_static_hold(command))
+    { return AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD ? DEBUG_UI_REASON_INVALID_ARGUMENT : DEBUG_UI_REASON_DISABLED; }
+    if (command->local_operation == DEBUG_UI_OPERATION_SINGLE_STATIC_PREFLIGHT)
+    {
+#if !AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD || !AETHOR_DEBUG_UI_ALLOW_MIT
+        return DEBUG_UI_REASON_DISABLED;
+#else
+        if (command->origin != DEBUG_UI_ORIGIN_LOCAL_UI || command->type != PROTOCOL_COMMAND_DISABLE ||
+            command->control_mode != ARM_CONTROL_MODE_MIT || !command->bench_relative_scope ||
+            !command->values_in_radians || command->motor_mask == 0U || (command->motor_mask & 0x80U) ||
+            (command->motor_mask & (command->motor_mask - 1U)) || !command->reference_generation ||
+            !command->single_static_evidence_generation || command->relative_target || command->cleanup_after_stop)
+        { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
+#endif
+    }
     finite_motion = (uint8_t)((command->type == PROTOCOL_COMMAND_MOVE_ABSOLUTE_SELF_CONTAINED) ||
                               (command->type == PROTOCOL_COMMAND_MIT_ACTION) ||
                               (command->type == PROTOCOL_COMMAND_MOVE_RELATIVE));
@@ -4878,10 +5008,11 @@ DebugUiReason protocol_engine_validate_typed_command(const ProtocolCommand *comm
             !isfinite(command->mit_torque_ff_nm)) { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
         if ((command->mit_kp <= S3519_KP_MIN) || (command->mit_kp > S3519_KP_MAX) ||
             (command->mit_kd <= S3519_KD_MIN) || (command->mit_kd > S3519_KD_MAX) ||
-            (command->hold_duration_us < 100000ULL) || (command->hold_duration_us > 10000000ULL) ||
+            (command->hold_duration_us < (protocol_engine_is_single_static_hold(command) ? 1000000ULL : 100000ULL)) ||
+            (command->hold_duration_us > (protocol_engine_is_single_static_hold(command) ? 60000000ULL : 10000000ULL)) ||
             ((command->mit_action != PROTOCOL_MIT_ACTION_HOLD) &&
              (command->mit_action != PROTOCOL_MIT_ACTION_MOVE)) ||
-            ((command->motor_mask & (command->motor_mask - 1U)) != 0U))
+            (((command->motor_mask & (command->motor_mask - 1U)) != 0U) && !protocol_engine_is_static_hold(command)))
         { return DEBUG_UI_REASON_OUT_OF_RANGE; }
     }
     return DEBUG_UI_REASON_NONE;
@@ -4900,7 +5031,7 @@ DebugUiReason protocol_engine_submit_local_command(ProtocolEngine *engine, const
         (command->origin != DEBUG_UI_ORIGIN_LOCAL_UI) || (command->request_id == 0U) ||
         (command->session_id == 0U) || (command->motor_mask == 0U) ||
         ((command->motor_mask & 0x80U) != 0U) ||
-        ((command->type != PROTOCOL_COMMAND_STOP) &&
+        ((command->type != PROTOCOL_COMMAND_STOP) && !protocol_engine_is_static_hold(command) &&
          ((command->motor_mask & (command->motor_mask - 1U)) != 0U)))
     { return DEBUG_UI_REASON_INVALID_ARGUMENT; }
     reason = protocol_engine_validate_typed_command(command);
@@ -6422,6 +6553,12 @@ uint8_t protocol_engine_watchdog_expired(ProtocolEngine *engine,
     }
     engine->watchdog_timeout_reported = 1U;
     return 1U;
+}
+
+/** @brief Bind one trusted USB generation probe; old or unbound hello identities stay unqualified. */
+void protocol_engine_bind_ui_link_probe(ProtocolEngine *engine, uint32_t (*link_word)(void))
+{
+    if (engine && !engine->ui_link_word && link_word) engine->ui_link_word = link_word;
 }
 
 /** @brief Registers the isolated optional ADRC protocol adapter. */

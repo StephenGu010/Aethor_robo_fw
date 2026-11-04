@@ -32,6 +32,25 @@ typedef struct {
     const char *firmware_version; /**< Process-lifetime build metadata, or NULL. */
 } DebugUiViewDiagnostics;
 
+/** @brief One immutable 24-unit line icon retained by the view for allocation-free drawing. */
+typedef struct {
+    int16_t x, y;
+    uint8_t kind, scale, inverse, reserved;
+} DebugUiStaticIcon;
+
+/** @brief One bounded rectangular focus or grouping surface in the content area. */
+typedef struct {
+    int16_t left, top, right, bottom;
+    uint8_t selected, reserved;
+} DebugUiStaticPanel;
+
+/** @brief Bounded visual state copied from published model facts, never control state. */
+typedef struct {
+    DebugUiStaticIcon icons[12];
+    DebugUiStaticPanel panels[6];
+    uint8_t icon_count, panel_count, progress_steps, reserved;
+} DebugUiStaticArt;
+
 /** @brief One reusable screen; semantic rows and displayed strings have stable storage. */
 typedef struct {
     lv_obj_t *root;
@@ -42,6 +61,7 @@ typedef struct {
     lv_obj_t *confirm_bar;
     lv_obj_t *overlay;
     char background_text[5][80];
+    DebugUiStaticArt static_art; /**< Fixed original line art; no LVGL objects or allocations. */
     uint8_t decoration;
     uint8_t tile_focus;
     int16_t tile_offset;

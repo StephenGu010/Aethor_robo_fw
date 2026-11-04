@@ -28,6 +28,10 @@
 #include "aethor_app.h"
 #include "arm_config.h"
 #include "stm32_platform.h"
+#include "usbd_cdc_if.h"
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+#include "stm32_adrc_channel.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -106,6 +110,9 @@ int main(void)
   /* USER CODE BEGIN 2 */
   (void)stm32_platform_init(arm_config_get_production());
   aethor_app_init((uint64_t)HAL_GetTick() * 1000ULL, CreateBootId());
+#if defined(AETHOR_MOTOR_PERSISTENCE_TRANSPORT) && AETHOR_MOTOR_PERSISTENCE_TRANSPORT
+  aethor_app_bind_remote_release_probes(stm32_platform_remote_release_is_idle, CDC_PersistenceLinkState_HS);
+#endif
   /* USER CODE END 2 */
 
   /* Call init function for freertos objects (in cmsis_os2.c) */
@@ -221,6 +228,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM23) {
     HAL_IncTick();
+#if AETHOR_ADRC_BENCH || AETHOR_ADRC_LCD_INTEGRATED
+    /* Preloaded DISABLE remains serviceable when the control task stops scheduling. */
+    stm32_adrc_guard_tick_isr(HAL_GetTick());
+#endif
   }
   /* USER CODE BEGIN Callback 1 */
 

@@ -9,13 +9,13 @@ $buildDirectory = Join-Path $projectRoot 'output\adrc\host'
 $testExecutable = Join-Path $buildDirectory 'adrc_lcd_integration_tests.exe'
 $sourceFiles = @(
     'Tests/host/adrc_lcd_integration_test_main.c', 'App/Adrc/adrc_lcd_ownership.c',
-    'App/Adrc/adrc_app_bridge.c', 'App/Adrc/adrc_bench.c', 'App/Adrc/adrc_protocol.c',
+    'App/Adrc/adrc_simple_trial.c', 'App/Adrc/adrc_feedback_adapter.c', 'App/Adrc/adrc_app_bridge.c', 'App/Adrc/adrc_shaft_pilot.c', 'App/Adrc/adrc_shaft_pilot_adapter.c', 'App/Adrc/adrc_bench.c', 'App/Adrc/adrc_protocol.c',
     'App/Adrc/adrc_experiment.c', 'App/DebugUi/debug_ui_mailbox.c',
     'App/Config/arm_config.c', 'App/Config/build_info.c', 'App/Telemetry/diagnostics.c',
     'App/Arm/arm_controller.c', 'App/Arm/joint_reference.c', 'App/Motion/joint_motion.c',
     'App/Motion/joint_motion_can.c', 'App/Motor/can_frame.c', 'App/Motor/can_tx_scheduler.c',
     'App/Motor/motor_bank.c', 'App/Motor/motor_discovery.c', 'App/Motor/motor_runtime.c',
-    'App/Motor/motor_adrc_command.c', 'App/Motor/s3519_codec.c',
+    'App/Motor/motor_adrc_command.c', 'App/Motor/motor_capability_collector.c', 'App/Motor/s3519_codec.c',
     'App/Protocol/ascii_protocol.c', 'App/Protocol/text_protocol.c', 'App/Protocol/protocol_engine.c'
 )
 New-Item -ItemType Directory -Force -Path $buildDirectory | Out-Null

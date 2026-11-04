@@ -106,3 +106,39 @@ MotorRuntimeStatus motor_adrc_build_torque_frame(const MotorRuntime *runtime,
     *decoded_torque_nm = decoded_frame_torque;
     return MOTOR_RUNTIME_STATUS_OK;
 }
+
+/** @brief Keeps diagnostic MIT encoding behind Motor and refuses unknown discovery ranges. */
+MotorRuntimeStatus motor_adrc_build_neutral_probe(const MotorRuntime *runtime,
+    uint8_t axis_index, CanFrame *frame)
+{
+    CanFrame encoded_frame;
+    if (runtime == NULL || frame == NULL || axis_index >= ARM_JOINT_COUNT)
+    { return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT; }
+    if (!runtime->initialized || runtime->configuration == NULL)
+    { return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED; }
+    if (!mit_discovered(runtime, axis_index)) { return MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE; }
+    if (s3519_pack_mit((uint8_t)runtime->configuration->joints[axis_index].esc_id,
+        &runtime->discovery.results[axis_index].ranges,
+        0.0F, 0.0F, 0.0F, 0.0F, 0.0F, &encoded_frame) != S3519_CODEC_STATUS_OK)
+    { return MOTOR_RUNTIME_STATUS_CODEC_ERROR; }
+    *frame = encoded_frame;
+    return MOTOR_RUNTIME_STATUS_OK;
+}
+
+/** @brief Validates the Motor boundary before encoding an unchanged read-only query payload. */
+MotorRuntimeStatus motor_adrc_build_feedback_query(const MotorRuntime *runtime,
+    uint8_t axis_index, uint8_t frame_length, CanFrame *frame)
+{
+    CanFrame encoded_frame;
+    if (runtime == NULL || frame == NULL || axis_index >= ARM_JOINT_COUNT ||
+        (frame_length != 4U && frame_length != 8U))
+    { return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT; }
+    if (!runtime->initialized || runtime->configuration == NULL)
+    { return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED; }
+    if (s3519_pack_feedback_query_with_length(
+        (uint8_t)runtime->configuration->joints[axis_index].esc_id,
+        frame_length, &encoded_frame) != S3519_CODEC_STATUS_OK)
+    { return MOTOR_RUNTIME_STATUS_CODEC_ERROR; }
+    *frame = encoded_frame;
+    return MOTOR_RUNTIME_STATUS_OK;
+}

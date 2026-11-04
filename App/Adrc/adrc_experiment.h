@@ -16,8 +16,14 @@
 #define ADRC_QUAL_BOUNDED_BENCH (1UL << 5)
 #define ADRC_QUAL_IDENTIFIED_MODEL (1UL << 6)
 #define ADRC_QUAL_GENERATED_ALGORITHM (1UL << 7)
+#define ADRC_QUAL_INTERFACE_QUANTIZATION (1UL << 8)
+#define ADRC_QUAL_ESTIMATOR_TIMING (1UL << 9)
+#define ADRC_QUAL_POSITION32_REQUIRED (ADRC_QUAL_INTERFACE_QUANTIZATION | ADRC_QUAL_ESTIMATOR_TIMING)
 #define ADRC_QUAL_IDENTIFY_REQUIRED (0x3FUL)
 #define ADRC_QUAL_CLOSED_LOOP_REQUIRED (0xFFUL)
+
+/** @brief Explicit local interface selection; zero preserves the legacy raw velocity contract. */
+typedef enum { ADRC_INTERFACE_LEGACY_RAW = 0, ADRC_INTERFACE_POSITION32_QUANTIZED } AdrcInterfaceProfile;
 
 /** @brief Identifies execution provenance; hardware never accepts offline qualification. */
 typedef enum { ADRC_ENV_HARDWARE = 0, ADRC_ENV_OFFLINE_FIXTURE } AdrcExperimentEnvironment;
@@ -40,6 +46,7 @@ typedef enum { ADRC_FAULT_NONE = 0, ADRC_FAULT_TIME, ADRC_FAULT_FEEDBACK,
 typedef struct
 {
     AdrcExperimentMode mode;
+    AdrcInterfaceProfile interface_profile;
     uint32_t duration_us;
     uint32_t identify_pulse_us;
     float identify_torque_nm;
@@ -75,6 +82,8 @@ typedef struct
     uint64_t feedback_us;
     float position_rad;
     float velocity_rad_s;
+    float raw_velocity_rad_s;
+    uint8_t velocity_estimate_ready;
     float mos_temperature_c;
     float rotor_temperature_c;
     float prev_sent_nm;
@@ -129,6 +138,7 @@ typedef struct
     float torque_sent_previous_nm;
     float z1;
     float z2;
+    float raw_velocity_rad_s;
     uint32_t sequence;
     uint8_t state;
     uint8_t fault;
@@ -178,6 +188,9 @@ typedef struct
     uint8_t controller_reset;
     uint8_t previous_send_expected;
 } AdrcExperiment;
+
+/** @brief Compares all semantic configuration fields without interpreting struct padding. */
+uint8_t adrc_experiment_config_equal(const AdrcExperimentConfig *left, const AdrcExperimentConfig *right);
 
 /** @brief Initializes a disabled, unqualified context; caller supplies memory. */
 AdrcExperimentResult adrc_experiment_init(AdrcExperiment *experiment,

@@ -22,6 +22,7 @@
 
 #define SOAK_DURATION_MS (1800000U)
 #define SOAK_START_US (1000000ULL)
+_Static_assert(DEBUG_UI_PAGE_COUNT <= 64U, "Soak page coverage requires a wide enough unsigned mask.");
 
 /** @brief Counts actual serial test dispatches; none are wallclock timing measurements. */
 typedef struct
@@ -35,7 +36,7 @@ typedef struct
     uint32_t feedback_frames;
     uint32_t input_events;
     uint32_t page_transitions;
-    uint32_t pages_mask;
+    uint64_t pages_mask;
     uint32_t action_focus_mask;
     uint32_t denied_actions_mask;
     uint32_t motors_mask;
@@ -154,10 +155,24 @@ static uint16_t soak_adc(uint32_t elapsed_ms)
         DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_UP,
         DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP,
         DEBUG_UI_KEY_UP, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT,
-        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_DOWN,
-        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_RIGHT,
-        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_RIGHT
+        /* Direct diagnostic tabs cycle in place; idle CENTER replaces obsolete returns to the menu. */
+        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_CENTER,
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_RIGHT,
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_RIGHT,
+        /* Home static hub: normalize its retained three-item focus before visiting the original seven-axis pages. */
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_RIGHT,
+        DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_UP,
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT,
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT,
+        DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT,
+        /* The independent POS pages remain editable displays in readonly builds; every transition still uses ADC input. */
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_CENTER, DEBUG_UI_KEY_UP, DEBUG_UI_KEY_CENTER,
+        DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN, DEBUG_UI_KEY_DOWN,
+        DEBUG_UI_KEY_RIGHT, DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_LEFT,
+        DEBUG_UI_KEY_LEFT, DEBUG_UI_KEY_RIGHT
     };
     DebugUiKey key;
     uint32_t script_ms;
@@ -351,7 +366,7 @@ static DebugUiSoakStatistics soak_run(uint8_t with_ui)
             while (debug_ui_model_take_request(&model, &request)) { ++statistics.local_requests; }
             assert(statistics.local_requests == 0U);
             assert(model.page < DEBUG_UI_PAGE_COUNT && model.selected_motor < DEBUG_UI_MOTOR_COUNT);
-            statistics.pages_mask |= (uint32_t)(1U << model.page);
+            statistics.pages_mask |= UINT64_C(1) << model.page;
             if (model.page == DEBUG_UI_PAGE_ACTIONS)
             {
                 assert(model.focus < 6U);
@@ -399,14 +414,18 @@ int main(void)
     assert(baseline.arm_state_digest == with_ui.arm_state_digest);
     assert(with_ui.arm_ticks == SOAK_DURATION_MS / 4U + 1U);
     assert(with_ui.ui_ticks == SOAK_DURATION_MS / 5U + 1U);
-    fprintf(stderr, "SOAK_PAGE_COVERAGE mask=%" PRIu32 " transitions=%" PRIu32 "\n",
+    fprintf(stderr, "SOAK_PAGE_COVERAGE mask=%" PRIu64 " transitions=%" PRIu32 "\n",
         with_ui.pages_mask, with_ui.page_transitions);
-    assert(with_ui.pages_mask == ((1U << DEBUG_UI_PAGE_OVERVIEW) | (1U << DEBUG_UI_PAGE_MOTORS) |
-        (1U << DEBUG_UI_PAGE_DETAIL) | (1U << DEBUG_UI_PAGE_DIAGNOSTICS) |
-        (1U << DEBUG_UI_PAGE_PREPARE) | (1U << DEBUG_UI_PAGE_REGISTERS) |
-        (1U << DEBUG_UI_PAGE_ACTIONS) | (1U << DEBUG_UI_PAGE_MODES) |
-        (1U << DEBUG_UI_PAGE_RECOVERY) | (1U << DEBUG_UI_PAGE_NOTICE) |
-        (1U << DEBUG_UI_PAGE_DIAGNOSTIC_MENU)));
+    /* Preserve the original reachable readonly coverage and both POS pages. Legacy MENU compatibility is
+     * tested separately by debug_ui_model_test_main.c; ADC navigation no longer passes through it. */
+    assert(with_ui.pages_mask == ((UINT64_C(1) << DEBUG_UI_PAGE_OVERVIEW) | (UINT64_C(1) << DEBUG_UI_PAGE_MOTORS) |
+        (UINT64_C(1) << DEBUG_UI_PAGE_DETAIL) | (UINT64_C(1) << DEBUG_UI_PAGE_DIAGNOSTICS) |
+        (UINT64_C(1) << DEBUG_UI_PAGE_PREPARE) | (UINT64_C(1) << DEBUG_UI_PAGE_REGISTERS) |
+        (UINT64_C(1) << DEBUG_UI_PAGE_ACTIONS) | (UINT64_C(1) << DEBUG_UI_PAGE_MODES) |
+        (UINT64_C(1) << DEBUG_UI_PAGE_RECOVERY) | (UINT64_C(1) << DEBUG_UI_PAGE_NOTICE) |
+        (UINT64_C(1) << DEBUG_UI_PAGE_STATIC_HUB) |
+        (UINT64_C(1) << DEBUG_UI_PAGE_STATIC_LOAD) | (UINT64_C(1) << DEBUG_UI_PAGE_STATIC_ACTIONS) |
+        (UINT64_C(1) << DEBUG_UI_PAGE_POS_LOAD_SETUP) | (UINT64_C(1) << DEBUG_UI_PAGE_POS_LOAD_NUMBER)));
     assert(with_ui.action_focus_mask == 0x3FU && with_ui.denied_actions_mask == 0x7FU);
     assert(with_ui.motors_mask == 0x7FU && with_ui.page_transitions > 1000U);
     assert(with_ui.stale_probe_sets == 30U && with_ui.identity_probe_sets == 30U);
@@ -416,7 +435,7 @@ int main(void)
         with_ui.arm_ticks, with_ui.ui_ticks, with_ui.protocol_passes, with_ui.health_reports);
     printf("usb_queries=%" PRIu32 " usb_hellos=%" PRIu32 " feedback_frames=%" PRIu32 " local_requests=%" PRIu32 "\n",
         with_ui.usb_queries, with_ui.usb_hellos, with_ui.feedback_frames, with_ui.local_requests);
-    printf("input_events=%" PRIu32 " pages_mask=%" PRIu32 " page_transitions=%" PRIu32 " motors_mask=%" PRIu32 " input_queue_high_watermark=%" PRIu32 "\n",
+    printf("input_events=%" PRIu32 " pages_mask=%" PRIu64 " page_transitions=%" PRIu32 " motors_mask=%" PRIu32 " input_queue_high_watermark=%" PRIu32 "\n",
         with_ui.input_events, with_ui.pages_mask, with_ui.page_transitions, with_ui.motors_mask, with_ui.input_queue_high_watermark);
     printf("action_focus_mask=%" PRIu32 " denied_actions_mask=%" PRIu32 "\n",
         with_ui.action_focus_mask, with_ui.denied_actions_mask);

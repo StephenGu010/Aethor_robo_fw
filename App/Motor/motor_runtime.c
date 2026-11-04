@@ -885,20 +885,19 @@ MotorRuntimeStatus motor_runtime_abort_active_parameter_sequences(
 static void motor_runtime_cancel_position_read(MotorRegisterPosition *state, uint64_t now_us)
 {
     state->pending = 0U;
+    state->estimated_velocity_valid = 0U;
     state->not_before_us = now_us > UINT64_MAX - 500000ULL ? UINT64_MAX : now_us + 500000ULL;
 }
 
 /** @brief Serializes two documented raw position reads without altering motor control state. */
-MotorRuntimeStatus motor_runtime_next_position_read(MotorRuntime *runtime,
-    uint8_t joint_index, uint64_t timestamp_us, uint8_t allowed, CanFrame *frame)
+static MotorRuntimeStatus motor_runtime_next_position_read_state(MotorRuntime *runtime,
+    MotorRegisterPosition *state, uint8_t joint_index, uint64_t timestamp_us, uint8_t allowed, CanFrame *frame)
 {
-    MotorRegisterPosition *state;
     uint8_t payload[4] = {0U, 0U, 0x33U, 0U};
     const MotorObject *motor;
     if (runtime == NULL || frame == NULL || joint_index >= ARM_JOINT_COUNT)
     { return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT; }
     if (!runtime->initialized) { return MOTOR_RUNTIME_STATUS_NOT_INITIALIZED; }
-    state = &runtime->position_read;
     if (state->pending && (!allowed || state->joint_index != joint_index || timestamp_us < state->sent_us))
     { motor_runtime_cancel_position_read(state, timestamp_us); }
     if (state->pending && timestamp_us - state->sent_us >= 100000ULL)
@@ -911,6 +910,7 @@ MotorRuntimeStatus motor_runtime_next_position_read(MotorRuntime *runtime,
     if (state->joint_index != joint_index)
     {
         state->seen_mask = 0U;
+        state->estimated_velocity_valid = 0U;
         state->next_register = 0U;
         state->joint_index = joint_index;
     }
@@ -928,11 +928,34 @@ MotorRuntimeStatus motor_runtime_next_position_read(MotorRuntime *runtime,
     return MOTOR_RUNTIME_STATUS_FRAME_READY;
 }
 
+/** @brief Keep the original explicit reader and its frozen coordinate evidence independent. */
+MotorRuntimeStatus motor_runtime_next_position_read(MotorRuntime *runtime,
+    uint8_t joint_index, uint64_t timestamp_us, uint8_t allowed, CanFrame *frame)
+{
+    if (!runtime) return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    return motor_runtime_next_position_read_state(runtime, &runtime->position_read,
+        joint_index, timestamp_us, allowed, frame);
+}
+
+/** @brief Use a separate display-only transaction; retain the original timeout and quarantine. */
+MotorRuntimeStatus motor_runtime_next_idle_position_read(MotorRuntime *runtime,
+    uint8_t joint_index, uint64_t timestamp_us, uint8_t allowed, CanFrame *frame)
+{
+    if (!runtime) return MOTOR_RUNTIME_STATUS_INVALID_ARGUMENT;
+    /* ControlTask runs before ProtocolTask: leave four 4ms ticks after the
+     * original deadline so foreground readers/maintenance can observe idle. */
+    if (allowed && !runtime->idle_position_read.pending && runtime->idle_position_read.not_before_us &&
+        timestamp_us >= runtime->idle_position_read.not_before_us &&
+        timestamp_us - runtime->idle_position_read.not_before_us < 16000ULL)
+        return MOTOR_RUNTIME_STATUS_WAITING;
+    return motor_runtime_next_position_read_state(runtime, &runtime->idle_position_read,
+        joint_index, timestamp_us, allowed, frame);
+}
+
 /** @brief Validates an exact pending tuple; position samples never update MotorBank feedback. */
 static MotorRuntimeStatus motor_runtime_accept_position_read(MotorRuntime *runtime,
-    const CanFrame *frame, uint64_t timestamp_us)
+    MotorRegisterPosition *state, const CanFrame *frame, uint64_t timestamp_us)
 {
-    MotorRegisterPosition *state = &runtime->position_read;
     const MotorObject *motor;
     uint32_t raw_value;
     float value;
@@ -951,8 +974,30 @@ static MotorRuntimeStatus motor_runtime_accept_position_read(MotorRuntime *runti
     memcpy(&value, &raw_value, sizeof(value));
     if (!isfinite(value))
     {
+        state->estimated_velocity_valid = 0U;
+        state->seen_mask = 0U;
         if (state->rejected_count != UINT32_MAX) { ++state->rejected_count; }
         return MOTOR_RUNTIME_STATUS_RANGE_UNAVAILABLE;
+    }
+    if (state == &runtime->idle_position_read && state->pending_register == 0U)
+    {
+        /* Differentiate only two actual 0x50 replies, never USB reads or 0x51.
+         * Discard gaps and discontinuities beyond the discovered native range;
+         * no unverified encoder wrapping is applied. */
+        float native_range = runtime->discovery.results[state->joint_index].ranges.position_max_rad;
+        float delta = value - state->values[0];
+        uint64_t interval = timestamp_us >= state->sample_us[0] ? timestamp_us - state->sample_us[0] : 0ULL;
+        state->estimated_velocity_valid = 0U;
+        if ((state->seen_mask & 1U) && interval >= 100000ULL && interval < 500000ULL &&
+            isfinite(native_range) && native_range > 0.0F && isfinite(delta) && fabsf(delta) <= native_range)
+        {
+            float velocity = delta * (1000000.0F / (float)interval);
+            if (isfinite(velocity))
+            {
+                state->estimated_native_rad_s = velocity;
+                state->estimated_velocity_valid = 1U;
+            }
+        }
     }
     state->values[state->pending_register] = value;
     state->sample_us[state->pending_register] = timestamp_us;
@@ -982,6 +1027,14 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
 
     /* The packed feedback position/velocity bytes can equal opcode/RID. Require
      * an established reader and its full ESC prefix before diverting a frame. */
+    if (!runtime->position_read_reserved && !runtime->position_read.pending && runtime->idle_position_read.not_before_us != 0U &&
+        runtime->idle_position_read.joint_index < ARM_JOINT_COUNT &&
+        frame->length >= 4U && frame->length <= 8U &&
+        frame->data[0] == (uint8_t)runtime->bank.motors[runtime->idle_position_read.joint_index].esc_id &&
+        frame->data[1] == (uint8_t)(runtime->bank.motors[runtime->idle_position_read.joint_index].esc_id >> 8U) &&
+        (frame->data[2] == 0x33U || frame->data[2] == 0x55U) &&
+        (frame->data[3] == 0x50U || frame->data[3] == 0x51U))
+    { return motor_runtime_accept_position_read(runtime, &runtime->idle_position_read, frame, timestamp_us); }
     if (runtime->position_read.not_before_us != 0U &&
         runtime->position_read.joint_index < ARM_JOINT_COUNT &&
         frame->length >= 4U && frame->length <= 8U &&
@@ -989,7 +1042,7 @@ MotorRuntimeStatus motor_runtime_accept_frame(MotorRuntime *runtime,
         frame->data[1] == (uint8_t)(runtime->bank.motors[runtime->position_read.joint_index].esc_id >> 8U) &&
         (frame->data[2] == 0x33U || frame->data[2] == 0x55U) &&
         (frame->data[3] == 0x50U || frame->data[3] == 0x51U))
-    { return motor_runtime_accept_position_read(runtime, frame, timestamp_us); }
+    { return motor_runtime_accept_position_read(runtime, &runtime->position_read, frame, timestamp_us); }
 
     motor_runtime_expire_parameter_set(&runtime->parameter_expectations,
                                        timestamp_us);

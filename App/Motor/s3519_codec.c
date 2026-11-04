@@ -277,8 +277,20 @@ S3519CodecStatus s3519_pack_parameter_read(uint8_t esc_id,
 }
 
 /**
- * @brief Packs one volatile control-mode register write for later readback.
+ * @brief Packs only the fixed motor-7 capability index as a four-byte non-persistent read.
  */
+S3519CodecStatus s3519_pack_capability_read(uint8_t esc_id, uint8_t index, CanFrame *frame)
+{
+    static const uint8_t registers[6] = {1U, 2U, 3U, 11U, 12U, 20U};
+    uint8_t payload[4] = {7U, 0U, 0x33U, 0U};
+    if (frame == NULL || index >= 6U) { return S3519_CODEC_STATUS_INVALID_ARGUMENT; }
+    if (esc_id != 7U) { return S3519_CODEC_STATUS_INVALID_ID; }
+    payload[3] = registers[index];
+    return can_frame_init(frame, S3519_PARAMETER_COMMAND_IDENTIFIER, payload, 4U) == CAN_FRAME_STATUS_OK ?
+        S3519_CODEC_STATUS_OK : S3519_CODEC_STATUS_INVALID_FRAME;
+}
+
+/** @brief Packs the existing volatile mode write without changing its whitelist. */
 S3519CodecStatus s3519_pack_control_mode_write(uint8_t esc_id,
                                                uint32_t control_mode,
                                                CanFrame *frame)

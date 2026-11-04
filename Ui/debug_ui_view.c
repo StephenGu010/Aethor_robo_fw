@@ -3,8 +3,10 @@
  * Semantic rows retain evidence, while bounded display slots implement templates.
  */
 #include "debug_ui_view.h"
+#include "../App/DebugUi/debug_ui_pos_load_units.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -17,6 +19,8 @@ uint8_t debug_ui_lvgl_pool[LV_MEM_SIZE];
 static volatile uint8_t graphics_fault;
 /** @brief Draw allocation-free Astra decorations behind shared objects. */
 static void astra_draw(lv_event_t *event);
+/** @brief Check guided timing/report provenance before its later fixed-slot layout is included. */
+static uint8_t load_view_timed_report(const DebugUiModel *model);
 
 /** @brief Record local graphics failure; guarded entrypoints stop UI execution. */
 void debug_ui_lvgl_assert_failed(void)
@@ -163,6 +167,30 @@ uint8_t debug_ui_view_init(DebugUiView *view)
     return view->initialized;
 }
 
+/** @brief Bound display-only register age including time since the shared snapshot. */
+static uint8_t debug_ui_raw_position_current(const DebugUiModel *model, const DebugUiMotorView *motor)
+{
+    return (uint8_t)(model->snapshot_seen && model->now_us >= model->snapshot.timestamp_us &&
+        model->now_us - model->snapshot.timestamp_us < DEBUG_UI_HEALTH_TIMEOUT_US &&
+        motor->register_position_contract == 1U &&
+        isfinite(motor->single_static_native_per_output) && motor->single_static_native_per_output > 0.0F &&
+        (motor->register_seen_mask & 1U) && isfinite(motor->register_position[0]) &&
+        (uint64_t)motor->register_age_ms[0] + (model->now_us - model->snapshot.timestamp_us) / 1000ULL < 500ULL);
+}
+
+/** @brief Convert verified rotor p_m radians to the LCD's existing output-shaft degrees. */
+static float debug_ui_register_output_degrees(const DebugUiMotorView *motor)
+{
+    return debug_ui_radians_to_degrees(motor->register_position[0] / motor->single_static_native_per_output);
+}
+
+/** @brief Expose a finite display estimate only while its source position remains current. */
+static uint8_t debug_ui_estimated_speed_current(const DebugUiModel *model, const DebugUiMotorView *motor)
+{
+    return (uint8_t)(debug_ui_raw_position_current(model, motor) && motor->register_estimated_velocity_valid &&
+        isfinite(motor->register_estimated_native_rad_s));
+}
+
 /** @brief Translate verified actual modes; zero is explicitly unknown. */
 static const char *mode_text(DebugUiMode mode)
 {
@@ -172,7 +200,7 @@ static const char *mode_text(DebugUiMode mode)
 static const char *operation_text(DebugUiOperation operation)
 {
     static const char *const names[] = { "申请本地控制", "释放本地控制", "POS 相对移动",
-        "MIT 有限保持", "MIT 相对移动", "切换模式", "清除故障", "请求失能", "STOP 停止" };
+        "MIT 有限保持", "MIT 相对移动", "切换模式", "清除故障", "请求失能", "STOP 停止", "七轴静载保持", "单轴静载保持" };
     return (unsigned)operation < sizeof(names) / sizeof(names[0]) ? names[operation] : "未知操作";
 }
 /** @brief Display the application phase, separately from mailbox admission. */
@@ -254,6 +282,390 @@ static void slot(DebugUiViewPage *page, unsigned index, int x, int y, int width,
     }
 }
 
+/** @brief Compare the complete nonzero provenance key before displaying retained measurements. */
+static uint8_t view_same_identity(const DebugUiIdentity *left, const DebugUiIdentity *right)
+{
+    return (uint8_t)(left->request_id != 0U && left->request_id == right->request_id &&
+        left->origin == right->origin && left->epoch == right->epoch);
+}
+
+/** @brief Require a valid operation-specific selection before trusting a retained report. */
+static uint8_t static_report_scope_valid(const DebugUiStaticLoadReport *report)
+{
+    uint8_t mask = report->motor_mask;
+    if (report->operation == DEBUG_UI_OPERATION_STATIC_HOLD) return (uint8_t)(mask == 0x7FU);
+    return (uint8_t)(report->operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD && mask != 0U &&
+        (mask & 0x80U) == 0U && (mask & (mask - 1U)) == 0U);
+}
+
+/** @brief Permit explicit scoped history; current reports require identity, operation and ID. */
+static uint8_t static_report_visible(const DebugUiModel *model)
+{
+    const DebugUiStaticLoadReport *report = &model->snapshot.static_load;
+    uint8_t expected_mask = model->submitted.operation == DEBUG_UI_OPERATION_STATIC_HOLD ? 0x7FU :
+        (model->submitted.target_motor_id > 0U && model->submitted.target_motor_id <= DEBUG_UI_MOTOR_COUNT ?
+         (uint8_t)(1U << (model->submitted.target_motor_id - 1U)) : 0U);
+    return (uint8_t)(static_report_scope_valid(report) && (model->static_result_retained ||
+        (debug_ui_is_static_operation(model->submitted.operation) && report->operation == model->submitted.operation &&
+         report->motor_mask == expected_mask && view_same_identity(&model->submitted.identity, &report->identity))));
+}
+
+/** @brief Explain the retained trial's first exit without borrowing a later STOP completion. */
+static uint8_t static_report_exit_text(char *text, size_t capacity, const DebugUiModel *model)
+{
+    const DebugUiStaticLoadReport *report = &model->snapshot.static_load;
+    const char *cause;
+    const char *phase;
+    if (!static_report_visible(model) || !report->first_exit_latched) return 0U;
+    phase = report->first_exit_phase == DEBUG_UI_STATIC_LOAD_PHASE_TAKEOVER ? "前馈接入" :
+        (report->first_exit_phase == DEBUG_UI_STATIC_LOAD_PHASE_HOLD ? "保持" : "准备");
+    if (report->first_exit_reason != DEBUG_UI_REASON_NONE) cause = debug_ui_reason_text(report->first_exit_reason);
+    else if (report->first_exit_code == DEBUG_UI_COMPLETED) cause = "到期";
+    else if (report->first_exit_code == DEBUG_UI_STOPPED) cause = "停止";
+    else if (report->first_exit_code == DEBUG_UI_CANCELLED) cause = "已取消";
+    else {
+        /* Stable protocol error values are retained verbatim in the display-only contract. */
+        switch (report->first_exit_error) {
+        case 1U: cause = "尚未就绪"; break;
+        case 2U: cause = "超出范围"; break;
+        case 3U: cause = "速度超限"; break;
+        case 4U: cause = "驱动故障"; break;
+        case 5U: case 7U: cause = "反馈过期"; break;
+        case 6U: cause = "超时"; break;
+        default: cause = "动作失败"; break;
+        }
+    }
+    (void)snprintf(text, capacity, "首因 %s / %s", phase, cause);
+    return 1U;
+}
+
+/** @brief Format bounded seven-row live/retained evidence; stale numbers never appear valid. */
+static void static_load_rows(DebugUiViewPage *page, const DebugUiModel *model, uint8_t result)
+{
+    unsigned index;
+    const DebugUiStaticLoadReport *report = &model->snapshot.static_load;
+    uint8_t coherent = (uint8_t)(model->snapshot_seen && model->now_us >= model->snapshot.timestamp_us &&
+        model->now_us - model->snapshot.timestamp_us < DEBUG_UI_HEALTH_TIMEOUT_US);
+    for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index) {
+        char text[DEBUG_UI_VIEW_TEXT_BYTES];
+        const DebugUiMotorView *motor = &model->snapshot.motors[index];
+        uint8_t fresh = (uint8_t)(coherent && motor->motor_id == index + 1U && motor->feedback_seen &&
+            motor->feedback_valid && motor->feedback_age_ms < 150U && isfinite(motor->position_rad) &&
+            isfinite(motor->torque_nm) && isfinite(motor->mos_temperature_c) && isfinite(motor->rotor_temperature_c));
+        if (result) {
+            uint8_t observed = (uint8_t)(static_report_visible(model) && report->identity.request_id != 0U &&
+                (report->valid_mask & (1U << index)) && report->samples[index] != 0U);
+            if (!observed) (void)snprintf(text, sizeof(text), "M%02u -- / 未观测", index + 1U);
+            else if (model->static_result_detail == 2U)
+                (void)snprintf(text, sizeof(text), "M%02u N%lu", index + 1U, (unsigned long)report->samples[index]);
+            else if (model->static_result_detail == 1U && isfinite(report->peak_mos_c[index]) && isfinite(report->peak_rotor_c[index]))
+                (void)snprintf(text, sizeof(text), "M%02u MOS%.3g°C ROT%.3g°C", index + 1U,
+                    (double)report->peak_mos_c[index], (double)report->peak_rotor_c[index]);
+            else if (model->static_result_detail == 0U && isfinite(debug_ui_radians_to_degrees(report->peak_error_rad[index])) && isfinite(report->peak_torque_nm[index]))
+                (void)snprintf(text, sizeof(text), "M%02u e%.3g° T%.3gNm", index + 1U,
+                    (double)debug_ui_radians_to_degrees(report->peak_error_rad[index]), (double)report->peak_torque_nm[index]);
+            else (void)snprintf(text, sizeof(text), "M%02u -- / 数据无效", index + 1U);
+        } else if (!fresh) {
+            (void)snprintf(text, sizeof(text), "M%02u %s e-- T-- --/--", index + 1U, motor->feedback_seen ? "过期" : "未知");
+        } else {
+            uint8_t active_group = (uint8_t)(report->active && report->operation == DEBUG_UI_OPERATION_STATIC_HOLD && report->motor_mask == 0x7FU);
+            uint8_t locked_group = (uint8_t)(model->static_locked && model->draft.operation == DEBUG_UI_OPERATION_STATIC_HOLD);
+            float target = active_group ? report->target_position_rad[index] : model->draft.static_positions_rad[index];
+            float error = debug_ui_radians_to_degrees(motor->position_rad - target);
+            char error_text[24];
+            if ((active_group || locked_group) && isfinite(error))
+                (void)snprintf(error_text, sizeof(error_text), "%+.3g", (double)error);
+            else (void)snprintf(error_text, sizeof(error_text), "--");
+            (void)snprintf(text, sizeof(text), "M%02u %s e%s° T%.3gNm %.3g/%.3g°C", index + 1U,
+                motor->fault_flags ? "故障" : (motor->enabled ? "使能" : (motor->driver_state == 0U ? "失能" : "未知")),
+                error_text, (double)motor->torque_nm, (double)motor->mos_temperature_c, (double)motor->rotor_temperature_c);
+        }
+        row(page, index, text);
+    }
+}
+
+/** @brief Recognize the static runtime without mistaking retained reports for active work. */
+static uint8_t static_load_running(const DebugUiModel *model)
+{
+    return (uint8_t)((model->snapshot.static_load.active && static_report_scope_valid(&model->snapshot.static_load)) ||
+        (debug_ui_is_static_operation(model->submitted.operation) && (model->awaiting_result || model->stop_waiting)));
+}
+
+/** @brief Resolve the actual active static mode ahead of older submitted work. */
+static uint8_t single_static_running(const DebugUiModel *model)
+{
+    if (model->single_static_flow && model->submitted.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+        (model->awaiting_result || model->stop_waiting) &&
+        (view_same_identity(&model->snapshot.active_identity, &model->submitted.identity) ||
+         view_same_identity(&model->snapshot.static_load.identity, &model->submitted.identity))) return 1U;
+    if (model->snapshot.static_load.active && static_report_scope_valid(&model->snapshot.static_load))
+        return (uint8_t)(model->snapshot.static_load.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD);
+    return (uint8_t)(model->submitted.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+        (model->awaiting_result || model->stop_waiting));
+}
+
+/** @brief Render selected-axis live values or causal report evidence in seven bounded rows. */
+static void single_static_rows(DebugUiViewPage *page, const DebugUiModel *model, uint8_t result)
+{
+    const DebugUiSnapshot *snapshot = &model->snapshot;
+    const DebugUiStaticLoadReport *report = &snapshot->static_load;
+    uint8_t visible = static_report_visible(model);
+    uint8_t runtime = single_static_running(model);
+    unsigned index = model->selected_motor < DEBUG_UI_MOTOR_COUNT ? model->selected_motor : 0U;
+    const DebugUiMotorView *motor;
+    char text[DEBUG_UI_VIEW_TEXT_BYTES];
+    if ((result && visible) || (runtime && report->active && static_report_scope_valid(report) &&
+        (!model->single_static_flow || load_view_timed_report(model)))) {
+        for (index = 0U; index < DEBUG_UI_MOTOR_COUNT; ++index)
+            if ((report->motor_mask & (1U << index)) != 0U) break;
+    } else if (model->submitted.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+        (result || runtime) && model->submitted.target_motor_id > 0U && model->submitted.target_motor_id <= DEBUG_UI_MOTOR_COUNT)
+        index = model->submitted.target_motor_id - 1U;
+    if (index >= DEBUG_UI_MOTOR_COUNT) index = 0U;
+    motor = &snapshot->motors[index];
+    if (result) {
+        uint8_t observed = (uint8_t)(visible && report->identity.request_id != 0U &&
+            (report->valid_mask & (1U << index)) != 0U && report->samples[index] != 0U);
+        (void)snprintf(text, sizeof(text), visible ? "单轴 ID%u / RQ%lu" : "ID%u / 等待本次结果", index + 1U,
+            (unsigned long)report->identity.request_id); row(page, 0U, text);
+        if (!visible && report->identity.request_id != 0U &&
+            view_same_identity(&model->submitted.identity, &report->identity))
+            row(page, 0U, report->operation != model->submitted.operation ? "结果模式不符 / 已隐藏" : "结果ID不符 / 已隐藏");
+        if (observed && isfinite(debug_ui_radians_to_degrees(report->peak_error_rad[index]))) {
+            /* Report observed precision independently of trial completion and the ID7 HOLD trip. */
+            const char *format = "偏差峰值 %.3g°";
+            if (index == 6U && report->operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD)
+                format = report->peak_error_rad[index] > debug_ui_degrees_to_radians(0.5f) ?
+                    "偏差峰值 %.3g° >0.5°" : "偏差峰值 %.3g° <=0.5°";
+            (void)snprintf(text, sizeof(text), format, (double)debug_ui_radians_to_degrees(report->peak_error_rad[index]));
+        }
+        else (void)snprintf(text, sizeof(text), "偏差峰值 --");
+        row(page, 1U, text);
+        if (observed && isfinite(report->peak_torque_nm[index]))
+            (void)snprintf(text, sizeof(text), "转矩峰值 %.3g Nm", (double)report->peak_torque_nm[index]);
+        else (void)snprintf(text, sizeof(text), "转矩峰值 --");
+        row(page, 2U, text);
+        if (observed && isfinite(report->peak_mos_c[index]) && isfinite(report->peak_rotor_c[index]))
+            (void)snprintf(text, sizeof(text), "MOS %.3g / 转子 %.3g°C", (double)report->peak_mos_c[index], (double)report->peak_rotor_c[index]);
+        else (void)snprintf(text, sizeof(text), "MOS -- / 转子 --");
+        row(page, 3U, text);
+        if (observed) (void)snprintf(text, sizeof(text), "有效采样 %lu", (unsigned long)report->samples[index]);
+        else (void)snprintf(text, sizeof(text), "有效采样 -- / 未观测");
+        row(page, 4U, text);
+        row(page, 5U, !visible ? "停止确认 / --" : (report->disabled_confirmed ? "停止确认 / 已失能" : "停止确认 / 待确认"));
+    } else {
+        uint8_t fresh = (uint8_t)(model->snapshot_seen && model->now_us >= snapshot->timestamp_us &&
+            model->now_us - snapshot->timestamp_us < DEBUG_UI_HEALTH_TIMEOUT_US && motor->motor_id == index + 1U &&
+            motor->feedback_seen && motor->feedback_valid && motor->feedback_age_ms < 150U &&
+            isfinite(motor->position_rad) && isfinite(motor->torque_nm) &&
+            isfinite(motor->mos_temperature_c) && isfinite(motor->rotor_temperature_c));
+        uint8_t locked = (uint8_t)(model->static_locked && model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+            model->draft.target_motor_id == index + 1U);
+        DebugUiReason reason = debug_ui_model_gate(model, DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD);
+        const char *state = runtime ? (model->stop_requested ? "停止待确认" : (report->takeover_active ? "前馈接入" : (report->active ? "运行中" : "等待应用"))) :
+            (reason == DEBUG_UI_REASON_UNCALIBRATED && !motor->single_static_profile.configured ? "长时未配置" :
+             (reason == DEBUG_UI_REASON_NONE ? (locked ? "已锁定" : "未锁定") : debug_ui_reason_text(reason)));
+        (void)snprintf(text, sizeof(text), "ID%u %s", index + 1U, state); row(page, 0U, text);
+        if (fresh && ((runtime && report->active && (!model->single_static_flow || load_view_timed_report(model))) ||
+            (locked && (!runtime || !model->single_static_flow)))) {
+            float target = runtime && report->active ? report->target_position_rad[index] : model->draft.static_positions_rad[index];
+            float error = debug_ui_radians_to_degrees(motor->position_rad - target);
+            if (isfinite(error)) (void)snprintf(text, sizeof(text), "输出轴偏差 %+.3g°", (double)error);
+            else (void)snprintf(text, sizeof(text), "输出轴偏差 --");
+        } else (void)snprintf(text, sizeof(text), "输出轴偏差 --");
+        row(page, 1U, text);
+        if (fresh) (void)snprintf(text, sizeof(text), "反馈转矩 %.3g Nm", (double)motor->torque_nm);
+        else (void)snprintf(text, sizeof(text), "反馈转矩 -- / 过期");
+        row(page, 2U, text);
+        if (fresh) (void)snprintf(text, sizeof(text), "MOS %.3g / 转子 %.3g°C", (double)motor->mos_temperature_c, (double)motor->rotor_temperature_c);
+        else (void)snprintf(text, sizeof(text), "MOS -- / 转子 --");
+        row(page, 3U, text);
+        (void)snprintf(text, sizeof(text), "计时 %lu/%lu ms", (unsigned long)(runtime && report->active ? report->elapsed_ms : 0U),
+            (unsigned long)(runtime ? model->submitted.hold_duration_ms :
+             (model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD ? model->draft.hold_duration_ms : 0U))); row(page, 4U, text);
+        row(page, 5U, runtime ? "中键 STOP / 请求失能" : "先承托 / 到期仍失能");
+    }
+    row(page, 6U, snapshot->unconfirmed_disable_mask != 0U || model->stop_latch_state == DEBUG_UI_STOP_LATCH_UNCONFIRMED ?
+        "当前控制 / 仍锁定" : (snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? "当前控制 / 本地" : "当前控制 / 未获本地"));
+    if (!result && runtime && visible && (report->valid_mask & (1U << index)) != 0U && report->samples[index] &&
+        isfinite(debug_ui_radians_to_degrees(report->peak_error_rad[index])) && isfinite(report->peak_torque_nm[index])) {
+        const char *control = snapshot->unconfirmed_disable_mask != 0U || model->stop_latch_state == DEBUG_UI_STOP_LATCH_UNCONFIRMED ?
+            "锁定" : (snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? "本地" : "未获");
+        (void)snprintf(text, sizeof(text), "峰值 %.2g°/%.2gNm 控制%s",
+            (double)debug_ui_radians_to_degrees(report->peak_error_rad[index]),
+            (double)report->peak_torque_nm[index], control);
+        row(page, 6U, text);
+    }
+}
+
+/** @brief A STOP terminal explains this report only when the application bound both identities. */
+static uint8_t static_completion_matches_report(const DebugUiModel *model)
+{
+    const DebugUiStaticLoadReport *report = &model->snapshot.static_load;
+    if (model->completion.operation == DEBUG_UI_OPERATION_STOP &&
+        view_same_identity(&model->completion.identity, &report->stop_identity)) return 1U;
+    return (uint8_t)(!report->stopped && model->completion.operation == report->operation &&
+        view_same_identity(&model->completion.identity, &report->identity));
+}
+
+/** @brief Bind terminal wording to the retained report identity and distinguish cleanup evidence. */
+static const char *static_result_heading(const DebugUiModel *model)
+{
+    const DebugUiStaticLoadReport *report = &model->snapshot.static_load;
+    uint8_t disabled = report->disabled_confirmed; /* Historical causal acknowledgement is separate from today's control lock. */
+    uint8_t matching_terminal = (uint8_t)(model->completion_seen && static_completion_matches_report(model));
+    if (report->identity.request_id != 0U && !static_report_scope_valid(report)) return "静载 / 无效范围";
+    if (!static_report_visible(model) && debug_ui_is_static_operation(model->submitted.operation) &&
+        model->submitted.identity.request_id != 0U)
+        return model->completion_seen && view_same_identity(&model->completion.identity, &model->submitted.identity) &&
+            model->completion.code == DEBUG_UI_FAILED ? "静载未开始 / 已拒绝" : "静载结果 / 等待本次";
+    if (report->identity.request_id == 0U) return "静载结果 / 未运行";
+    if (model->static_result_retained) {
+        if (report->first_exit_latched && report->first_exit_code == DEBUG_UI_FAILED)
+            return disabled ? "保留失败 / 已失能" : "保留失败 / 待确认";
+        if (report->stopped) return disabled ? "保留已停止 / 已失能" : "保留已停止 / 待确认";
+        return disabled ? "保留结果 / 已失能" : "保留结果 / 待确认";
+    }
+    if (report->first_exit_latched && report->first_exit_code == DEBUG_UI_FAILED)
+        return disabled ? "静载失败 / 已失能" : "静载失败 / 待确认";
+    if (report->stopped) return disabled ? "静载已停止 / 已失能" : "静载已停止 / 待确认";
+    if (matching_terminal && model->completion.code == DEBUG_UI_FAILED)
+        return disabled ? "静载失败 / 已失能" : "静载失败 / 待确认";
+    if (matching_terminal && model->completion.code == DEBUG_UI_STOPPED)
+        return disabled ? "静载已停止 / 已失能" : "静载已停止 / 待确认";
+    if (!report->complete) return disabled ? "静载未完成 / 已失能" : "静载未完成 / 待确认";
+    return disabled ? "静载结果 / 已失能" : "静载结果 / 待确认";
+}
+
+/** @brief Identify the allocation-free monochrome templates owned by the guided workflow. */
+static uint8_t single_static_instrument_page(const DebugUiModel *model)
+{
+    return (uint8_t)(model->page == DEBUG_UI_PAGE_STATIC_HUB ||
+        model->page == DEBUG_UI_PAGE_SINGLE_STATIC_SETUP ||
+        model->page == DEBUG_UI_PAGE_SINGLE_STATIC_CONFIG_REVIEW ||
+        model->page == DEBUG_UI_PAGE_SINGLE_STATIC_READY ||
+        model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RELOCK ||
+        model->page == DEBUG_UI_PAGE_SINGLE_STATIC_PREFLIGHT ||
+        (model->single_static_flow && (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RESULT ||
+         model->page == DEBUG_UI_PAGE_RESULT || model->page == DEBUG_UI_PAGE_FAULT ||
+         (model->page == DEBUG_UI_PAGE_REVIEW && (model->reviewed.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD ||
+          (model->reviewed.operation == DEBUG_UI_OPERATION_ACQUIRE && model->review_return_page == DEBUG_UI_PAGE_SINGLE_STATIC_READY))) ||
+         (model->page == DEBUG_UI_PAGE_RUNNING && single_static_running(model)))));
+}
+
+/** @brief Require coherent selected-axis evidence before showing a current measurement. */
+static uint8_t single_static_feedback_fresh(const DebugUiModel *model, unsigned index)
+{
+    const DebugUiMotorView *motor = &model->snapshot.motors[index];
+    return (uint8_t)(model->snapshot_seen && model->now_us >= model->snapshot.timestamp_us &&
+        model->now_us - model->snapshot.timestamp_us < DEBUG_UI_HEALTH_TIMEOUT_US &&
+        motor->motor_id == index + 1U && motor->feedback_seen && motor->feedback_valid &&
+        motor->feedback_age_ms < 150U && isfinite(motor->position_rad) &&
+        isfinite(motor->torque_nm) && isfinite(motor->mos_temperature_c) && isfinite(motor->rotor_temperature_c));
+}
+
+/** @brief Compose setup, configuration, readiness and relock from published facts only. */
+static void single_static_flow_rows(DebugUiViewPage *page, const DebugUiModel *model)
+{
+    unsigned index = model->selected_motor < DEBUG_UI_MOTOR_COUNT ? model->selected_motor : 0U;
+    const DebugUiMotorView *motor = &model->snapshot.motors[index];
+    uint8_t fresh = single_static_feedback_fresh(model, index);
+    uint8_t unlocked = (uint8_t)(AETHOR_DEBUG_UI_ALLOW_SINGLE_STATIC_LOAD && model->snapshot.single_static_load_enabled);
+    uint8_t configured = (uint8_t)(model->single_static_configured && motor->single_static_profile.configured);
+    uint8_t cancel_handoff = debug_ui_model_single_static_can_cancel_handoff(model);
+    char text[DEBUG_UI_VIEW_TEXT_BYTES];
+    if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_PREFLIGHT) {
+        (void)snprintf(text, sizeof(text), "ID%u / 失能预检", model->submitted.target_motor_id); row(page, 0U, text);
+        row(page, 1U, "仅输出一次 DISABLE");
+        row(page, 2U, "等待输出后的失能反馈");
+        row(page, 3U, "不会立即开始保持");
+        row(page, 4U, "参数与姿态保持冻结");
+        row(page, 5U, model->awaiting_result ? "等待有效新反馈" : "预检完成 / 检查新快照");
+        row(page, 6U, "左 取消 / 中 STOP");
+        return;
+    }
+    if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_CONFIG_REVIEW) {
+        (void)snprintf(text, sizeof(text), "ID%u / 配置确认", model->reviewed.target_motor_id); row(page, 0U, text);
+        (void)snprintf(text, sizeof(text), "允许保持 %lu 秒", (unsigned long)(model->reviewed.hold_duration_ms / 1000U)); row(page, 1U, text);
+        (void)snprintf(text, sizeof(text), "前馈 %+.2f Nm / 输出轴", (double)model->reviewed.torque_ff_nm); row(page, 2U, text);
+        row(page, 3U, "确认后单次失能预检");
+        if (model->reviewed.target_motor_id == 7U && model->reviewed.kp > 0.0f) {
+            (void)snprintf(text, sizeof(text), "Kp %.0f / Kd %.2f / 输出轴",
+                (double)model->reviewed.kp, (double)model->reviewed.kd); row(page, 4U, text);
+        } else row(page, 4U, "开始保持还需独立确认");
+        row(page, 5U, model->single_static_wait_snapshot ? "配置完成 / 等待新快照" :
+            (model->awaiting_result ? "正在提交 / 等待应用确认" : "核对ID与时长 / 反馈待预检"));
+        if (model->awaiting_result || model->single_static_wait_snapshot) row(page, 6U, "等待确认 / 中键 STOP");
+        else if (!model->review_released) row(page, 6U, "请先松开中键");
+        else { (void)snprintf(text, sizeof(text), "长按中键 %lu / 800ms", (unsigned long)model->confirm_elapsed_ms); row(page, 6U, text); }
+        return;
+    }
+    (void)snprintf(text, sizeof(text), "ID%u / %s", index + 1U,
+        model->page == DEBUG_UI_PAGE_SINGLE_STATIC_SETUP ? "准备配置" :
+        (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RELOCK ? "锁止退出" : "检查并锁姿态")); row(page, 0U, text);
+    if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RELOCK) {
+        if (model->single_static_relock_motor_id > 0U && model->single_static_relock_motor_id <= DEBUG_UI_MOTOR_COUNT) {
+            (void)snprintf(text, sizeof(text), "ID%u / 锁止退出", model->single_static_relock_motor_id);
+            row(page, 0U, text);
+        }
+        if (model->single_static_relock_motor_id > 0U && model->single_static_relock_motor_id != index + 1U) {
+            (void)snprintf(text, sizeof(text), "下一步 ID%u / %u 秒", index + 1U, model->single_static_seconds);
+            row(page, 1U, text);
+        } else row(page, 1U, model->awaiting_result || model->single_static_wait_snapshot ?
+            "正在重新锁止" : "锁止失败 / 等待重试");
+        row(page, 2U, cancel_handoff ? "本流程RAM配置 / 未配置" : "撤销本流程RAM配置");
+        row(page, 3U, cancel_handoff ? "保留已有控制权" : "释放本地控制权");
+        row(page, 4U, cancel_handoff ? "左键取消本次准备" : "收到应用确认后才离开");
+        row(page, 5U, model->single_static_wait_snapshot ? "等待锁止后的新快照" :
+            (model->awaiting_result ? "等待应用锁止确认" : debug_ui_reason_text(model->reason)));
+        row(page, 6U, cancel_handoff ? "左 返回 / 中 重试 / 右 STOP" :
+            (model->awaiting_result || model->single_static_wait_snapshot ? "处理中 / 中键 STOP" : "中键 重试锁止 / 右 STOP"));
+        return;
+    }
+    if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_SETUP) {
+        (void)snprintf(text, sizeof(text), "电机   < ID%u >", index + 1U); row(page, 1U, text);
+        (void)snprintf(text, sizeof(text), "保持   < %u 秒 >", model->single_static_seconds); row(page, 2U, text);
+        row(page, 3U, !unlocked ? "固件锁止 / 不可解锁" : (configured ? "RAM配置 / 已确认" : "RAM配置 / 未配置"));
+        if (motor->mode_verified && motor->actual_mode != DEBUG_UI_MODE_MIT)
+            (void)snprintf(text, sizeof(text), "先返回电机页切换 MIT 模式");
+        else if (!fresh) (void)snprintf(text, sizeof(text), "反馈未知 / 确认后失能预检");
+        else (void)snprintf(text, sizeof(text), "%s / 新反馈 / %s", motor->mode_verified ? mode_text(motor->actual_mode) : "模式未知",
+            motor->enabled || motor->driver_state != 0U ? "失能待确认" : "已失能");
+        row(page, 4U, text);
+        row(page, 5U, !unlocked ? "固件锁止" : "配置并解锁");
+        row(page, 6U, motor->mode_verified && motor->actual_mode != DEBUG_UI_MODE_MIT ? "先返回电机页切换 MIT 模式" :
+            (model->reason == DEBUG_UI_REASON_NONE ? "仅配置 / 不产生保持输出" : debug_ui_reason_text(model->reason)));
+        return;
+    }
+    (void)snprintf(text, sizeof(text), "RAM %s / %u 秒", configured ? "已确认" : "未配置", model->single_static_seconds); row(page, 1U, text);
+    {
+        char authority_text[32];
+        if (model->snapshot.authority==DEBUG_UI_AUTHORITY_LOCAL_ARMED && model->snapshot.target_motor_id!=index+1U)
+            (void)snprintf(authority_text,sizeof(authority_text),"本地ID%u",model->snapshot.target_motor_id);
+        else (void)snprintf(authority_text,sizeof(authority_text),"%s",
+            model->snapshot.authority==DEBUG_UI_AUTHORITY_LOCAL_ARMED?"本地":
+            (model->snapshot.authority==DEBUG_UI_AUTHORITY_REMOTE?"远端":"控制锁定"));
+        (void)snprintf(text,sizeof(text),"%s / %s / %s / %s",authority_text,
+            motor->mode_verified?mode_text(motor->actual_mode):"模式未知",fresh?"新反馈":"反馈未知",
+            fresh && !motor->enabled && motor->driver_state==0U?"已失能":"待确认");
+        row(page,2U,text);
+    }
+    if (model->static_locked && model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+        model->draft.target_motor_id == index + 1U && isfinite(model->draft.static_positions_rad[index]))
+        (void)snprintf(text, sizeof(text), "冻结输出轴 %.2f°", (double)debug_ui_radians_to_degrees(model->draft.static_positions_rad[index]));
+    else if (fresh) (void)snprintf(text, sizeof(text), "当前输出轴 %.2f°", (double)debug_ui_radians_to_degrees(motor->position_rad));
+    else if (debug_ui_raw_position_current(model, motor))
+        (void)snprintf(text, sizeof(text), "位置 %.2f°", (double)debug_ui_register_output_degrees(motor));
+    else (void)snprintf(text, sizeof(text), "当前输出轴 --");
+    row(page, 3U, text);
+    row(page, 4U, model->static_locked ? "姿态已捕获 / 开始前再确认" :
+        (model->snapshot.authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? "本地控制 / 等待捕获姿态" : "远端控制 / 先申请本地"));
+    row(page, 5U, model->single_static_wait_snapshot ? "等待控制权新快照" :
+        (model->snapshot.authority != DEBUG_UI_AUTHORITY_LOCAL_ARMED ? "检查并申请本地控制" :
+        (model->static_locked ? "查看开始确认" : "捕获当前姿态")));
+    row(page, 6U, model->reason == DEBUG_UI_REASON_NONE ? "先承托 / 到期将失能" : debug_ui_reason_text(model->reason));
+}
+
 #include "debug_ui_astra_layout.inc"
 
 /** @brief Map a copied model to persistent LVGL labels without runtime object creation. */
@@ -270,16 +682,35 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
     unsigned index;
     int focus_row = -1;
     uint8_t page_changed;
+    uint8_t load_result;
+    uint8_t pos_cleanup_locked;
+    const DebugUiLoadTrialRecord *load_record;
     if (view == NULL || model == NULL || diagnostics == NULL || !view->initialized || !debug_ui_view_healthy()) return;
     if ((unsigned)model->page >= DEBUG_UI_PAGE_COUNT) return;
     page = &view->page;
     snapshot = &model->snapshot;
+    pos_cleanup_locked = (uint8_t)(model->pos_load_flow && debug_ui_model_result_requires_check(model));
     motor = &snapshot->motors[model->selected_motor < DEBUG_UI_MOTOR_COUNT ? model->selected_motor : 0U];
     page_changed = (uint8_t)(!page->layout_initialized || view->visible != model->page);
+    load_record = load_view_bound_record(model);
+    load_result = (uint8_t)(model->single_static_flow && model->submitted.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+        (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RESULT ||
+         (load_record != NULL && (model->page == DEBUG_UI_PAGE_RESULT || model->page == DEBUG_UI_PAGE_FAULT))));
     view->visible = model->page;
     for (index = 0U; index < DEBUG_UI_VIEW_ROWS; ++index) page->row_text[index][0] = '\0';
     /* Compose into a bounded local row matrix, then update only changed strings. */
     switch (model->page) {
+    case DEBUG_UI_PAGE_LOAD_METADATA:
+    case DEBUG_UI_PAGE_LOAD_NUMBER:
+    case DEBUG_UI_PAGE_LOAD_HISTORY:
+    case DEBUG_UI_PAGE_LOAD_DETAIL:
+        heading = model->page == DEBUG_UI_PAGE_LOAD_HISTORY ? "最近载荷记录" :
+            (model->page == DEBUG_UI_PAGE_LOAD_DETAIL ? "载荷记录详情" : "载荷/记录");
+        load_view_rows(page, model);
+        footer = model->page == DEBUG_UI_PAGE_LOAD_NUMBER ? "上下 ±1  左右 ±10  中 返回" :
+            (model->page == DEBUG_UI_PAGE_LOAD_HISTORY ? "上下 选择  中 详情  左 返回" :
+            (model->page == DEBUG_UI_PAGE_LOAD_DETAIL ? "上下/右 翻面  中/左 列表" : "上下 选择  左右 ±10  中 进入"));
+        break;
     case DEBUG_UI_PAGE_OVERVIEW:
         heading = "系统总览";
         (void)snprintf(text, sizeof(text), "%s / 已发现 %u/7", snapshot->bench_profile ? "台架" : "生产只读", discovered_count(snapshot)); row(page, 0U, text);
@@ -292,8 +723,48 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
         row(page, 5U, snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? "释放本地控制" : "申请本地控制");
         row(page, 6U, debug_ui_reason_text(debug_ui_model_gate(model,
             snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? DEBUG_UI_OPERATION_RELEASE : DEBUG_UI_OPERATION_ACQUIRE)));
-        focus_row = 3 + model->focus % 3U;
+        focus_row = 3 + model->focus % 4U;
         footer = "左右 选择  中/下 进入";
+        break;
+    case DEBUG_UI_PAGE_SINGLE_STATIC_GAINS:
+        heading = "单轴静载 / 参数";
+        row(page, 0U, "ID7 / 输出轴等效参数");
+        (void)snprintf(text, sizeof(text), "%sKp  %u", model->focus == 0U ? "> " : "", model->single_static_kp); row(page, 1U, text);
+        (void)snprintf(text, sizeof(text), "%sKd  %u.%02u", model->focus == 1U ? "> " : "", model->single_static_kd_centi / 100U,
+            model->single_static_kd_centi % 100U); row(page, 2U, text);
+        row(page, 3U, model->focus == 2U ? "> 恢复默认 120 / 0.30" : "恢复默认 120 / 0.30");
+        row(page, 4U, model->focus == 3U ? "> 返回" : "返回");
+        row(page, 5U, "Kp 80-200 / Kd 0.20-0.40");
+        row(page, 6U, "停止后设置 / 下次生效");
+        if (model->gain_editing) {
+            char digits[8]; unsigned character;
+            if (model->focus == 0U) (void)snprintf(digits, sizeof(digits), "%03u", model->gain_edit_value);
+            else (void)snprintf(digits, sizeof(digits), "%u.%02u", model->gain_edit_value / 100U, model->gain_edit_value % 100U);
+            character = model->gain_digit + (model->focus == 1U && model->gain_digit > 0U ? 1U : 0U);
+            (void)snprintf(text, sizeof(text), "%s %.*s[%c]%s", model->focus == 0U ? "Kp" : "Kd",
+                (int)character, digits, digits[character], digits + character + 1U);
+            row(page, model->focus + 1U, text);
+        }
+        focus_row = model->focus + 1U;
+        footer = model->gain_editing ? "左右选位 上下调值 中保存 长左取消" : "上下选择 中编辑 左返回";
+        break;
+    case DEBUG_UI_PAGE_STATIC_HUB:
+        heading = "静载测试";
+        footer = "上下 选择  中 进入  左 首页";
+        break;
+    case DEBUG_UI_PAGE_SINGLE_STATIC_SETUP:
+    case DEBUG_UI_PAGE_SINGLE_STATIC_CONFIG_REVIEW:
+    case DEBUG_UI_PAGE_SINGLE_STATIC_READY:
+    case DEBUG_UI_PAGE_SINGLE_STATIC_RELOCK:
+    case DEBUG_UI_PAGE_SINGLE_STATIC_PREFLIGHT:
+        heading = model->page == DEBUG_UI_PAGE_SINGLE_STATIC_CONFIG_REVIEW ? "确认配置与解锁" :
+            (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RELOCK ? "安全锁止" : "单轴静载");
+        single_static_flow_rows(page, model);
+        footer = model->page == DEBUG_UI_PAGE_SINGLE_STATIC_SETUP ? "中 配置  右 载荷/记录  左 锁止" :
+            (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_CONFIG_REVIEW ? "左 取消  松开后长按确认" :
+            (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RELOCK ? "先确认失能 / 锁止后退出" : "左 锁止退出  中 下一步"));
+        if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_PREFLIGHT) { heading = "失能预检"; footer = "单次 DISABLE / 左取消 中STOP"; }
+        if (debug_ui_model_single_static_can_cancel_handoff(model)) footer = "左 取消返回 / 中 重试";
         break;
     case DEBUG_UI_PAGE_PREPARE:
         heading = "本地控制检查";
@@ -307,10 +778,25 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
         else (void)snprintf(text, sizeof(text), "反馈: 未知");
         row(page, 3U, text);
         row(page, 4U, motor->profile.pos_valid ? "POS标定: 已配置" : "POS标定: 尚未配置");
-        row(page, 5U, debug_ui_reason_text(debug_ui_model_gate(model,
+        row(page, 5U, pos_load_prepare_return(model) && !snapshot->unconfirmed_disable_mask && snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED &&
+            snapshot->target_motor_id == model->selected_motor + 1U ? "本轴已授权 / 保留参数草稿" :
+            debug_ui_reason_text(debug_ui_model_gate(model,
             snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? DEBUG_UI_OPERATION_RELEASE : DEBUG_UI_OPERATION_ACQUIRE)));
         row(page, 6U, !AETHOR_DEBUG_UI_ALLOW_MOTION || !snapshot->motion_enabled ? "只读 / 本屏不可控制" :
-            (snapshot->unconfirmed_disable_mask != 0U ? "中键 停止" : "中键 重新检查")); focus_row = 6;
+            (snapshot->unconfirmed_disable_mask != 0U ? "中键 停止" :
+            (pos_load_prepare_return(model) && snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED &&
+             snapshot->target_motor_id == model->selected_motor + 1U ? "中键 返回参数" : "中键 重新检查"))); focus_row = 6;
+        if (pos_load_prepare_return(model) && snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED &&
+            snapshot->target_motor_id != model->selected_motor + 1U) {
+            row(page, 5U, "本地控制非当前轴"); row(page, 6U, "中键 检查当前轴");
+        }
+        if (pos_load_prepare_return(model) && (model->stop_requested || snapshot->stop_pending)) {
+            row(page, 5U, "STOP处理中 / 等待失能"); row(page, 6U, "中键 STOP / 等待失能");
+        }
+        if (pos_cleanup_locked && AETHOR_DEBUG_UI_ALLOW_MOTION && snapshot->motion_enabled &&
+            !model->stop_requested && !snapshot->stop_pending) {
+            row(page, 5U, "失能未确认 / 保持锁定"); row(page, 6U, "中键 STOP");
+        }
         footer = "左 返回  右 电机详情";
         break;
     case DEBUG_UI_PAGE_ACTIONS:
@@ -324,6 +810,8 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
             const DebugUiMotorView *item = &snapshot->motors[motor_index];
             debug_ui_format_value(value, sizeof(value), debug_ui_radians_to_degrees(item->position_rad),
                                    item->feedback_seen, item->feedback_valid, "°");
+            if (!item->feedback_valid && debug_ui_raw_position_current(model, item))
+                (void)snprintf(value, sizeof(value), "%.2f°", (double)debug_ui_register_output_degrees(item));
             if (item->fault_flags != 0U)
                 (void)snprintf(text, sizeof(text), "%s%u %s %lu %s", motor_index == model->selected_motor ? ">" : " ",
                                motor_index + 1U, item->feedback_valid ? "故障" : "故障过期",
@@ -334,18 +822,25 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
             row(page, index, text);
             if (motor_index == model->selected_motor) focus_row = (int)index;
         }
-        row(page, 5U, "位置: 电机输出轴 °");
+        row(page, 5U, "° 输出轴 / R 原始读值");
         (void)snprintf(text, sizeof(text), "行 %u-%u / 7  本次上电零点", model->list_first + 1U, model->list_first + 5U); row(page, 6U, text);
         break;
     case DEBUG_UI_PAGE_DETAIL: {
         static const char *const choices[8] = { "POS移动", "MIT保持", "MIT移动", "切换POS", "切换MIT", "清除故障", "请求失能", "位置读值" };
         heading = "电机详情";
-        (void)snprintf(text, sizeof(text), "ID%u %s / %s", model->selected_motor + 1U, mode_text(motor->actual_mode),
+        (void)snprintf(text, sizeof(text), "ID%u %s / %s", model->selected_motor + 1U, motor->mode_verified?mode_text(motor->actual_mode):"模式未校验",
             motor->feedback_seen ? (motor->feedback_valid ? (motor->enabled ? "已使能" : "已失能") : "状态过期") : "状态未知"); row(page, 0U, text);
         debug_ui_format_value(value, sizeof(value), debug_ui_radians_to_degrees(motor->position_rad), motor->feedback_seen, motor->feedback_valid, "°");
-        (void)snprintf(text, sizeof(text), "位置 %s", value); row(page, 1U, text);
+        if (!motor->feedback_valid && debug_ui_raw_position_current(model, motor))
+            (void)snprintf(text, sizeof(text), "位置 %.2f°", (double)debug_ui_register_output_degrees(motor));
+        else (void)snprintf(text, sizeof(text), "位置 %s", value);
+        row(page, 1U, text);
         debug_ui_format_value(value, sizeof(value), debug_ui_radians_to_degrees(motor->velocity_rad_s), motor->feedback_seen, motor->feedback_valid, "°/s");
-        (void)snprintf(text, sizeof(text), "速度 %s", value); row(page, 2U, text);
+        if (!motor->feedback_valid && debug_ui_estimated_speed_current(model, motor))
+            (void)snprintf(text, sizeof(text), "估算速度 %.2f°/s", (double)debug_ui_radians_to_degrees(
+                motor->register_estimated_native_rad_s / motor->single_static_native_per_output));
+        else (void)snprintf(text, sizeof(text), "速度 %s", value);
+        row(page, 2U, text);
         debug_ui_format_value(value, sizeof(value), motor->torque_nm, motor->feedback_seen, motor->feedback_valid, "Nm");
         (void)snprintf(text, sizeof(text), "转矩 %s", value); row(page, 3U, text);
         if (motor->feedback_seen && motor->feedback_valid)
@@ -372,7 +867,7 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
                 (void)snprintf(value, sizeof(value), "%s%.6g", motor->register_age_ms[index] < 500U ? "" : "过期 ",
                     (double)motor->register_position[index]);
             else (void)snprintf(value, sizeof(value), "--");
-            (void)snprintf(text, sizeof(text), "RID%02X %s", 0x50U + index, value); row(page, 1U + 2U * index, text);
+            (void)snprintf(text, sizeof(text), "0x%02X %s", 0x50U + index, value); row(page, 1U + 2U * index, text);
             if (seen) (void)snprintf(text, sizeof(text), "样本 %lums", (unsigned long)motor->register_age_ms[index]);
             else (void)snprintf(text, sizeof(text), "样本 未知");
             row(page, 2U + 2U * index, text);
@@ -410,7 +905,59 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
             (void)snprintf(text, sizeof(text), "显示SPI累计错误 %lu", (unsigned long)diagnostics->spi_errors); row(page, 5U, text);
             (void)snprintf(text, sizeof(text), "显示初始化错误 %lu", (unsigned long)diagnostics->init_errors); row(page, 6U, text);
         }
-        footer = "只读 / 左 返回分类";
+        footer = "只读 / 上下/右 切换 / 左 返回";
+        break;
+    case DEBUG_UI_PAGE_STATIC_LOAD:
+        heading = !AETHOR_DEBUG_UI_ALLOW_STATIC_LOAD || !snapshot->static_load_enabled ?
+            "七轴静载 / 只读" : "七轴静载 / 中 操作";
+        static_load_rows(page, model, 0U);
+        footer = "输出轴e° T Nm MOS/转子°C";
+        break;
+    case DEBUG_UI_PAGE_STATIC_ACTIONS:
+        heading = "静载操作 / 先承托";
+        footer = "结束失能前先卸载 / 左 返回";
+        break;
+    case DEBUG_UI_PAGE_SINGLE_STATIC_LOAD:
+        heading = "单轴静载";
+        single_static_rows(page, model, 0U);
+        footer = "左 返回 / 中 操作";
+        break;
+    case DEBUG_UI_PAGE_SINGLE_STATIC_ACTIONS:
+        heading = "单轴操作";
+        footer = "到期失能 / 请先承托卸载";
+        break;
+    case DEBUG_UI_PAGE_SINGLE_STATIC_IDS:
+        heading = "选择静载电机";
+        footer = "更换ID需重新锁定姿态";
+        break;
+    case DEBUG_UI_PAGE_SINGLE_STATIC_RESULT:
+        heading = static_result_heading(model);
+        if (model->static_result_retained && static_report_visible(model) &&
+            snapshot->static_load.operation == DEBUG_UI_OPERATION_STATIC_HOLD) {
+            heading = "七轴保留结果";
+            static_load_rows(page, model, 1U);
+        } else single_static_rows(page, model, 1U);
+        footer = model->single_static_flow ? "中 再次准备  左 锁止退出" : "承托卸载 / 中 返回";
+        if (model->completion_seen && static_report_visible(model) && static_completion_matches_report(model) &&
+            model->completion.reason != DEBUG_UI_REASON_NONE) footer = debug_ui_reason_text(model->completion.reason);
+        break;
+    case DEBUG_UI_PAGE_STATIC_RESULT:
+        heading = static_result_heading(model);
+        if (model->static_result_retained && static_report_visible(model) &&
+            snapshot->static_load.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD) {
+            heading = "单轴保留结果";
+            single_static_rows(page, model, 1U);
+        } else static_load_rows(page, model, 1U);
+        footer = model->static_result_detail == 0U ? "输出轴峰值°/Nm 上下 翻页" :
+            (model->static_result_detail == 1U ? "MOS/转子峰值°C 上下 翻页" : "有效采样数 / 中 返回");
+        if (model->completion_seen && model->completion.reason != DEBUG_UI_REASON_NONE &&
+            (static_completion_matches_report(model) ||
+             (!static_report_visible(model) && !model->static_result_retained &&
+              view_same_identity(&model->completion.identity, &model->submitted.identity)))) {
+            (void)snprintf(value, sizeof(value), "%s / 上下 翻页", debug_ui_reason_text(model->completion.reason));
+            footer = value;
+        }
+        if (snapshot->unconfirmed_disable_mask != 0U) footer = "控制仍锁定 / 需重新检查";
         break;
     case DEBUG_UI_PAGE_NUMBER:
     case DEBUG_UI_PAGE_EDIT:
@@ -420,7 +967,26 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
             motor = &snapshot->motors[action->target_motor_id - 1U];
         heading = model->page == DEBUG_UI_PAGE_EDIT ? "动作草稿" : "二次确认";
         (void)snprintf(text, sizeof(text), "ID%u %s", action->target_motor_id, operation_text(action->operation)); row(page, 0U, text);
-        if (action->operation == DEBUG_UI_OPERATION_SET_MODE) {
+        if (debug_ui_is_static_operation(action->operation)) {
+            if (action->operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD) {
+                (void)snprintf(text, sizeof(text), "ID%u 单轴静载 / 已锁定", action->target_motor_id); row(page, 0U, text);
+            } else row(page, 0U, "七轴静载 / 已锁定姿态");
+            (void)snprintf(text, sizeof(text), "限时 %lums / 前馈 0Nm", (unsigned long)action->hold_duration_ms); row(page, 1U, text);
+            if (model->single_static_flow && action->operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD) {
+                (void)snprintf(text, sizeof(text), "保持 %lu秒 FF%+.2fNm", (unsigned long)(action->hold_duration_ms / 1000U), (double)action->torque_ff_nm);
+                row(page, 1U, text);
+            }
+            row(page, 2U, action->operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD ? "所选轴 MIT 失能静止" : "七轴均须 MIT 失能静止");
+            if (model->single_static_flow && action->operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD &&
+                action->target_motor_id > 0U && action->target_motor_id <= DEBUG_UI_MOTOR_COUNT) {
+                float target_degrees = debug_ui_radians_to_degrees(action->static_positions_rad[action->target_motor_id - 1U]);
+                if (isfinite(target_degrees)) (void)snprintf(text, sizeof(text), "冻结输出轴 %.2f°", (double)target_degrees);
+                else (void)snprintf(text, sizeof(text), "冻结输出轴 --");
+                row(page, 2U, text);
+            }
+            row(page, 3U, "先承托 / 失能前先卸载");
+            row(page, 4U, "输出轴 / 非法兰标定");
+        } else if (action->operation == DEBUG_UI_OPERATION_SET_MODE) {
             (void)snprintf(text, sizeof(text), "模式 %s -> %s", mode_text(motor->actual_mode), mode_text(action->requested_mode)); row(page, 1U, text);
             row(page, 2U, "模式读回后才确认成功");
             row(page, 3U, "切模前: 失能且速度近零");
@@ -445,13 +1011,14 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
             (void)snprintf(text, sizeof(text), "预计目标 %.1f°", (double)debug_ui_radians_to_degrees(motor->position_rad + action->delta_rad)); row(page, 3U, text);
             }
         }
-        if (action->operation == DEBUG_UI_OPERATION_MIT_HOLD || action->operation == DEBUG_UI_OPERATION_MIT_MOVE) {
+        if (debug_ui_is_static_operation(action->operation)) row(page, 4U, "输出轴 / 非法兰标定");
+        else if (action->operation == DEBUG_UI_OPERATION_MIT_HOLD || action->operation == DEBUG_UI_OPERATION_MIT_MOVE) {
             (void)snprintf(text, sizeof(text), "MIT范围 %.1f~%.1f°",
                 (double)debug_ui_radians_to_degrees(motor->profile.mit_position_min_rad),
                 (double)debug_ui_radians_to_degrees(motor->profile.mit_position_max_rad)); row(page, 4U, text);
         } else row(page, 4U, action->operation == DEBUG_UI_OPERATION_SET_MODE ? "切换后仍保持失能" : "输出轴 / 本次上电零点");
         row(page, 5U, action->operation == DEBUG_UI_OPERATION_POS_MOVE || action->operation == DEBUG_UI_OPERATION_MIT_MOVE ||
-            action->operation == DEBUG_UI_OPERATION_MIT_HOLD || action->operation == DEBUG_UI_OPERATION_DISABLE ?
+            action->operation == DEBUG_UI_OPERATION_MIT_HOLD || debug_ui_is_static_operation(action->operation) || action->operation == DEBUG_UI_OPERATION_DISABLE ?
             "结束: 失能并检查反馈" : "结果: 等待应用确认");
         if (model->page == DEBUG_UI_PAGE_REVIEW) {
             if (!model->review_released) row(page, 6U, "请先松开中键");
@@ -469,6 +1036,20 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
         focus_row = 6;
         break;
     case DEBUG_UI_PAGE_RUNNING: {
+        if (static_load_running(model)) {
+            heading = single_static_running(model) ? "单轴静载 / 运行" : "七轴静载 / 输出轴";
+            if (single_static_running(model)) single_static_rows(page, model, 0U);
+            else static_load_rows(page, model, 0U);
+            if (model->stop_requested || snapshot->stop_pending) footer = "STOP已请求 / 失能待确认";
+            else {
+                (void)snprintf(value, sizeof(value), "%lu/%lums 中STOP", (unsigned long)snapshot->static_load.elapsed_ms,
+                    (unsigned long)(snapshot->static_load.duration_ms ? snapshot->static_load.duration_ms : model->submitted.hold_duration_ms));
+                footer = value;
+            }
+            if (model->single_static_flow && single_static_running(model))
+                footer = model->stop_requested || snapshot->stop_pending ? "停止后等待新失能反馈" : "输出轴 / 到期自动请求失能";
+            break;
+        }
         uint8_t active_target = debug_ui_model_active_target(model);
         unsigned target_count = active_target_count(model);
         const char *origin = snapshot->active_identity.origin == DEBUG_UI_ORIGIN_USB &&
@@ -518,34 +1099,95 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
         break;
     default: break;
     }
+    if (pos_load_view_page(model)) {
+        pos_load_view_rows(page, model);
+        heading = model->page == DEBUG_UI_PAGE_POS_LOAD_SETUP ?
+            (debug_ui_pos_load_flange(pos_load_view_motor(model)) ? "POS带载 / 法兰相对角" : "POS带载 / 输出轴") :
+            (model->page == DEBUG_UI_PAGE_POS_LOAD_NUMBER ? "POS参数编辑" :
+            (model->page == DEBUG_UI_PAGE_REVIEW ? "POS带载 / 确认开始" :
+            (model->page == DEBUG_UI_PAGE_RUNNING ? "POS带载 / 自动过程" : "POS带载 / 试验结果")));
+        footer = model->page == DEBUG_UI_PAGE_POS_LOAD_SETUP ? "上下选择 左右调值 中微调/进入" :
+            (model->page == DEBUG_UI_PAGE_POS_LOAD_NUMBER ? "左右选位 中保存 长按左取消" :
+            (model->page == DEBUG_UI_PAGE_REVIEW ? "左取消 / 松开后长按确认" :
+            (model->page == DEBUG_UI_PAGE_RUNNING ? "需独立承托 / 中键STOP" : "上下翻面 中返回重新设置")));
+    }
+    if (model->single_static_flow && model->page == DEBUG_UI_PAGE_REVIEW &&
+        model->reviewed.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD) {
+        load_view_summary(value, sizeof(value), model->load_trials.frozen_valid ? &model->load_trials.frozen : NULL);
+        row(page, 4U, value);
+    }
+    if (load_result) {
+        load_view_result_footer(value, sizeof(value), load_record != NULL ? &load_record->metadata : NULL);
+        footer = value;
+        if (model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RESULT && model->reason != DEBUG_UI_REASON_NONE &&
+            !(static_report_visible(model) && snapshot->static_load.first_exit_latched)) {
+            (void)snprintf(text, sizeof(text), "ID%u / %s", model->submitted.target_motor_id, debug_ui_reason_text(model->reason));
+            row(page, 0U, text);
+        }
+        if (model->page == DEBUG_UI_PAGE_RESULT || model->page == DEBUG_UI_PAGE_FAULT)
+            row(page, 6U, "准备/退出先锁止 / 保持需再确认");
+    } else if (model->single_static_flow && model->page == DEBUG_UI_PAGE_RUNNING && single_static_running(model) &&
+        model->submitted.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD) {
+        load_view_running_footer(value, sizeof(value), model, load_record != NULL ? &load_record->metadata : NULL);
+        footer = value;
+    }
     layout(page, model, focus_row, page_changed);
     if (model->page == DEBUG_UI_PAGE_NUMBER) heading = "数值编辑";
     else if (model->page == DEBUG_UI_PAGE_MODES) { heading = "工作模式"; footer = "左 返回  中/右 确认切模"; }
     else if (model->page == DEBUG_UI_PAGE_RECOVERY) heading = "恢复与失能";
     else if (model->page == DEBUG_UI_PAGE_DIAGNOSTIC_MENU) heading = "诊断分类";
+    else if (model->page == DEBUG_UI_PAGE_DIAGNOSTICS) {
+        static const char *const tabs[]={"按键与显示 1/3","调度与通信 2/3","系统资源 3/3"};
+        heading=tabs[model->diagnostic_page<3U?model->diagnostic_page:2U];
+    }
     else if (model->page == DEBUG_UI_PAGE_NOTICE) { heading = "操作未提交"; footer = "中/左 返回修改"; }
-    if (model->page == DEBUG_UI_PAGE_PREPARE) footer = !AETHOR_DEBUG_UI_ALLOW_MOTION || !snapshot->motion_enabled ? "只读检查 / 左 返回" : snapshot->unconfirmed_disable_mask != 0U ? "左 返回  中 STOP" :
-        (snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? "左 返回  中 释放确认" : "左 返回  中 检查并申请");
-    if ((model->page == DEBUG_UI_PAGE_RESULT || model->page == DEBUG_UI_PAGE_FAULT) &&
+    if (model->page == DEBUG_UI_PAGE_PREPARE) footer = !AETHOR_DEBUG_UI_ALLOW_MOTION || !snapshot->motion_enabled ? "只读检查 / 左 返回" : (snapshot->unconfirmed_disable_mask != 0U || pos_cleanup_locked) ? "左 返回  中 STOP" :
+        (pos_load_prepare_return(model) && snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED &&
+         snapshot->target_motor_id == model->selected_motor + 1U ? "中 返回参数 / 保留控制权" :
+        (snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED ? "左 返回  中 释放确认" : "左 返回  中 检查并申请"));
+    if (pos_load_prepare_return(model)) {
+        if (model->stop_requested || snapshot->stop_pending) footer = "STOP处理中 / 等待失能";
+        else if (!snapshot->unconfirmed_disable_mask && !pos_cleanup_locked && snapshot->authority == DEBUG_UI_AUTHORITY_LOCAL_ARMED &&
+                 snapshot->target_motor_id != model->selected_motor + 1U) footer = "左 返回 / 中 检查当前轴";
+    }
+    if (!load_result && (model->page == DEBUG_UI_PAGE_RESULT || model->page == DEBUG_UI_PAGE_FAULT) &&
         debug_ui_model_result_requires_check(model)) footer = "中 检查  左 返回  右 诊断";
+    if (model->single_static_flow && !load_result && (model->page == DEBUG_UI_PAGE_RESULT || model->page == DEBUG_UI_PAGE_FAULT))
+        footer = "中 锁止并准备  左 锁止退出";
+    if ((model->page == DEBUG_UI_PAGE_SINGLE_STATIC_RESULT || model->page == DEBUG_UI_PAGE_STATIC_RESULT ||
+         (load_result && (model->page == DEBUG_UI_PAGE_RESULT || model->page == DEBUG_UI_PAGE_FAULT))) &&
+        static_report_exit_text(value, sizeof(value), model)) footer = value;
     if (model->page == DEBUG_UI_PAGE_NUMBER || model->page == DEBUG_UI_PAGE_EDIT) {
-        const char *action_heading = model->draft.operation == DEBUG_UI_OPERATION_POS_MOVE ? "POS移动" :
-            (model->draft.operation == DEBUG_UI_OPERATION_MIT_MOVE ? "MIT移动" : "MIT保持");
-        (void)snprintf(title, sizeof(title), "M%02u %s%s%s", model->draft.target_motor_id, action_heading,
+        const char *action_heading = model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD ? "单轴静载" :
+            (model->draft.operation == DEBUG_UI_OPERATION_STATIC_HOLD ? "七轴静载" :
+            (model->draft.operation == DEBUG_UI_OPERATION_POS_MOVE ? "POS移动" :
+            (model->draft.operation == DEBUG_UI_OPERATION_MIT_MOVE ? "MIT移动" : "MIT保持")));
+        if (model->draft.operation == DEBUG_UI_OPERATION_STATIC_HOLD)
+            (void)snprintf(title, sizeof(title), "七轴静载 / 限时%s", diagnostics->simulated ? " [模拟]" : "");
+        else (void)snprintf(title, sizeof(title), "M%02u %s%s%s", model->draft.target_motor_id, action_heading,
             model->page == DEBUG_UI_PAGE_NUMBER ? " / 数值" : " / 参数", diagnostics->simulated ? " [模拟]" : "");
+    } else if (model->page == DEBUG_UI_PAGE_LOAD_METADATA || model->page == DEBUG_UI_PAGE_LOAD_NUMBER) {
+        (void)snprintf(title, sizeof(title), "ID%u 载荷/记录%s", model->selected_motor + 1U, diagnostics->simulated ? " [模拟]" : "");
     } else if (model->page == DEBUG_UI_PAGE_ACTIONS || model->page == DEBUG_UI_PAGE_MODES ||
-               model->page == DEBUG_UI_PAGE_RECOVERY || model->page == DEBUG_UI_PAGE_DETAIL) {
+               model->page == DEBUG_UI_PAGE_RECOVERY || model->page == DEBUG_UI_PAGE_DETAIL ||
+               model->page == DEBUG_UI_PAGE_SINGLE_STATIC_LOAD || model->page == DEBUG_UI_PAGE_SINGLE_STATIC_ACTIONS) {
         (void)snprintf(title, sizeof(title), "M%02u %s%s", model->selected_motor+1U, heading, diagnostics->simulated ? " [模拟]" : "");
     } else (void)snprintf(title, sizeof(title), "%s%s", heading, diagnostics->simulated ? " [模拟]" : "");
     text_set(page->title, page->title_text, sizeof(page->title_text), title);
     text_set(page->footer, page->footer_text, sizeof(page->footer_text), footer);
     if (model->page == DEBUG_UI_PAGE_NUMBER) {
-        const char *operation = model->draft.operation == DEBUG_UI_OPERATION_POS_MOVE ? "POS 移动" :
-            (model->draft.operation == DEBUG_UI_OPERATION_MIT_MOVE ? "MIT 移动" : "MIT 保持");
-        (void)snprintf(title,sizeof(title),"%02u / %s",model->draft.target_motor_id,operation);
+        const char *operation = model->draft.operation == DEBUG_UI_OPERATION_STATIC_HOLD ? "MIT 保持" :
+            (model->draft.operation == DEBUG_UI_OPERATION_POS_MOVE ? "POS 移动" :
+            (model->draft.operation == DEBUG_UI_OPERATION_MIT_MOVE ? "MIT 移动" : "MIT 保持"));
+        if (model->draft.operation == DEBUG_UI_OPERATION_STATIC_HOLD)
+            (void)snprintf(title, sizeof(title), "7 / MIT 保持");
+        else if (model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD)
+            (void)snprintf(title, sizeof(title), "ID%02u / 单轴静载", model->draft.target_motor_id);
+        else (void)snprintf(title,sizeof(title),"%02u / %s",model->draft.target_motor_id,operation);
         text_set(page->title,page->title_text,sizeof(page->title_text),title);
         text_set(page->footer,page->footer_text,sizeof(page->footer_text),"上下 调值   中 保存   左 取消");
-        astra_popup_label(page->title,&ui_font_popup_17,page->title_text,12,8,218,LV_TEXT_ALIGN_LEFT);
+        astra_popup_label(page->title,model->draft.operation == DEBUG_UI_OPERATION_SINGLE_STATIC_HOLD ?
+            &ui_font_16 : &ui_font_popup_17,page->title_text,12,8,218,LV_TEXT_ALIGN_LEFT);
         astra_popup_label(page->footer,&ui_font_popup_12,page->footer_text,0,219,280,LV_TEXT_ALIGN_CENTER);
         if (diagnostics->simulated) {
             if (strcmp(lv_label_get_text(page->icons[6]), "SIM") != 0)
@@ -555,6 +1197,17 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
             page->layout_icon_mask |= (uint8_t)(1U << 6U);
             show(page->icons[6],1U);
         }
+    } else if (pos_load_view_page(model) || single_static_instrument_page(model) || load_view_page(model->page) || page->decoration>=4U) {
+        style_set_pointer(page->title, LV_STYLE_TEXT_FONT, &ui_font_16);
+        style_set_pointer(page->footer, LV_STYLE_TEXT_FONT, pos_load_view_page(model) ? &ui_font_16 : &ui_font_popup_12);
+        style_set_color(page->title, LV_STYLE_TEXT_COLOR, lv_color_hex(0xFFFFFFU));
+        style_set_color(page->footer, LV_STYLE_TEXT_COLOR, lv_color_hex(0xAAAAAAU));
+        object_set_pos(page->title, 8, 3); object_set_size(page->title, 264, 25);
+        object_set_pos(page->footer, 8, 216); object_set_size(page->footer, 264, 20);
+        style_set_number(page->footer, LV_STYLE_TEXT_ALIGN, LV_TEXT_ALIGN_LEFT);
+        style_set_number(page->title, LV_STYLE_PAD_LEFT, 4); style_set_number(page->title, LV_STYLE_PAD_TOP, 2);
+        style_set_number(page->footer, LV_STYLE_PAD_LEFT, 4);
+        style_set_number(page->footer, LV_STYLE_PAD_TOP, 0);
     } else {
         object_set_pos(page->title,8,2); object_set_size(page->title,264,26);
         object_set_pos(page->footer,8,212); object_set_size(page->footer,264,26);
@@ -563,6 +1216,8 @@ void debug_ui_view_update(DebugUiView *view, const DebugUiModel *model,
         style_set_number(page->footer,LV_STYLE_TEXT_ALIGN,LV_TEXT_ALIGN_LEFT);
         style_set_number(page->title,LV_STYLE_PAD_LEFT,4); style_set_number(page->title,LV_STYLE_PAD_TOP,2);
         style_set_number(page->footer,LV_STYLE_PAD_LEFT,4); style_set_number(page->footer,LV_STYLE_PAD_TOP,2);
+        style_set_color(page->title, LV_STYLE_TEXT_COLOR, lv_color_white());
+        style_set_color(page->footer, LV_STYLE_TEXT_COLOR, lv_color_white());
     }
     for (index = 0U; index < DEBUG_UI_VIEW_ROWS; ++index) {
         show(page->rows[index], (uint8_t)((page->layout_row_mask & (1U << index)) != 0U));

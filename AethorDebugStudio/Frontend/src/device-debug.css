@@ -1,0 +1,61 @@
+/** @file 设备调试区与采集状态样式，沿用工作台配色和响应式布局。 */
+.device-debug { margin-bottom: 20px; }
+.device-debug-body { padding: 22px; display: grid; gap: 18px; }
+.device-debug-toolbar { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.device-debug-toolbar label { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+.device-debug-toolbar select { padding: 9px 12px; border: 1px solid #d9e3e6; border-radius: 8px; background: #fff; color: #233c49; }
+.device-debug-toolbar > span { font-size: 12px; color: #526b76; }
+.feedback-health { display: flex; align-items: flex-start; gap: 13px; padding: 18px; margin-bottom: 18px; border: 1px solid #e5d5b6; background: #fcf8ef; border-radius: 10px; color: #775728; }
+.device-debug .feedback-health { margin-bottom: 0; }
+.feedback-health.fresh { border-color: #bde0da; background: #f0f8f6; color: #177367; }
+.feedback-health svg { flex-shrink: 0; margin-top: 2px; }
+.feedback-health p { margin: 7px 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.feedback-health small { font-size: 11px; line-height: 1.7; }
+.device-debug-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.disable-control { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 15px; border: 1px solid #ecdcd5; border-radius: 9px; flex-wrap: wrap; }
+.disable-control label { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.7; }
+.disable-control input { margin-top: 4px; accent-color: #a64f40; }
+.debug-receipt { border-top: 1px solid #e4ebee; padding-top: 18px; min-width: 0; }
+.debug-receipt > div:first-child { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.debug-receipt p { font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.debug-receipt small { color: #526b76; }
+.debug-raw { display: grid; gap: 8px; margin-top: 14px; }
+.debug-raw code { padding: 10px; border-radius: 6px; background: #f3f6f7; font-size: 11px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.remote-heading h3 { margin: 8px 0; font-size: 20px; }
+.remote-heading p { margin: 0; max-width: 76ch; color: #526b76; font-size: 13px; line-height: 1.8; }
+.remote-session { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 20px; border: 1px solid #bcd8d2; border-radius: 10px; background: #f0f7f5; }
+.remote-session > div { flex: 1 1 360px; min-width: 0; }
+.remote-session strong { color: #235d53; font-size: 15px; }
+.remote-session p { margin: 8px 0 0; color: #526b76; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.remote-session > p { flex-basis: 100%; }
+.remote-session .session-guidance { padding-top: 12px; border-top: 1px solid #cbded8; color: #775728; }
+.session-end-button { flex-shrink: 0; border-color: #61958a; color: #235d53; }
+.torque-policy-state { padding: 16px; border-left: 3px solid #b18b41; background: #f5efdf; }
+.torque-policy-state strong, .torque-recovery-guide strong { font-size: 14px; color: #735929; }
+.torque-recovery-guide { padding: 16px; border: 1px solid #e7dfca; border-radius: 8px; background: #fffdf7; }
+.torque-recovery-guide ol { margin: 12px 0; padding-left: 22px; color: #526b76; font-size: 12px; line-height: 1.8; }
+.torque-recovery-guide li + li { margin-top: 8px; }
+.remote-control .device-debug-body > .button { justify-self: start; }
+.torque-envelope { display: grid; gap: 12px; min-width: 0; margin: 8px 0 0; padding: 20px; border: 1px solid #dfd8c5; border-radius: 10px; background: #fcfaf4; }
+.torque-envelope legend { padding: 0 8px; color: #735929; font-size: 13px; font-weight: 600; }
+.torque-envelope p { margin: 0; color: #526b76; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.torque-envelope label { display: flex; align-items: flex-start; gap: 10px; color: #314f5a; font-size: 13px; line-height: 1.8; }
+.torque-envelope input { flex-shrink: 0; margin-top: 5px; accent-color: #238c80; }
+.torque-envelope [role="status"] { border-top: 1px solid #e7dfca; padding-top: 10px; color: #735929; }
+.remote-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px 24px; margin: 0; padding: 20px; min-width: 0; border: 1px solid #dce6e8; border-radius: 10px; background: #f9fbfb; }
+.remote-fields legend { padding: 0 8px; font-size: 13px; font-weight: 600; color: #35615f; }
+.remote-fields label, .remote-home-speed { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 12px; font-weight: 600; color: #314f5a; }
+.remote-home-speed { width: 100%; max-width: 360px; }
+.remote-fields .remote-operation { grid-column: 1 / -1; }
+.remote-fields input, .remote-fields select, .remote-home-speed input { box-sizing: border-box; width: 100%; min-width: 0; padding: 12px; border: 1px solid #d5e1e4; border-radius: 7px; background: #fff; color: #213f49; font: inherit; font-size: 15px; font-variant-numeric: tabular-nums; }
+.remote-fields input:focus-visible, .remote-fields select:focus-visible, .remote-home-speed input:focus-visible { outline: 2px solid #238c80; outline-offset: 2px; }
+.remote-fields small { font-size: 11px; font-weight: 400; color: #607580; line-height: 1.6; }
+.remote-fields:disabled { opacity: .65; }
+.remote-status { margin: 0; padding: 14px 16px; border-left: 3px solid #a6bdbd; background: #f2f6f6; color: #3c5962; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.remote-receipt { margin: 0; font: 12px/1.7 monospace; color: #526b76; overflow-wrap: anywhere; }
+.remote-live-values { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; margin: 16px 0; padding: 16px; background: #f2f7f6; border: 1px solid #dce8e5; border-radius: 8px; }
+.remote-live-values div { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.remote-live-values small { color: #607580; line-height: 1.5; }
+.remote-live-values output { color: #19584f; font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+@media (max-width: 700px) { .remote-fields { grid-template-columns: minmax(0,1fr); padding: 16px; gap: 16px; } .remote-heading h3 { font-size: 18px; } }
+@media (max-width: 600px) { .device-debug-body { padding: 15px; } .device-debug-actions .button { flex: 1 1 100%; } .disable-control .button { width: 100%; } }

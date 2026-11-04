@@ -1,0 +1,12 @@
+/** @file 可调试验保护表单；突出草稿、读回与联合限制的区别。 */
+.torque-draft-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px; }
+.torque-envelope .torque-draft-label { display:grid; gap:8px; font-size:14px; font-weight:600; }
+.torque-draft-label input { box-sizing:border-box; width:100%; margin:0; padding:12px; border:1px solid #a3b8b5; border-radius:6px; background:#fff; color:#233c49; font-family:inherit; font-size:22px; font-weight:600; line-height:1.4; }
+.torque-draft-label input:focus-visible { outline:2px solid #238c80; outline-offset:2px; }
+.torque-presets { margin-top:12px; }
+.torque-constraints { padding:16px; background:#fff; border:1px solid #dfd8c5; border-radius:8px; }
+.torque-constraints > div { display:flex; justify-content:space-between; gap:16px; margin-bottom:12px; color:#3b565e; font-size:13px; }
+.torque-constraints strong { white-space:nowrap; }
+.torque-envelope .torque-blockers { margin:0; padding-left:24px; color:#775728; font-size:13px; line-height:1.8; }
+.torque-recovery-guide summary { cursor:pointer; font-weight:600; color:#735929; font-size:14px; }
+@media (max-width:1000px) { .torque-draft-grid { grid-template-columns:minmax(0,1fr); gap:16px; } }

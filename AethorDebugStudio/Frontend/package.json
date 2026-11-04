@@ -1,0 +1,28 @@
+{
+  "name": "aethor-debug-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5178",
+    "build": "tsc --noEmit && vite build",
+    "test": "node --import tsx --test tests/domain.test.ts tests/static-policy.test.ts tests/debug.test.ts tests/telemetry.test.ts tests/remote.test.ts tests/remote-monitor.test.ts tests/remote-workflow.test.ts tests/remote-session.test.ts tests/torque-envelope.test.ts tests/torque-preparation.test.ts tests/axis-units.test.ts tests/flange-zero.test.ts tests/chart-window.test.ts tests/preview-telemetry.test.ts",
+    "test:e2e": "node ../scripts/run-browser-tests.mjs",
+    "browsers": "node ../scripts/run-browser-tests.mjs --install"
+  },
+  "dependencies": {
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "1.64.1",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "tsx": "^4.20.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}

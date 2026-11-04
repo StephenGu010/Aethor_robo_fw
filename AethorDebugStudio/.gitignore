@@ -1,0 +1,13 @@
+# 独立调试工作台：仅忽略依赖、编译工件和本地验证输出。
+node_modules/
+dist/
+bin/
+obj/
+artifacts/
+.playwright/
+.packages-feed/
+.nuget/
+*.log
+output/
+__pycache__/
+*.pyc

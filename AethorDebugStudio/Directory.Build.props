@@ -1,0 +1,2 @@
+<!-- @file 项目独立的依赖缓存，避免写入用户级目录；官方包由Restore-Gateway.ps1下载。 -->
+<Project><PropertyGroup><RestorePackagesPath>$(MSBuildThisFileDirectory).nuget/packages</RestorePackagesPath><RestoreSources>$(MSBuildThisFileDirectory).packages-feed</RestoreSources><NuGetAudit>false</NuGetAudit></PropertyGroup></Project>

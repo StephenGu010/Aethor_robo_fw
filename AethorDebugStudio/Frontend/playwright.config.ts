@@ -1,0 +1,3 @@
+/** @file 真实浏览器验收；仅访问本机页面，不接入真实串口。 */
+import { defineConfig } from '@playwright/test';
+export default defineConfig({ testDir:'./tests/browser', fullyParallel:false, workers:1, reporter:[['list'],['json',{outputFile:'../artifacts/browser-results.json'}]], outputDir:'../artifacts/browser-'+(process.env.STUDIO_TEST_RUN??Date.now()), use:{baseURL:'http://127.0.0.1:5178',viewport:{width:1440,height:1000},trace:'retain-on-failure'}, webServer:[{command:'npm run dev',url:'http://127.0.0.1:5178',reuseExistingServer:true,timeout:20000},{command:'dotnet run --no-build --no-restore --project ../Backend/Studio.Gateway',url:'http://127.0.0.1:5179/api/health',reuseExistingServer:true,timeout:20000}] });

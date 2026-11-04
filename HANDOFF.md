@@ -1,5 +1,9 @@
 # Aethor STM32H723 固件交接说明
 
+## 2026-11-04交接补充
+
+当前LCD/POS与Windows上位机源码入口、构建方法及证据边界见[最新发布说明](docs/releases/2026-11-04-studio-pos-quota.md)。当前组合目标为`MDK-ARM/LCD-POS-Load-Test.uvprojx`，上位机位于`AethorDebugStudio/`。下方为历史交接记录，历史烧录、COM编号及实机结果不代表当前现场状态；不得直接重放旧台架动作。配额操作步骤见[操作说明](AethorDebugStudio/docs/quota-operations.md)。
+
 ## 当前运行入口
 
 - 分支：`refactor/prd-phase-00`

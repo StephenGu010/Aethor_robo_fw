@@ -1,8 +1,16 @@
 # Aethor 七自由度机械臂固件
 
+## 当前源码发布：LCD/POS带载与Windows上位机（2026-11-04）
+
+本次同步已部署209e5fc5固件的维护源码，以及新版[Aethor Debug Studio](AethorDebugStudio/README.md)。当前组合目标为`MDK-ARM/LCD-POS-Load-Test.uvprojx`；上位机默认离线演示，支持ID7静载、POS带载、RAM参数、法兰软件零点、最近60秒示波、结束会话及3.50～6.24 N·m试验转矩退出线。
+
+从仓库的`AethorDebugStudio`目录运行`Start-Studio.cmd`，启动后访问 http://127.0.0.1:5179 。环境、离线验证与旧目标兼容说明见[发布说明](docs/releases/2026-11-04-studio-pos-quota.md)，实际按钮顺序见[新手手册](AethorDebugStudio/docs/user-manual.md)及[配额操作说明](AethorDebugStudio/docs/quota-operations.md)。
+
+2026-11-03完成固件烧录读回及一次5.46 N·m配额应用；这不等于较大转矩POS承载资格通过。七轴既有固件能力保留，真实七轴远程运行、驱动EEPROM维护和ADRC闭环承载资格仍未由本发布放行。下面保留旧版发布记录，历史“当前”描述以日期为准。
+
 ## S3519 单电机 ADRC 实验分支
 
-LCD-MIT/ADRC 单固件集成、三个实际 `.slx` 模型和相关源码已发布到 GitHub 的 [feature/s3519-adrc-lcd-mit 分支](https://github.com/StephenGu010/Aethor_robo_fw/tree/feature/s3519-adrc-lcd-mit)；这是实验分支，不代表 `main` 已合入。模型入口见 [离线模型交付](Models/Adrc/VerifiedOffline/README.md)，当前板上诊断、未通过的硬件资格和后续步骤见 [ADRC 实施状态](docs/adrc/execution-status.md)。截至 2026-09-23，电机 7 接管仍因缺少新鲜失能反馈超时，尚未开展 ADRC 速度闭环或负载扰动实机验收。
+LCD-MIT/ADRC 单固件集成、三个实际 `.slx` 模型和相关源码此前发布于 [feature/s3519-adrc-lcd-mit 分支](https://github.com/StephenGu010/Aethor_robo_fw/tree/feature/s3519-adrc-lcd-mit)，已由PR #6合入main。模型入口见[离线模型交付](Models/Adrc/VerifiedOffline/README.md)，该阶段诊断与资格限制见[ADRC实施状态](docs/adrc/execution-status.md)。2026-09-23的记录显示接管因缺少新鲜失能反馈超时；本次上位机/POS发布不将后续诊断工作等同于ADRC闭环承载资格。
 
 ## 系统总览：左右选择，中/下进入（2026-09-15）
 
